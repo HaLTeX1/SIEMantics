@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   ci-prereqs:
-    runs-on: ubuntu-latest
+    runs-on: docker
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +44,7 @@ jobs:
         run: python -c "from app.main import app"
 
   remote-prereqs:
-    runs-on: ubuntu-latest
+    runs-on: docker
     steps:
       - name: Set up SSH
         run: |
@@ -59,7 +59,7 @@ jobs:
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
               set -e
               command -v docker >/dev/null || { echo "docker not found on remote host"; exit 1; }
-              docker compose version >/dev/null 2>&1 || { echo "docker compose plugin not found on remote host"; exit 1; }
+              command -v docker-compose >/dev/null || { echo "docker-compose not found on remote host"; exit 1; }
               mkdir -p "${{ secrets.DEPLOY_PATH }}"
               test -w "${{ secrets.DEPLOY_PATH }}" || { echo "DEPLOY_PATH not writable"; exit 1; }
               test -f "${{ secrets.DEPLOY_PATH }}/.env" || echo "WARNING: ${{ secrets.DEPLOY_PATH }}/.env not found, create it before first deploy"
@@ -67,7 +67,7 @@ jobs:
 
   deploy:
     needs: [ci-prereqs, remote-prereqs]
-    runs-on: ubuntu-latest
+    runs-on: docker
     steps:
       - uses: actions/checkout@v4
 
@@ -97,8 +97,8 @@ jobs:
             "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
               set -e
               cd "${{ secrets.DEPLOY_PATH }}"
-              docker compose build
-              docker compose up -d --remove-orphans
+              docker-compose build
+              docker-compose up -d --remove-orphans
             '
 
       - name: Health check
