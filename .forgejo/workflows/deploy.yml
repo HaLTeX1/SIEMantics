@@ -23,13 +23,27 @@ concurrency:
 jobs:
   ci-prereqs:
     runs-on: docker
-    container:
-      image: python:3.12-slim
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: pip install --no-cache-dir -r requirements.txt
+      - name: Install Python 3
+        run: |
+          if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=""; fi
+          if command -v apt-get >/dev/null; then
+            $SUDO apt-get update -y
+            $SUDO apt-get install -y --no-install-recommends python3 python3-venv python3-pip
+          elif command -v apk >/dev/null; then
+            $SUDO apk add --no-cache python3 py3-pip
+          else
+            echo "no supported package manager (apt/apk) found on runner image" >&2
+            exit 1
+          fi
+
+      - name: Create venv and install dependencies
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install --no-cache-dir -r requirements.txt
+          echo "/tmp/venv/bin" >> "$GITHUB_PATH"
 
       - name: Compile check
         run: python -m py_compile app/*.py app/routers/*.py
@@ -72,8 +86,15 @@ jobs:
       - name: Install rsync
         run: |
           if command -v sudo >/dev/null; then SUDO=sudo; else SUDO=""; fi
-          $SUDO apt-get update -y
-          $SUDO apt-get install -y --no-install-recommends rsync openssh-client
+          if command -v apt-get >/dev/null; then
+            $SUDO apt-get update -y
+            $SUDO apt-get install -y --no-install-recommends rsync openssh-client
+          elif command -v apk >/dev/null; then
+            $SUDO apk add --no-cache rsync openssh-client
+          else
+            echo "no supported package manager (apt/apk) found on runner image" >&2
+            exit 1
+          fi
 
       - name: Set up SSH
         run: |
