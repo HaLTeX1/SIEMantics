@@ -96,6 +96,33 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`)
 | `GET` | `/api/v1/metrics` | konfúziós mátrix + feldolgozási idő statisztikák a címkézett rekordokból |
 | `GET` | `/healthz` | health check |
 
+### Teszt scenario script
+
+A `scripts/test_requests.sh` egy futtatható bash script, ami a mock motor összes döntési ágát lefedi: a severity-küszöböt, mind a 9 gyanús mintát (SQLi, XSS, path traversal, base64/powershell, `/etc/passwd`, `wget`/`curl | sh`), az IoC-kinyerést, hibás/hiányzó mezőket, érvénytelen webhook tokent, címkézést és a metrikákat.
+
+```bash
+# összes forgatókönyv egymás után
+BASE_URL=http://localhost:8000 ./scripts/test_requests.sh
+
+# csak egy konkrét eset (lásd ALL_SCENARIOS a script alján a teljes listáért)
+BASE_URL=http://localhost:8000 ./scripts/test_requests.sh sqli_union
+
+# ha be van állítva WAZUH_WEBHOOK_TOKEN a szerveren
+BASE_URL=http://localhost:8000 WEBHOOK_TOKEN=<token> ./scripts/test_requests.sh
+```
+
+### Postman collection
+
+Ugyanezek a forgatókönyvek `postman/SIEMantics.postman_collection.json` néven, importálható Postman collection formában (mappánként csoportosítva, `pm.test` assertion-ökkel minden requesthez — Collection Runnerrel az egész sorozat egy kattintással végigfuttatható és kiértékelhető).
+
+1. Postman → **Import** → válaszd ki a `postman/SIEMantics.postman_collection.json` fájlt.
+2. A collection **Variables** fülén állítsd be: `base_url` (pl. `http://10.64.0.127:8000`), `webhook_token` (ha van beállítva `WAZUH_WEBHOOK_TOKEN` a szerveren; ha nincs, hagyd üresen).
+3. Futtasd mappánként, vagy a **Run collection** gombbal az egészet — a "4. Alert management" mappa a korábbi mappákban létrehozott alert ID-kat címkézi, ezért sorrendben érdemes futtatni.
+
+A true-positive kimenetelű requestek `pm.test`-je mindkét kimenetelt elfogadja (202 escalated / 502 IRIS unreachable), mivel IRIS nélkül is helyesen kell viselkedniük — lásd a bash scriptnél leírt megjegyzést.
+
+Megjegyzés: a true-positive kimenetelű forgatókönyvek IRIS eset létrehozását is megkísérlik — ha nincs elérhető IRIS instancia, ezek 502-t adnak vissza és `status=error`-ral perzisztálódnak (ez helyes, elvárt viselkedés IRIS nélkül, nem script-hiba).
+
 ### Teszt riasztás küldése
 
 ```bash
