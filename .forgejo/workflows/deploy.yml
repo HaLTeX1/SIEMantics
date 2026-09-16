@@ -72,6 +72,24 @@ jobs:
               set -e
               command -v docker >/dev/null || { echo "docker not found on remote host"; exit 1; }
               command -v docker-compose >/dev/null || { echo "docker-compose not found on remote host"; exit 1; }
+
+              if ! command -v rsync >/dev/null; then
+                echo "rsync not found on remote host, attempting install..."
+                if command -v sudo >/dev/null; then SUDO="sudo -n"; else SUDO=""; fi
+                if command -v apt-get >/dev/null; then
+                  $SUDO apt-get update -y && $SUDO apt-get install -y --no-install-recommends rsync
+                elif command -v dnf >/dev/null; then
+                  $SUDO dnf install -y rsync
+                elif command -v yum >/dev/null; then
+                  $SUDO yum install -y rsync
+                elif command -v apk >/dev/null; then
+                  $SUDO apk add --no-cache rsync
+                else
+                  echo "no supported package manager found on remote host"; exit 1
+                fi
+                command -v rsync >/dev/null || { echo "failed to install rsync (deploy user likely lacks passwordless sudo) - install it manually on the remote host"; exit 1; }
+              fi
+
               mkdir -p "${{ secrets.DEPLOY_PATH }}"
               test -w "${{ secrets.DEPLOY_PATH }}" || { echo "DEPLOY_PATH not writable"; exit 1; }
               test -f "${{ secrets.DEPLOY_PATH }}/.env" || echo "WARNING: ${{ secrets.DEPLOY_PATH }}/.env not found, create it before first deploy"
