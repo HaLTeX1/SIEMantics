@@ -1,0 +1,114 @@
+# Required repo secrets (Settings > Actions > Secrets):
+#   DEPLOY_HOST     - remote server hostname/IP
+#   DEPLOY_USER     - SSH user on the remote server
+#   DEPLOY_PORT     - SSH port (optional, defaults to 22)
+#   DEPLOY_SSH_KEY  - private key with access to DEPLOY_USER@DEPLOY_HOST
+#   DEPLOY_PATH     - absolute path on the remote server to deploy into
+#
+# The remote server's .env (OPENAI_API_KEY, IRIS_BASE_URL, IRIS_API_KEY, ...)
+# is created out-of-band on the server itself, not by this workflow, so real
+# secrets never touch the CI runner beyond the SSH key.
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci-prereqs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install --no-cache-dir -r requirements.txt
+
+      - name: Compile check
+        run: python -m py_compile app/*.py app/routers/*.py
+
+      - name: Import smoke test
+        env:
+          OPENAI_API_KEY: dummy
+          IRIS_BASE_URL: https://iris.invalid
+          IRIS_API_KEY: dummy
+        run: python -c "from app.main import app"
+
+  remote-prereqs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.DEPLOY_PORT || 22 }}" -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Check remote prerequisites
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
+              set -e
+              command -v docker >/dev/null || { echo "docker not found on remote host"; exit 1; }
+              docker compose version >/dev/null 2>&1 || { echo "docker compose plugin not found on remote host"; exit 1; }
+              mkdir -p "${{ secrets.DEPLOY_PATH }}"
+              test -w "${{ secrets.DEPLOY_PATH }}" || { echo "DEPLOY_PATH not writable"; exit 1; }
+              test -f "${{ secrets.DEPLOY_PATH }}/.env" || echo "WARNING: ${{ secrets.DEPLOY_PATH }}/.env not found, create it before first deploy"
+            '
+
+  deploy:
+    needs: [ci-prereqs, remote-prereqs]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install rsync
+        run: sudo apt-get update -y && sudo apt-get install -y --no-install-recommends rsync openssh-client
+
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.DEPLOY_PORT || 22 }}" -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync project to remote
+        run: |
+          rsync -az --delete \
+            --exclude '.git' \
+            --exclude '.env' \
+            --exclude '__pycache__' \
+            --exclude '.forgejo' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.DEPLOY_PORT || 22 }}" \
+            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      - name: Build and restart service
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
+              set -e
+              cd "${{ secrets.DEPLOY_PATH }}"
+              docker compose build
+              docker compose up -d --remove-orphans
+            '
+
+      - name: Health check
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.DEPLOY_PORT || 22 }}" \
+            "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
+              for i in $(seq 1 10); do
+                curl -sf http://localhost:8000/healthz && exit 0
+                sleep 3
+              done
+              echo "health check failed after deploy"
+              exit 1
+            '
