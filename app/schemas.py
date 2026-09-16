@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
@@ -59,6 +59,7 @@ class TriageResult(BaseModel):
     reasoning: str
     iocs: list[str] = Field(default_factory=list)
     recommended_severity: Optional[str] = None
+    engine: Literal["openai", "mock"]
 
 
 # --- IRIS response ---
@@ -84,6 +85,7 @@ class AlertRecordOut(BaseModel):
     llm_confidence: Optional[float] = None
     llm_reasoning: Optional[str] = None
     llm_iocs: Optional[list[str]] = None
+    triage_engine: Optional[str] = None
     iris_case_id: Optional[int] = None
     error_detail: Optional[str] = None
     processing_time_ms: float

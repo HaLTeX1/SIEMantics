@@ -1,11 +1,15 @@
 import json
+import logging
 
 from openai import AsyncOpenAI
 
 from app.config import settings
+from app.mock_engine import mock_triage
 from app.schemas import NormalizedAlert, TriageResult
 
-_client = AsyncOpenAI(api_key=settings.openai_api_key)
+logger = logging.getLogger("siemantics.llm_engine")
+
+_client = AsyncOpenAI(api_key=settings.openai_api_key) if settings.openai_api_key else None
 
 _SYSTEM_PROMPT = (
     "You are a SOC tier-2 analyst. Assess the alert below and decide if it is a "
@@ -34,7 +38,7 @@ _RESPONSE_SCHEMA = {
 }
 
 
-async def triage_alert(alert: NormalizedAlert) -> TriageResult:
+async def _openai_triage(alert: NormalizedAlert) -> TriageResult:
     user_prompt = (
         f"Rule: {alert.rule_description}\n"
         f"Severity (Wazuh level): {alert.severity}\n"
@@ -54,4 +58,20 @@ async def triage_alert(alert: NormalizedAlert) -> TriageResult:
     )
 
     raw = response.choices[0].message.content
-    return TriageResult.model_validate(json.loads(raw))
+    data = json.loads(raw)
+    return TriageResult(**data, engine="openai")
+
+
+async def triage_alert(alert: NormalizedAlert) -> TriageResult:
+    """Triage via OpenAI, falling back to the deterministic mock engine if
+    no API key is configured or the call fails (network, quota, timeout, ...)."""
+
+    if _client is None:
+        logger.warning("OPENAI_API_KEY not set, using mock triage engine for alert %s", alert.alert_id)
+        return mock_triage(alert)
+
+    try:
+        return await _openai_triage(alert)
+    except Exception as exc:
+        logger.warning("OpenAI triage failed for alert %s (%s), falling back to mock engine", alert.alert_id, exc)
+        return mock_triage(alert)

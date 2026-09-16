@@ -92,7 +92,7 @@ jobs:
 
               mkdir -p "${{ secrets.DEPLOY_PATH }}"
               test -w "${{ secrets.DEPLOY_PATH }}" || { echo "DEPLOY_PATH not writable"; exit 1; }
-              test -f "${{ secrets.DEPLOY_PATH }}/.env" || echo "WARNING: ${{ secrets.DEPLOY_PATH }}/.env not found, create it before first deploy"
+              test -f "${{ secrets.DEPLOY_PATH }}/.env" || { echo "ERROR: ${{ secrets.DEPLOY_PATH }}/.env not found - create it manually on the server before deploying (see README)"; exit 1; }
             '
 
   deploy:

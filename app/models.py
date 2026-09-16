@@ -25,6 +25,7 @@ class AlertRecord(Base):
     llm_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     llm_reasoning: Mapped[str | None] = mapped_column(Text, nullable=True)
     llm_iocs: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    triage_engine: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     iris_case_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)

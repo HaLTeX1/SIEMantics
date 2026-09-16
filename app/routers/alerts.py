@@ -52,7 +52,7 @@ async def receive_alert(
             error_detail=f"triage failed: {exc}",
         )
         logger.exception("triage failed for alert %s", alert.alert_id)
-        raise HTTPException(status_code=502, detail="triage engine unavailable") from exc
+        raise HTTPException(status_code=502, detail="triage failed unexpectedly") from exc
 
     if not triage.is_true_positive:
         record = await create_alert_record(
@@ -66,6 +66,7 @@ async def receive_alert(
             llm_confidence=triage.confidence,
             llm_reasoning=triage.reasoning,
             llm_iocs=triage.iocs,
+            triage_engine=triage.engine,
             processing_time_ms=_elapsed_ms(started),
         )
         logger.info("alert %s classified as false positive (confidence=%.2f)", alert.alert_id, triage.confidence)
@@ -85,6 +86,7 @@ async def receive_alert(
             llm_confidence=triage.confidence,
             llm_reasoning=triage.reasoning,
             llm_iocs=triage.iocs,
+            triage_engine=triage.engine,
             processing_time_ms=_elapsed_ms(started),
             error_detail=f"iris case creation failed: {exc}",
         )
@@ -102,6 +104,7 @@ async def receive_alert(
         llm_confidence=triage.confidence,
         llm_reasoning=triage.reasoning,
         llm_iocs=triage.iocs,
+        triage_engine=triage.engine,
         iris_case_id=case.case_id,
         processing_time_ms=_elapsed_ms(started),
     )

@@ -58,13 +58,22 @@ Az app induláskor (`lifespan`) automatikusan létrehozza az SQLite adatbázist 
 
 | Változó | Leírás |
 |---|---|
-| `OPENAI_API_KEY` | OpenAI API kulcs a triázshoz |
+| `OPENAI_API_KEY` | OpenAI API kulcs a triázshoz — **opcionális**, lásd lent |
 | `OPENAI_MODEL` | alapértelmezett: `gpt-4o-mini` |
+| `LLM_MOCK_SEVERITY_THRESHOLD` | mock motor küszöbe (Wazuh severity level), alapértelmezett: `7` |
 | `IRIS_BASE_URL` | DFIR-IRIS instancia URL-je |
 | `IRIS_API_KEY` | DFIR-IRIS API kulcs |
 | `IRIS_CUSTOMER_ID` | eset létrehozáshoz tartozó ügyfél ID |
 | `WAZUH_WEBHOOK_TOKEN` | megosztott titok a webhook hívások hitelesítéséhez (`X-Webhook-Token` header) |
 | `DATABASE_URL` | döntésnapló DB elérési útja, alapértelmezett: `sqlite+aiosqlite:///./siemantics.db` |
+
+## LLM triázs motor és fallback
+
+Az OpenAI API opcionális. Ha `OPENAI_API_KEY` nincs beállítva, vagy a hívás bármilyen okból hibázik (kvóta, timeout, hálózati hiba), a rendszer automatikusan átvált egy beépített, determinisztikus, szabály-alapú mock motorra (`app/mock_engine.py`) — ez ingyenes, API-kulcsot nem igényel, és CI/demó környezetben is azonnal működik.
+
+A mock motor logikája: a Wazuh severity szint ≥ `LLM_MOCK_SEVERITY_THRESHOLD`, vagy a log snippetben gyanús minta (SQLi, XSS, path traversal, base64/powershell payload jelek stb.) egyezik → true positive, egyébként false positive. Az IoC-k a log snippetből regex-szel kinyert IP-kből és a forrás IP-ből állnak össze.
+
+Minden döntésnaplóban eltárolt rekord tartalmazza, melyik motor hozta a döntést (`triage_engine`: `openai` vagy `mock`) — a `GET /api/v1/alerts` végponton ez látható, így a kiértékelésnél (6.3 fejezet) tudatosan lehet szűrni vagy megkülönböztetni, ha vegyesen futott a két motor.
 
 ## API végpontok
 
