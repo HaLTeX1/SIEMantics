@@ -22,7 +22,12 @@ class IrisClient:
     async def create_case_from_alert(
         self, alert: NormalizedAlert, triage: TriageResult
     ) -> IrisCaseResult:
-        async with httpx.AsyncClient(base_url=self._base_url, headers=self._headers, timeout=15) as client:
+        async with httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=self._headers,
+            timeout=15,
+            verify=settings.iris_verify_ssl,
+        ) as client:
             case = await self._create_case(client, alert, triage)
             case_id = case["data"]["case_id"]
 

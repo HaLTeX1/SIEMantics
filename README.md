@@ -64,8 +64,11 @@ Az app induláskor (`lifespan`) automatikusan létrehozza az SQLite adatbázist 
 | `IRIS_BASE_URL` | DFIR-IRIS instancia URL-je |
 | `IRIS_API_KEY` | DFIR-IRIS API kulcs |
 | `IRIS_CUSTOMER_ID` | eset létrehozáshoz tartozó ügyfél ID |
+| `IRIS_VERIFY_SSL` | alapértelmezett: `true`. **Csak** ismert, belső/lab IRIS instanciánál önaláírt tanúsítvánnyal állítsd `false`-ra — lásd lent |
 | `WAZUH_WEBHOOK_TOKEN` | megosztott titok a webhook hívások hitelesítéséhez (`X-Webhook-Token` header) |
 | `DATABASE_URL` | döntésnapló DB elérési útja, alapértelmezett: `sqlite+aiosqlite:///./siemantics.db` |
+
+**Önaláírt IRIS tanúsítvány:** ha a DFIR-IRIS instanciád önaláírt TLS tanúsítványt használ (jellemző egy házon belüli/lab telepítésnél), az `httpx` kliens jogosan elutasítja alapértelmezésben (`certificate verify failed: self-signed certificate`) — ez nem hiba, hanem a várt biztonsági viselkedés. Az `IRIS_VERIFY_SSL=false` beállítással kikapcsolható, de ez a konkrét kapcsolatot védtelenné teszi man-in-the-middle támadással szemben — csak akkor használd, ha az IRIS host egy megbízható, elszigetelt hálózaton van (pl. lab környezet). Éles/külső elérésű IRIS-nél helyette a szerver saját tanúsítványát kellene megbízható CA-ként telepíteni a hoszton, vagy valódi (nem önaláírt) certet használni az IRIS előtt.
 
 ## LLM triázs motor és fallback
 

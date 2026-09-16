@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     iris_base_url: str
     iris_api_key: str
     iris_customer_id: int = 1
+    iris_verify_ssl: bool = True
 
     # Inbound webhook auth (shared secret, checked via header)
     wazuh_webhook_token: str = ""
