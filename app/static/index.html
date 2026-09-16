@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIEMantics - Analyst Queue</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #202020;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:    #2c2c2a;
+    --baseline:    #383835;
+    --border:      rgba(255,255,255,0.10);
+    --accent:      #3987e5;
+    --accent-dim:  #1c5cab;
+    --good:        #0ca30c;
+    --warning:     #fab219;
+    --serious:     #ec835a;
+    --critical:    #d03b3b;
+    --violet:      #9085e9;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+    padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px);
+  }
+
+  .wrap {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px 20px 48px;
+  }
+
+  header.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+
+  .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+  .brand .name { font-weight: 700; font-size: 18px; letter-spacing: 0.2px; }
+  .brand .sub { color: var(--text-muted); font-size: 13px; }
+
+  #refreshBtn {
+    background: var(--surface-2);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  #refreshBtn:hover { background: #262625; }
+  #lastUpdated { color: var(--text-muted); font-size: 12px; margin-left: 10px; }
+
+  .filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+
+  .filters input[type="search"],
+  .filters select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  .filters input[type="search"] { flex: 1 1 240px; min-width: 180px; }
+  .filters select { min-width: 150px; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  #timelineTooltip {
+    position: fixed;
+    pointer-events: none;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: var(--text-primary);
+    display: none;
+    z-index: 20;
+    white-space: nowrap;
+  }
+
+  .bulkbar {
+    display: none;
+    align-items: center;
+    gap: 10px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+  }
+  .bulkbar.visible { display: flex; }
+  .bulkbar .count { font-weight: 600; margin-right: 6px; }
+
+  button.btn {
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    background: var(--surface);
+    color: var(--text-primary);
+  }
+  button.btn:hover { background: #262625; }
+  button.btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #ffffff;
+    font-weight: 600;
+  }
+  button.btn.primary:hover { background: var(--accent-dim); }
+  button.btn.outline-serious {
+    border-color: var(--serious);
+    color: var(--serious);
+    background: transparent;
+  }
+  button.btn.outline-serious:hover { background: rgba(236,131,90,0.12); }
+  button.btn.ghost {
+    background: transparent;
+    border-color: transparent;
+    color: var(--text-secondary);
+  }
+  button.btn.ghost:hover { color: var(--text-primary); }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--gridline);
+    white-space: nowrap;
+  }
+  tbody td {
+    padding: 10px;
+    border-bottom: 1px solid var(--gridline);
+    vertical-align: middle;
+  }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+  tbody tr.selected { background: rgba(57,135,229,0.08); }
+
+  .title-main { font-weight: 600; color: var(--text-primary); }
+  .title-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+
+  .badge-fill-good     { background: rgba(12,163,12,0.16);  color: #7be07b; }
+  .badge-fill-warning  { background: rgba(250,178,25,0.16); color: #fdd68a; }
+  .badge-fill-serious  { background: rgba(236,131,90,0.16); color: #f3b299; }
+  .badge-fill-critical { background: rgba(208,59,59,0.18);  color: #f29b9b; }
+  .badge-fill-muted    { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+  .badge-outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+  }
+  .badge-outline.engine-openai { border-color: rgba(57,135,229,0.5); color: #8fb8ef; }
+  .badge-outline.engine-mock   { border-color: rgba(144,133,233,0.5); color: #b9b2f2; }
+
+  .confidence { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+
+  input[type="checkbox"] {
+    width: 15px; height: 15px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .empty-state, .error-state {
+    padding: 40px 10px;
+    text-align: center;
+    color: var(--text-muted);
+  }
+  .error-state { color: var(--critical); }
+
+  .pager {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <span class="name">SIEMantics</span>
+        <span class="sub">Analyst Queue</span>
+      </div>
+      <div>
+        <button id="refreshBtn" type="button">Refresh</button>
+        <span id="lastUpdated"></span>
+      </div>
+    </header>
+
+    <div class="filters">
+      <input id="searchInput" type="search" placeholder="Keresés: rule, alert ID, forrás IP..." />
+      <select id="statusFilter">
+        <option value="">Minden státusz</option>
+        <option value="escalated">Escalated</option>
+        <option value="suppressed">Suppressed</option>
+        <option value="error">Error</option>
+      </select>
+      <select id="dispositionFilter">
+        <option value="">Minden disposition</option>
+        <option value="true_positive">Confirmed TP</option>
+        <option value="false_positive">Confirmed FP</option>
+        <option value="undetermined">Undetermined</option>
+      </select>
+      <select id="timeRangeFilter">
+        <option value="24">Utolsó 24 óra</option>
+        <option value="168" selected>Utolsó 7 nap</option>
+        <option value="720">Utolsó 30 nap</option>
+        <option value="0">Összes</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <h2>Riasztások az idő függvényében</h2>
+      <svg id="timelineSvg" width="100%" height="120" role="img" aria-label="Riasztások száma időbucketenként"></svg>
+    </div>
+
+    <div id="bulkbar" class="bulkbar">
+      <span class="count"><span id="selectedCount">0</span> kiválasztva</span>
+      <button class="btn primary" id="labelTpBtn" type="button">Label: True Positive</button>
+      <button class="btn outline-serious" id="labelFpBtn" type="button">Label: False Positive</button>
+      <button class="btn ghost" id="clearSelectionBtn" type="button">Kijelölés törlése</button>
+    </div>
+
+    <div class="card" style="padding:0; overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:34px;"><input id="selectAll" type="checkbox" /></th>
+            <th>Title</th>
+            <th>Severity</th>
+            <th>Entity</th>
+            <th>Engine</th>
+            <th>Confidence</th>
+            <th>Status</th>
+            <th>Disposition</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div id="emptyState" class="empty-state" hidden>Nincs a szűrésnek megfelelő riasztás.</div>
+      <div id="errorState" class="error-state" hidden></div>
+    </div>
+
+    <div class="pager">
+      <span id="rowCount"></span>
+      <span>SIEMantics decision log</span>
+    </div>
+  </div>
+
+  <div id="timelineTooltip"></div>
+
+<script>
+(function () {
+  "use strict";
+
+  const API_ALERTS = "/api/v1/alerts?limit=500";
+  const API_LABEL = (alertId) => `/api/v1/alerts/${encodeURIComponent(alertId)}/label`;
+
+  let allAlerts = [];
+  let filtered = [];
+  const selected = new Set();
+
+  const el = (id) => document.getElementById(id);
+  const searchInput = el("searchInput");
+  const statusFilter = el("statusFilter");
+  const dispositionFilter = el("dispositionFilter");
+  const timeRangeFilter = el("timeRangeFilter");
+  const tableBody = el("tableBody");
+  const emptyState = el("emptyState");
+  const errorState = el("errorState");
+  const bulkbar = el("bulkbar");
+  const selectedCountEl = el("selectedCount");
+  const selectAll = el("selectAll");
+  const rowCountEl = el("rowCount");
+  const lastUpdatedEl = el("lastUpdated");
+
+  function severityInfo(level) {
+    if (level >= 12) return { label: "Critical", cls: "critical" };
+    if (level >= 9) return { label: "High", cls: "serious" };
+    if (level >= 5) return { label: "Medium", cls: "warning" };
+    return { label: "Low", cls: "good" };
+  }
+
+  function statusInfo(status) {
+    if (status === "escalated") return { label: "Escalated", cls: "good" };
+    if (status === "error") return { label: "Error", cls: "critical" };
+    return { label: "Suppressed", cls: "muted" };
+  }
+
+  function dispositionInfo(groundTruth) {
+    if (groundTruth === "true_positive") return { label: "Confirmed TP", cls: "good" };
+    if (groundTruth === "false_positive") return { label: "Confirmed FP", cls: "serious" };
+    return { label: "Undetermined", cls: "muted" };
+  }
+
+  function badge(label, cls) {
+    return `<span class="badge badge-fill-${cls}"><span class="dot" style="background:currentColor"></span>${escapeHtml(label)}</span>`;
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  function fmtTime(iso) {
+    const d = new Date(iso + (iso.endsWith("Z") ? "" : "Z"));
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("hu-HU", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  async function fetchAlerts() {
+    errorState.hidden = true;
+    try {
+      const res = await fetch(API_ALERTS);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      allAlerts = await res.json();
+      lastUpdatedEl.textContent = "Frissítve: " + new Date().toLocaleTimeString("hu-HU");
+      applyFilters();
+    } catch (err) {
+      errorState.hidden = false;
+      errorState.textContent = "Nem sikerült betölteni a riasztásokat: " + err.message;
+      tableBody.innerHTML = "";
+      renderTimeline([]);
+    }
+  }
+
+  function applyFilters() {
+    const q = searchInput.value.trim().toLowerCase();
+    const status = statusFilter.value;
+    const disposition = dispositionFilter.value;
+    const hours = parseInt(timeRangeFilter.value, 10);
+    const cutoff = hours > 0 ? Date.now() - hours * 3600 * 1000 : null;
+
+    filtered = allAlerts.filter((a) => {
+      if (status && a.status !== status) return false;
+      if (disposition) {
+        const gt = a.ground_truth || "undetermined";
+        if (gt !== disposition) return false;
+      }
+      if (cutoff !== null) {
+        const t = new Date(a.received_at + (a.received_at.endsWith("Z") ? "" : "Z")).getTime();
+        if (t < cutoff) return false;
+      }
+      if (q) {
+        const hay = `${a.alert_id} ${a.rule_description} ${a.source_ip || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    for (const id of Array.from(selected)) {
+      if (!filtered.some((a) => a.alert_id === id)) selected.delete(id);
+    }
+
+    renderTable();
+    renderTimeline(filtered);
+    updateBulkbar();
+  }
+
+  function renderTable() {
+    if (filtered.length === 0) {
+      tableBody.innerHTML = "";
+      emptyState.hidden = false;
+      rowCountEl.textContent = "";
+      return;
+    }
+    emptyState.hidden = true;
+    rowCountEl.textContent = `${filtered.length} riasztás`;
+
+    tableBody.innerHTML = filtered.map((a) => {
+      const sev = severityInfo(a.severity);
+      const st = statusInfo(a.status);
+      const disp = dispositionInfo(a.ground_truth);
+      const isSelected = selected.has(a.alert_id);
+      const engineCls = a.triage_engine === "openai" ? "engine-openai" : "engine-mock";
+      const engineLabel = a.triage_engine || "-";
+      const confidence = a.llm_confidence != null ? Math.round(a.llm_confidence * 100) + "%" : "-";
+
+      return `
+        <tr class="${isSelected ? "selected" : ""}" data-id="${escapeHtml(a.alert_id)}">
+          <td><input type="checkbox" class="row-check" data-id="${escapeHtml(a.alert_id)}" ${isSelected ? "checked" : ""} /></td>
+          <td>
+            <div class="title-main">${escapeHtml(a.rule_description)}</div>
+            <div class="title-sub">${escapeHtml(a.alert_id)}</div>
+          </td>
+          <td>${badge(sev.label, sev.cls)}</td>
+          <td>${escapeHtml(a.source_ip || "-")}</td>
+          <td><span class="badge badge-outline ${engineCls}">${escapeHtml(engineLabel)}</span></td>
+          <td class="confidence">${confidence}</td>
+          <td>${badge(st.label, st.cls)}</td>
+          <td>${badge(disp.label, disp.cls)}</td>
+          <td>${fmtTime(a.received_at)}</td>
+        </tr>`;
+    }).join("");
+
+    tableBody.querySelectorAll(".row-check").forEach((cb) => {
+      cb.addEventListener("change", () => {
+        const id = cb.dataset.id;
+        if (cb.checked) selected.add(id); else selected.delete(id);
+        cb.closest("tr").classList.toggle("selected", cb.checked);
+        updateBulkbar();
+      });
+    });
+  }
+
+  function updateBulkbar() {
+    selectedCountEl.textContent = String(selected.size);
+    bulkbar.classList.toggle("visible", selected.size > 0);
+    const allChecked = filtered.length > 0 && filtered.every((a) => selected.has(a.alert_id));
+    selectAll.checked = allChecked;
+  }
+
+  selectAll.addEventListener("change", () => {
+    if (selectAll.checked) filtered.forEach((a) => selected.add(a.alert_id));
+    else filtered.forEach((a) => selected.delete(a.alert_id));
+    renderTable();
+    updateBulkbar();
+  });
+
+  async function labelSelected(groundTruth) {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    await Promise.all(ids.map((id) =>
+      fetch(API_LABEL(id), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ground_truth: groundTruth }),
+      }).catch(() => null)
+    ));
+    selected.clear();
+    await fetchAlerts();
+  }
+
+  el("labelTpBtn").addEventListener("click", () => labelSelected("true_positive"));
+  el("labelFpBtn").addEventListener("click", () => labelSelected("false_positive"));
+  el("clearSelectionBtn").addEventListener("click", () => {
+    selected.clear();
+    renderTable();
+    updateBulkbar();
+  });
+
+  let debounceHandle = null;
+  function debouncedApply() {
+    clearTimeout(debounceHandle);
+    debounceHandle = setTimeout(applyFilters, 150);
+  }
+  searchInput.addEventListener("input", debouncedApply);
+  statusFilter.addEventListener("change", applyFilters);
+  dispositionFilter.addEventListener("change", applyFilters);
+  timeRangeFilter.addEventListener("change", applyFilters);
+  el("refreshBtn").addEventListener("click", fetchAlerts);
+
+  // --- Timeline: single-series bar chart, rounded top, square baseline ---
+
+  const svg = el("timelineSvg");
+  const tooltip = el("timelineTooltip");
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  function roundedTopBarPath(x, w, yTop, yBase, r) {
+    const rr = Math.min(r, w / 2, Math.max(yBase - yTop, 0));
+    if (rr <= 0.5) {
+      return `M${x},${yBase} L${x},${yTop} L${x + w},${yTop} L${x + w},${yBase} Z`;
+    }
+    return `M${x},${yBase}
+            L${x},${yTop + rr}
+            Q${x},${yTop} ${x + rr},${yTop}
+            L${x + w - rr},${yTop}
+            Q${x + w},${yTop} ${x + w},${yTop + rr}
+            L${x + w},${yBase} Z`;
+  }
+
+  function renderTimeline(alerts) {
+    svg.innerHTML = "";
+    const rect = svg.getBoundingClientRect();
+    const width = Math.max(rect.width, 320);
+    const height = 120;
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+
+    const padLeft = 34, padRight = 10, padTop = 10, padBottom = 22;
+    const plotW = width - padLeft - padRight;
+    const plotH = height - padTop - padBottom;
+    const yBase = padTop + plotH;
+
+    if (alerts.length === 0) {
+      const t = document.createElementNS(SVG_NS, "text");
+      t.setAttribute("x", width / 2);
+      t.setAttribute("y", height / 2);
+      t.setAttribute("text-anchor", "middle");
+      t.setAttribute("fill", "#898781");
+      t.setAttribute("font-size", "12");
+      t.textContent = "Nincs megjeleníthető adat";
+      svg.appendChild(t);
+      return;
+    }
+
+    const times = alerts.map((a) => new Date(a.received_at + (a.received_at.endsWith("Z") ? "" : "Z")).getTime());
+    const minT = Math.min(...times);
+    const maxT = Math.max(...times);
+    const spanMs = Math.max(maxT - minT, 3600 * 1000);
+    const bucketMs = spanMs > 48 * 3600 * 1000 ? 24 * 3600 * 1000 : 3600 * 1000;
+
+    const bucketStart = Math.floor(minT / bucketMs) * bucketMs;
+    const bucketEnd = Math.ceil(maxT / bucketMs) * bucketMs;
+    const bucketCount = Math.max(Math.round((bucketEnd - bucketStart) / bucketMs), 1);
+
+    const counts = new Array(bucketCount).fill(0);
+    for (const t of times) {
+      let idx = Math.floor((t - bucketStart) / bucketMs);
+      if (idx < 0) idx = 0;
+      if (idx >= bucketCount) idx = bucketCount - 1;
+      counts[idx]++;
+    }
+    const maxCount = Math.max(...counts, 1);
+
+    const niceMax = Math.ceil(maxCount / 5) * 5 || 5;
+    [0, niceMax / 2, niceMax].forEach((val) => {
+      const y = yBase - (val / niceMax) * plotH;
+      const line = document.createElementNS(SVG_NS, "line");
+      line.setAttribute("x1", padLeft);
+      line.setAttribute("x2", width - padRight);
+      line.setAttribute("y1", y);
+      line.setAttribute("y2", y);
+      line.setAttribute("stroke", "#2c2c2a");
+      line.setAttribute("stroke-width", "1");
+      svg.appendChild(line);
+
+      const label = document.createElementNS(SVG_NS, "text");
+      label.setAttribute("x", padLeft - 6);
+      label.setAttribute("y", y + 3);
+      label.setAttribute("text-anchor", "end");
+      label.setAttribute("fill", "#898781");
+      label.setAttribute("font-size", "10");
+      label.textContent = Math.round(val);
+      svg.appendChild(label);
+    });
+
+    const slotW = plotW / bucketCount;
+    const barW = Math.min(24, slotW - 2);
+
+    counts.forEach((count, i) => {
+      const barH = (count / niceMax) * plotH;
+      const x = padLeft + i * slotW + (slotW - barW) / 2;
+      const yTop = yBase - barH;
+
+      const path = document.createElementNS(SVG_NS, "path");
+      path.setAttribute("d", roundedTopBarPath(x, barW, yTop, yBase, 4));
+      path.setAttribute("fill", count > 0 ? "#3987e5" : "transparent");
+
+      const bucketTime = new Date(bucketStart + i * bucketMs);
+      const label = bucketMs >= 24 * 3600 * 1000
+        ? bucketTime.toLocaleDateString("hu-HU", { month: "short", day: "2-digit" })
+        : bucketTime.toLocaleString("hu-HU", { hour: "2-digit", minute: "2-digit" });
+
+      path.addEventListener("mousemove", (ev) => {
+        tooltip.style.display = "block";
+        tooltip.style.left = ev.clientX + 12 + "px";
+        tooltip.style.top = ev.clientY + 12 + "px";
+        tooltip.textContent = `${label} — ${count} riasztás`;
+      });
+      path.addEventListener("mouseleave", () => { tooltip.style.display = "none"; });
+
+      svg.appendChild(path);
+    });
+
+    const xTickEvery = Math.max(Math.ceil(bucketCount / 8), 1);
+    counts.forEach((_, i) => {
+      if (i % xTickEvery !== 0) return;
+      const bucketTime = new Date(bucketStart + i * bucketMs);
+      const label = bucketMs >= 24 * 3600 * 1000
+        ? bucketTime.toLocaleDateString("hu-HU", { month: "short", day: "2-digit" })
+        : bucketTime.toLocaleString("hu-HU", { hour: "2-digit" });
+      const x = padLeft + i * slotW + slotW / 2;
+      const t = document.createElementNS(SVG_NS, "text");
+      t.setAttribute("x", x);
+      t.setAttribute("y", height - 6);
+      t.setAttribute("text-anchor", "middle");
+      t.setAttribute("fill", "#898781");
+      t.setAttribute("font-size", "10");
+      t.textContent = label;
+      svg.appendChild(t);
+    });
+  }
+
+  window.addEventListener("resize", () => renderTimeline(filtered));
+
+  fetchAlerts();
+})();
+</script>
+</body>
+</html>

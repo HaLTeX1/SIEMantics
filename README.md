@@ -75,6 +75,17 @@ A mock motor logikája: a Wazuh severity szint ≥ `LLM_MOCK_SEVERITY_THRESHOLD`
 
 Minden döntésnaplóban eltárolt rekord tartalmazza, melyik motor hozta a döntést (`triage_engine`: `openai` vagy `mock`) — a `GET /api/v1/alerts` végponton ez látható, így a kiértékelésnél (6.3 fejezet) tudatosan lehet szűrni vagy megkülönböztetni, ha vegyesen futott a két motor.
 
+## Frontend (Analyst Queue dashboard)
+
+A `/` a `/ui/`-ra irányít, ami egy önálló, statikus HTML/CSS/JS oldal (`app/static/index.html`, build lépés nélkül, a FastAPI szolgálja ki `StaticFiles`-szal). Splunk Enterprise Security Analyst Queue nézete ihlette:
+
+- **Timeline** — riasztások száma időbucketenként (óránként vagy naponta, a szűrt időtartománytól függően), hover tooltippel.
+- **Szűrők** — szabadszavas keresés (rule/alert ID/forrás IP), státusz (escalated/suppressed/error), disposition (confirmed TP/FP/undetermined), időtartomány.
+- **Tábla** — minden riasztás severity, entity (forrás IP), triázs motor (openai/mock), confidence, státusz és disposition badge-ekkel, időbélyeggel.
+- **Bulk címkézés** — sorok kijelölése + "Label: True Positive" / "Label: False Positive" gomb, ami a `PATCH /api/v1/alerts/{id}/label` végpontot hívja minden kijelölt riasztásra — ez váltja ki a `curl`-lal való kézi címkézést a kiértékelési munkafolyamatban (lásd lent).
+
+Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`), nincs külön build/deploy lépés — a Docker image-ben már benne van.
+
 ## API végpontok
 
 | Metódus | Útvonal | Leírás |
@@ -123,7 +134,7 @@ A döntésnapló a `siemantics_data` named volume-ban perzisztál, túléli a ko
 
 1. Teszt/labor riasztásokat küldesz a webhookra (valós vagy szimulált támadási forgatókönyvekből).
 2. Minden riasztásnál eltárolódik: az LLM döntése, indoklása, kinyert IoC-k, feldolgozási idő (`processing_time_ms`).
-3. Utólag, a labor eredmények ismeretében, `PATCH /alerts/{id}/label`-lel felcímkézed, hogy az adott riasztás valóban true positive vagy false positive volt.
+3. Utólag, a labor eredmények ismeretében felcímkézed, hogy az adott riasztás valóban true positive vagy false positive volt — akár a `/ui/` dashboardon (sorok kijelölése + bulk label gombok), akár közvetlenül `PATCH /alerts/{id}/label`-lel.
 4. `GET /api/v1/metrics` visszaadja a konfúziós mátrixot (TP/FP/TN/FN), accuracy/precision/recall/F1-et, hamis pozitív arányt, valamint az átlag/medián/p95 feldolgozási időt — ezek kerülnek a 6.3 fejezet táblázataiba/ábráiba.
 
 ## Deployment (Forgejo CI/CD)

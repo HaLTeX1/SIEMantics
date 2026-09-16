@@ -5,7 +5,7 @@ from app.schemas import IrisCaseResult, NormalizedAlert, TriageResult
 
 _IOC_TYPE_MAP = {
     "ip": 76,  # ip-any
-    "hash": 90,  # md5/sha - IRIS resolves generically via type id in real deployments
+    "hash": 90,  # md5/sha 
     "domain": 20,
     "default": 22,  # other
 }
