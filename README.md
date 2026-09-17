@@ -59,7 +59,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza az SQLite adatbázist 
 | Változó | Leírás |
 |---|---|
 | `OPENROUTER_API_KEY` | OpenRouter API kulcs a triázshoz — **opcionális**, lásd lent. Ingyenesen igényelhető: https://openrouter.ai/keys |
-| `OPENROUTER_MODEL` | alapértelmezett: `meta-llama/llama-3.3-70b-instruct:free`. **Kizárólag `:free` végződésű modell adható meg** — az `app/llm_engine.py` ezt induláskor ellenőrzi, és nem-free modell esetén nem hív OpenRoutert (mock motorra esik vissza), így véletlenül sem keletkezhet költség |
+| `OPENROUTER_MODEL` | alapértelmezett: `openrouter/free` — ez az OpenRouter ["Free Models Router"](https://openrouter.ai/docs/cookbook/get-started/free-models-router-playground) meta-modellje, ami mindig egy aktuálisan elérhető ingyenes modellre routol, így nem törik el, ha OpenRouter megszüntet/átáraz egy konkrét `:free` modellt (ez korábban már előfordult). Kizárólag `openrouter/free` vagy `:free` végződésű modell adható meg — az `app/llm_engine.py` ezt induláskor ellenőrzi, és nem-free modell esetén nem hív OpenRoutert (mock motorra esik vissza), így véletlenül sem keletkezhet költség |
 | `LLM_MOCK_SEVERITY_THRESHOLD` | mock motor küszöbe (Wazuh severity level), alapértelmezett: `7` |
 | `IRIS_BASE_URL` | DFIR-IRIS instancia URL-je |
 | `IRIS_API_KEY` | DFIR-IRIS API kulcs |
@@ -72,7 +72,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza az SQLite adatbázist 
 
 ## LLM triázs motor és fallback
 
-Az OpenRouter API opcionális, és **kizárólag ingyenes (`:free`) modellel hívható** — ez a korlátozás kódban van kikényszerítve (`app/llm_engine.py`), nem csak konfigurációs javaslat. Ha `OPENROUTER_API_KEY` nincs beállítva, a beállított `OPENROUTER_MODEL` nem `:free` végű, vagy a hívás bármilyen okból hibázik (rate limit, timeout, hálózati hiba), a rendszer automatikusan átvált egy beépített, determinisztikus, szabály-alapú mock motorra (`app/mock_engine.py`) — ez ingyenes, API-kulcsot nem igényel, és CI/demó környezetben is azonnal működik.
+Az OpenRouter API opcionális, és **kizárólag ingyenes modellel hívható** (`openrouter/free` auto-router vagy `:free` végű modell) — ez a korlátozás kódban van kikényszerítve (`app/llm_engine.py`), nem csak konfigurációs javaslat. Ha `OPENROUTER_API_KEY` nincs beállítva, a beállított `OPENROUTER_MODEL` nem felel meg ennek, vagy a hívás bármilyen okból hibázik (rate limit, timeout, hálózati hiba, vagy OpenRouter megszüntet egy konkrét `:free` modellt), a rendszer automatikusan átvált egy beépített, determinisztikus, szabály-alapú mock motorra (`app/mock_engine.py`) — ez ingyenes, API-kulcsot nem igényel, és CI/demó környezetben is azonnal működik.
 
 A mock motor logikája: a Wazuh severity szint ≥ `LLM_MOCK_SEVERITY_THRESHOLD`, vagy a log snippetben gyanús minta (SQLi, XSS, path traversal, base64/powershell payload jelek stb.) egyezik → true positive, egyébként false positive. Az IoC-k a log snippetből regex-szel kinyert IP-kből és a forrás IP-ből állnak össze.
 

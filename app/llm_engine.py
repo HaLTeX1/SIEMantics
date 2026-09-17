@@ -11,12 +11,13 @@ logger = logging.getLogger("siemantics.llm_engine")
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Hard guardrail: only ever call a ":free" OpenRouter model, so triage can never
-# incur cost even if OPENROUTER_MODEL is misconfigured to a paid model.
-_model_is_free = settings.openrouter_model.endswith(":free")
+# Hard guardrail: only ever call a free OpenRouter model - either the auto-routing
+# "openrouter/free" meta-model or a model whose slug ends in ":free" - so triage can
+# never incur cost even if OPENROUTER_MODEL is misconfigured to a paid model.
+_model_is_free = settings.openrouter_model == "openrouter/free" or settings.openrouter_model.endswith(":free")
 if settings.openrouter_api_key and not _model_is_free:
     logger.error(
-        "OPENROUTER_MODEL=%s is not a free model (must end with ':free'); "
+        "OPENROUTER_MODEL=%s is not a free model (must be 'openrouter/free' or end with ':free'); "
         "refusing to call OpenRouter and using the mock triage engine instead",
         settings.openrouter_model,
     )

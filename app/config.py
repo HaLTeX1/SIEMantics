@@ -5,10 +5,13 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     # OpenRouter - optional; if unset (or if a call fails), triage falls back to the mock engine.
-    # Only ":free"-suffixed OpenRouter models are ever used (enforced in llm_engine.py) so
-    # triage can never incur cost, even if this is misconfigured.
+    # Default is OpenRouter's "Free Models Router" (https://openrouter.ai/docs/cookbook/get-started/free-models-router-playground),
+    # which always routes to a currently-available free model - unlike a hardcoded ":free" slug,
+    # this doesn't break when OpenRouter deprecates/repriced a specific free model (has happened before).
+    # Only "openrouter/free" or a ":free"-suffixed model are ever used (enforced in llm_engine.py)
+    # so triage can never incur cost, even if this is misconfigured.
     openrouter_api_key: str = ""
-    openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
+    openrouter_model: str = "openrouter/free"
 
     # Mock triage engine (fallback when OpenRouter is unavailable)
     llm_mock_severity_threshold: int = 7
