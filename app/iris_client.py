@@ -58,18 +58,17 @@ class IrisClient:
             "case_soc_id": alert.alert_id,
             "case_customer": settings.iris_customer_id,
         }
-        resp = await client.post("/manage/cases/add", json=payload)
-        resp.raise_for_status()
+        resp = await self._post(client, "/manage/cases/add", json=payload)
         return resp.json()["data"]["case_id"]
 
     async def _create_note_group(self, client: httpx.AsyncClient, case_id: int) -> int:
         # Notes are organized into "groups" (not "directories") pre-v3 iris-web.
-        resp = await client.post(
+        resp = await self._post(
+            client,
             "/case/notes/groups/add",
             params={"cid": case_id},
             json={"group_title": NOTE_GROUP_TITLE},
         )
-        resp.raise_for_status()
         return resp.json()["data"]["group_id"]
 
     async def _add_note(
@@ -93,13 +92,11 @@ class IrisClient:
             "note_title": "SIEMantics LLM Analysis",
             "note_content": note_content,
         }
-        resp = await client.post("/case/notes/add", params={"cid": case_id}, json=payload)
-        resp.raise_for_status()
+        await self._post(client, "/case/notes/add", params={"cid": case_id}, json=payload)
 
     async def _ioc_type_id(self, client: httpx.AsyncClient, ioc_value: str) -> int | None:
         if self._ioc_type_ids is None:
-            resp = await client.get("/manage/ioc-types/list")
-            resp.raise_for_status()
+            resp = await self._get(client, "/manage/ioc-types/list")
             self._ioc_type_ids = {row["type_name"]: row["type_id"] for row in resp.json()["data"]}
 
         type_name = "ip-any" if _IP_RE.match(ioc_value) else "other"
@@ -115,8 +112,26 @@ class IrisClient:
             "ioc_type_id": ioc_type_id,
             "ioc_tlp_id": 2,  # green, standard TLP seed data
         }
-        resp = await client.post("/case/ioc/add", params={"cid": case_id}, json=payload)
+        await self._post(client, "/case/ioc/add", params={"cid": case_id}, json=payload)
+
+    @staticmethod
+    async def _post(client: httpx.AsyncClient, path: str, **kwargs) -> httpx.Response:
+        resp = await client.post(path, **kwargs)
+        # This is a stateless, bearer-token-authenticated API client: any session
+        # cookie IRIS sets on a response must not be replayed on the next request,
+        # since ac_api_case_requires() demands a CSRF token whenever a "session"
+        # cookie is present on a POST - which we never send, causing a spurious
+        # "Invalid CSRF token" 400 on every request after the first.
+        client.cookies.clear()
         resp.raise_for_status()
+        return resp
+
+    @staticmethod
+    async def _get(client: httpx.AsyncClient, path: str, **kwargs) -> httpx.Response:
+        resp = await client.get(path, **kwargs)
+        client.cookies.clear()
+        resp.raise_for_status()
+        return resp
 
 
 iris_client = IrisClient()
