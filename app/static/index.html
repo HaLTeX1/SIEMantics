@@ -213,8 +213,8 @@
     border: 1px solid var(--border);
     color: var(--text-secondary);
   }
-  .badge-outline.engine-openai { border-color: rgba(57,135,229,0.5); color: #8fb8ef; }
-  .badge-outline.engine-mock   { border-color: rgba(144,133,233,0.5); color: #b9b2f2; }
+  .badge-outline.engine-openrouter { border-color: rgba(57,135,229,0.5); color: #8fb8ef; }
+  .badge-outline.engine-mock       { border-color: rgba(144,133,233,0.5); color: #b9b2f2; }
 
   .confidence { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
 
@@ -239,6 +239,75 @@
     color: var(--text-muted);
     font-size: 12px;
   }
+
+  tbody tr.data-row { cursor: pointer; }
+
+  .row-actions {
+    display: flex;
+    gap: 4px;
+    white-space: nowrap;
+  }
+  .icon-btn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    border-radius: 6px;
+    width: 26px;
+    height: 26px;
+    line-height: 1;
+    font-size: 13px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .icon-btn:hover { background: var(--surface-2); color: var(--text-primary); }
+  .icon-btn.expanded { color: var(--accent); border-color: var(--accent-dim); }
+
+  tr.detail-row td {
+    background: var(--surface-2);
+    padding: 0;
+  }
+  .detail-panel {
+    padding: 16px 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px 24px;
+  }
+  .detail-panel .full-width { grid-column: 1 / -1; }
+  .detail-field .label {
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .detail-field .value { color: var(--text-primary); word-break: break-word; }
+  .detail-field .value.reasoning {
+    white-space: pre-wrap;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+  }
+  .ioc-chip {
+    display: inline-block;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px 8px;
+    margin: 2px 4px 2px 0;
+    font-size: 12px;
+    font-family: ui-monospace, Consolas, monospace;
+    color: var(--text-secondary);
+  }
+  .detail-panel a.iris-link {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .detail-panel a.iris-link:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -301,6 +370,7 @@
             <th>Status</th>
             <th>Disposition</th>
             <th>Time</th>
+            <th style="width:70px;"></th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -323,10 +393,18 @@
 
   const API_ALERTS = "/api/v1/alerts?limit=500";
   const API_LABEL = (alertId) => `/api/v1/alerts/${encodeURIComponent(alertId)}/label`;
+  const API_CONFIG = "/api/v1/config";
+  const DETAIL_PAGE = (alertId) => `alert.html?id=${encodeURIComponent(alertId)}`;
 
   let allAlerts = [];
   let filtered = [];
   const selected = new Set();
+  const expandedIds = new Set();
+  let irisBaseUrl = "";
+
+  fetch(API_CONFIG).then((r) => r.ok ? r.json() : null).then((cfg) => {
+    if (cfg && cfg.iris_base_url) irisBaseUrl = cfg.iris_base_url;
+  }).catch(() => {});
 
   const el = (id) => document.getElementById(id);
   const searchInput = el("searchInput");
@@ -359,6 +437,55 @@
     if (groundTruth === "true_positive") return { label: "Confirmed TP", cls: "good" };
     if (groundTruth === "false_positive") return { label: "Confirmed FP", cls: "serious" };
     return { label: "Undetermined", cls: "muted" };
+  }
+
+  function detailField(label, valueHtml, opts) {
+    opts = opts || {};
+    const cls = "value" + (opts.mono ? " reasoning" : "");
+    return `<div class="detail-field${opts.fullWidth ? " full-width" : ""}">
+      <div class="label">${escapeHtml(label)}</div>
+      <div class="${cls}">${valueHtml}</div>
+    </div>`;
+  }
+
+  function renderDetailPanel(a) {
+    const fields = [];
+    fields.push(detailField("Alert ID", escapeHtml(a.alert_id)));
+    fields.push(detailField("Forrás IP", escapeHtml(a.source_ip || "-")));
+    fields.push(detailField("Beérkezett", fmtTime(a.received_at)));
+    fields.push(detailField("Feldolgozási idő", `${Math.round(a.processing_time_ms)} ms`));
+
+    if (a.triage_engine != null) fields.push(detailField("Triázs motor", escapeHtml(a.triage_engine)));
+    if (a.llm_confidence != null) fields.push(detailField("Confidence", Math.round(a.llm_confidence * 100) + "%"));
+    if (a.llm_is_true_positive != null) {
+      fields.push(detailField("LLM döntés", a.llm_is_true_positive ? "True positive" : "False positive"));
+    }
+
+    if (a.ground_truth) {
+      fields.push(detailField("Ground truth", escapeHtml(a.ground_truth) + (a.labeled_at ? " (" + fmtTime(a.labeled_at) + ")" : "")));
+    }
+
+    if (a.iris_case_id != null) {
+      const link = irisBaseUrl
+        ? `<a class="iris-link" href="${escapeHtml(irisBaseUrl)}/case?cid=${encodeURIComponent(a.iris_case_id)}" target="_blank" rel="noopener">Case #${escapeHtml(a.iris_case_id)} megnyitása az IRIS-ben ↗</a>`
+        : `Case #${escapeHtml(a.iris_case_id)}`;
+      fields.push(detailField("DFIR-IRIS eset", link));
+    }
+
+    if (a.llm_iocs && a.llm_iocs.length > 0) {
+      const chips = a.llm_iocs.map((ioc) => `<span class="ioc-chip">${escapeHtml(ioc)}</span>`).join("");
+      fields.push(detailField("IoC-k", chips, { fullWidth: true }));
+    }
+
+    if (a.llm_reasoning) {
+      fields.push(detailField("LLM indoklás", escapeHtml(a.llm_reasoning), { fullWidth: true, mono: true }));
+    }
+
+    if (a.error_detail) {
+      fields.push(detailField("Hiba", escapeHtml(a.error_detail), { fullWidth: true, mono: true }));
+    }
+
+    return `<div class="detail-panel">${fields.join("")}</div>`;
   }
 
   function badge(label, cls) {
@@ -436,17 +563,20 @@
     emptyState.hidden = true;
     rowCountEl.textContent = `${filtered.length} riasztás`;
 
+    const COLSPAN = 10;
+
     tableBody.innerHTML = filtered.map((a) => {
       const sev = severityInfo(a.severity);
       const st = statusInfo(a.status);
       const disp = dispositionInfo(a.ground_truth);
       const isSelected = selected.has(a.alert_id);
-      const engineCls = a.triage_engine === "openai" ? "engine-openai" : "engine-mock";
+      const isExpanded = expandedIds.has(a.alert_id);
+      const engineCls = a.triage_engine === "openrouter" ? "engine-openrouter" : "engine-mock";
       const engineLabel = a.triage_engine || "-";
       const confidence = a.llm_confidence != null ? Math.round(a.llm_confidence * 100) + "%" : "-";
 
-      return `
-        <tr class="${isSelected ? "selected" : ""}" data-id="${escapeHtml(a.alert_id)}">
+      const mainRow = `
+        <tr class="data-row ${isSelected ? "selected" : ""}" data-id="${escapeHtml(a.alert_id)}">
           <td><input type="checkbox" class="row-check" data-id="${escapeHtml(a.alert_id)}" ${isSelected ? "checked" : ""} /></td>
           <td>
             <div class="title-main">${escapeHtml(a.rule_description)}</div>
@@ -459,7 +589,19 @@
           <td>${badge(st.label, st.cls)}</td>
           <td>${badge(disp.label, disp.cls)}</td>
           <td>${fmtTime(a.received_at)}</td>
+          <td>
+            <div class="row-actions">
+              <button type="button" class="icon-btn expand-btn ${isExpanded ? "expanded" : ""}" data-id="${escapeHtml(a.alert_id)}" title="Részletek">${isExpanded ? "▾" : "▸"}</button>
+              <button type="button" class="icon-btn open-btn" data-id="${escapeHtml(a.alert_id)}" title="Megnyitás új ablakban">⧉</button>
+            </div>
+          </td>
         </tr>`;
+
+      const detailRow = isExpanded
+        ? `<tr class="detail-row" data-detail-for="${escapeHtml(a.alert_id)}"><td colspan="${COLSPAN}">${renderDetailPanel(a)}</td></tr>`
+        : "";
+
+      return mainRow + detailRow;
     }).join("");
 
     tableBody.querySelectorAll(".row-check").forEach((cb) => {
@@ -469,7 +611,36 @@
         cb.closest("tr").classList.toggle("selected", cb.checked);
         updateBulkbar();
       });
+      cb.addEventListener("click", (ev) => ev.stopPropagation());
     });
+
+    tableBody.querySelectorAll(".expand-btn").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        toggleExpanded(btn.dataset.id);
+      });
+    });
+
+    tableBody.querySelectorAll(".open-btn").forEach((btn) => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        openInNewWindow(btn.dataset.id);
+      });
+    });
+
+    tableBody.querySelectorAll("tr.data-row").forEach((row) => {
+      row.addEventListener("click", () => toggleExpanded(row.dataset.id));
+    });
+  }
+
+  function toggleExpanded(id) {
+    if (expandedIds.has(id)) expandedIds.delete(id);
+    else expandedIds.add(id);
+    renderTable();
+  }
+
+  function openInNewWindow(id) {
+    window.open(DETAIL_PAGE(id), `siemantics-alert-${id}`, "width=760,height=860,noopener");
   }
 
   function updateBulkbar() {

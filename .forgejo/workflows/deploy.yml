@@ -5,7 +5,7 @@
 #   DEPLOY_SSH_KEY  - private key with access to DEPLOY_USER@DEPLOY_HOST
 #   DEPLOY_PATH     - absolute path on the remote server to deploy into
 #
-# The remote server's .env (OPENAI_API_KEY, IRIS_BASE_URL, IRIS_API_KEY, ...)
+# The remote server's .env (OPENROUTER_API_KEY, IRIS_BASE_URL, IRIS_API_KEY, ...)
 # is created out-of-band on the server itself, not by this workflow, so real
 # secrets never touch the CI runner beyond the SSH key.
 
@@ -50,7 +50,7 @@ jobs:
 
       - name: Import smoke test
         env:
-          OPENAI_API_KEY: dummy
+          OPENROUTER_API_KEY: dummy
           IRIS_BASE_URL: https://iris.invalid
           IRIS_API_KEY: dummy
         run: python -c "from app.main import app"

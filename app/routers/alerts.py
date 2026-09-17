@@ -10,7 +10,7 @@ from app.enums import AlertStatus
 from app.iris_client import iris_client
 from app.llm_engine import triage_alert
 from app.normalize import normalize_wazuh_alert
-from app.repository import create_alert_record, list_alert_records, set_ground_truth
+from app.repository import create_alert_record, get_latest_alert_record, list_alert_records, set_ground_truth
 from app.schemas import AlertRecordOut, LabelRequest, NormalizedAlert, WazuhAlertPayload
 
 logger = logging.getLogger("siemantics.alerts")
@@ -115,6 +115,20 @@ async def receive_alert(
 @router.get("/alerts", response_model=list[AlertRecordOut])
 async def list_alerts(limit: int = 100, offset: int = 0, session: AsyncSession = Depends(get_session)):
     return await list_alert_records(session, limit=limit, offset=offset)
+
+
+@router.get("/alerts/{alert_id}", response_model=AlertRecordOut)
+async def get_alert(alert_id: str, session: AsyncSession = Depends(get_session)):
+    record = await get_latest_alert_record(session, alert_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="alert not found")
+    return record
+
+
+@router.get("/config")
+async def get_public_config():
+    """Non-secret config the frontend needs (e.g. to link out to the IRIS case)."""
+    return {"iris_base_url": settings.iris_base_url.rstrip("/")}
 
 
 @router.patch("/alerts/{alert_id}/label", response_model=AlertRecordOut)

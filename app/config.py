@@ -4,11 +4,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # OpenAI - optional; if unset (or if a call fails), triage falls back to the mock engine
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    # OpenRouter - optional; if unset (or if a call fails), triage falls back to the mock engine.
+    # Only ":free"-suffixed OpenRouter models are ever used (enforced in llm_engine.py) so
+    # triage can never incur cost, even if this is misconfigured.
+    openrouter_api_key: str = ""
+    openrouter_model: str = "meta-llama/llama-3.3-70b-instruct:free"
 
-    # Mock triage engine (fallback when OpenAI is unavailable)
+    # Mock triage engine (fallback when OpenRouter is unavailable)
     llm_mock_severity_threshold: int = 7
 
     # DFIR-IRIS

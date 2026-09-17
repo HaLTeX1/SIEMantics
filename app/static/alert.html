@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIEMantics - Riasztás részletei</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #202020;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --border:      rgba(255,255,255,0.10);
+    --accent:      #3987e5;
+    --good:        #0ca30c;
+    --warning:     #fab219;
+    --serious:     #ec835a;
+    --critical:    #d03b3b;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+
+  .wrap { max-width: 760px; margin: 0 auto; padding: 24px 20px 48px; }
+
+  h1 { font-size: 17px; margin: 0 0 4px; }
+  .sub { color: var(--text-muted); font-size: 12px; margin-bottom: 20px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .badge-fill-good     { background: rgba(12,163,12,0.16);  color: #7be07b; }
+  .badge-fill-warning  { background: rgba(250,178,25,0.16); color: #fdd68a; }
+  .badge-fill-serious  { background: rgba(236,131,90,0.16); color: #f3b299; }
+  .badge-fill-critical { background: rgba(208,59,59,0.18);  color: #f29b9b; }
+  .badge-fill-muted    { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+  .badges-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 20px; }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px 24px;
+  }
+  .field.full-width { grid-column: 1 / -1; }
+  .field .label {
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  .field .value { color: var(--text-primary); word-break: break-word; }
+  .field .value.mono {
+    white-space: pre-wrap;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    font-family: ui-monospace, Consolas, monospace;
+  }
+
+  .ioc-chip {
+    display: inline-block;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 2px 8px;
+    margin: 2px 4px 2px 0;
+    font-size: 12px;
+    font-family: ui-monospace, Consolas, monospace;
+    color: var(--text-secondary);
+  }
+
+  a.iris-link { color: var(--accent); text-decoration: none; }
+  a.iris-link:hover { text-decoration: underline; }
+
+  .state { padding: 40px 10px; text-align: center; color: var(--text-muted); }
+  .state.error { color: var(--critical); }
+</style>
+</head>
+<body>
+  <div class="wrap" id="content">
+    <div class="state" id="loadingState">Betöltés...</div>
+  </div>
+
+<script>
+(function () {
+  "use strict";
+
+  const params = new URLSearchParams(window.location.search);
+  const alertId = params.get("id");
+  const content = document.getElementById("content");
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return "-";
+    const d = new Date(iso + (iso.endsWith("Z") ? "" : "Z"));
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("hu-HU", { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function severityInfo(level) {
+    if (level >= 12) return { label: "Critical", cls: "critical" };
+    if (level >= 9) return { label: "High", cls: "serious" };
+    if (level >= 5) return { label: "Medium", cls: "warning" };
+    return { label: "Low", cls: "good" };
+  }
+
+  function statusInfo(status) {
+    if (status === "escalated") return { label: "Escalated", cls: "good" };
+    if (status === "error") return { label: "Error", cls: "critical" };
+    return { label: "Suppressed", cls: "muted" };
+  }
+
+  function dispositionInfo(groundTruth) {
+    if (groundTruth === "true_positive") return { label: "Confirmed TP", cls: "good" };
+    if (groundTruth === "false_positive") return { label: "Confirmed FP", cls: "serious" };
+    return { label: "Undetermined", cls: "muted" };
+  }
+
+  function badge(label, cls) {
+    return `<span class="badge badge-fill-${cls}"><span class="dot" style="background:currentColor"></span>${escapeHtml(label)}</span>`;
+  }
+
+  function field(label, valueHtml, opts) {
+    opts = opts || {};
+    const cls = "value" + (opts.mono ? " mono" : "");
+    return `<div class="field${opts.fullWidth ? " full-width" : ""}">
+      <div class="label">${escapeHtml(label)}</div>
+      <div class="${cls}">${valueHtml}</div>
+    </div>`;
+  }
+
+  function render(a, irisBaseUrl) {
+    document.title = `SIEMantics - ${a.alert_id}`;
+    const sev = severityInfo(a.severity);
+    const st = statusInfo(a.status);
+    const disp = dispositionInfo(a.ground_truth);
+
+    const fields = [];
+    fields.push(field("Alert ID", escapeHtml(a.alert_id)));
+    fields.push(field("Forrás IP", escapeHtml(a.source_ip || "-")));
+    fields.push(field("Beérkezett", fmtTime(a.received_at)));
+    fields.push(field("Feldolgozási idő", `${Math.round(a.processing_time_ms)} ms`));
+    if (a.triage_engine != null) fields.push(field("Triázs motor", escapeHtml(a.triage_engine)));
+    if (a.llm_confidence != null) fields.push(field("Confidence", Math.round(a.llm_confidence * 100) + "%"));
+    if (a.llm_is_true_positive != null) {
+      fields.push(field("LLM döntés", a.llm_is_true_positive ? "True positive" : "False positive"));
+    }
+    if (a.ground_truth) {
+      fields.push(field("Ground truth", escapeHtml(a.ground_truth) + (a.labeled_at ? " (" + fmtTime(a.labeled_at) + ")" : "")));
+    }
+    if (a.iris_case_id != null) {
+      const link = irisBaseUrl
+        ? `<a class="iris-link" href="${escapeHtml(irisBaseUrl)}/case?cid=${encodeURIComponent(a.iris_case_id)}" target="_blank" rel="noopener">Case #${escapeHtml(a.iris_case_id)} megnyitása az IRIS-ben ↗</a>`
+        : `Case #${escapeHtml(a.iris_case_id)}`;
+      fields.push(field("DFIR-IRIS eset", link));
+    }
+    if (a.llm_iocs && a.llm_iocs.length > 0) {
+      const chips = a.llm_iocs.map((ioc) => `<span class="ioc-chip">${escapeHtml(ioc)}</span>`).join("");
+      fields.push(field("IoC-k", chips, { fullWidth: true }));
+    }
+    if (a.llm_reasoning) {
+      fields.push(field("LLM indoklás", escapeHtml(a.llm_reasoning), { fullWidth: true, mono: true }));
+    }
+    if (a.error_detail) {
+      fields.push(field("Hiba", escapeHtml(a.error_detail), { fullWidth: true, mono: true }));
+    }
+
+    content.innerHTML = `
+      <h1>${escapeHtml(a.rule_description)}</h1>
+      <div class="sub">${escapeHtml(a.alert_id)}</div>
+      <div class="badges-row">
+        ${badge(sev.label, sev.cls)}
+        ${badge(st.label, st.cls)}
+        ${badge(disp.label, disp.cls)}
+      </div>
+      <div class="panel">${fields.join("")}</div>
+    `;
+  }
+
+  async function load() {
+    if (!alertId) {
+      content.innerHTML = '<div class="state error">Hiányzó alert azonosító (?id=...).</div>';
+      return;
+    }
+    try {
+      const [alertRes, configRes] = await Promise.all([
+        fetch(`/api/v1/alerts/${encodeURIComponent(alertId)}`),
+        fetch("/api/v1/config").catch(() => null),
+      ]);
+      if (!alertRes.ok) throw new Error(`HTTP ${alertRes.status}`);
+      const alertData = await alertRes.json();
+      const configData = configRes && configRes.ok ? await configRes.json() : {};
+      render(alertData, configData.iris_base_url || "");
+    } catch (err) {
+      content.innerHTML = `<div class="state error">Nem sikerült betölteni a riasztást: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

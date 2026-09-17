@@ -59,7 +59,7 @@ class TriageResult(BaseModel):
     reasoning: str
     iocs: list[str] = Field(default_factory=list)
     recommended_severity: Optional[str] = None
-    engine: Literal["openai", "mock"]
+    engine: Literal["openrouter", "mock"]
 
 
 # --- IRIS response ---

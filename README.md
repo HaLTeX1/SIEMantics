@@ -1,6 +1,6 @@
 # SIEMantics
 
-Saját fejlesztésű SOAR keretrendszer: Wazuh riasztásokat fogad webhookon, normalizálja, LLM-alapú triázzsal (OpenAI) szűri a hamis pozitívokat, majd valós incidens esetén esetet nyit a DFIR-IRIS-ben. Minden döntés perzisztálva van egy döntésnaplóba, amiből utólagos címkézéssel (ground truth) pontosság/precision/recall/hamis pozitív arány és feldolgozási idő számolható.
+Saját fejlesztésű SOAR keretrendszer: Wazuh riasztásokat fogad webhookon, normalizálja, LLM-alapú triázzsal (OpenRouter, kizárólag ingyenes modellel) szűri a hamis pozitívokat, majd valós incidens esetén esetet nyit a DFIR-IRIS-ben. Minden döntés perzisztálva van egy döntésnaplóba, amiből utólagos címkézéssel (ground truth) pontosság/precision/recall/hamis pozitív arány és feldolgozási idő számolható.
 
 ## Adatfolyam
 
@@ -22,7 +22,7 @@ app/
 ├── enums.py           # AlertStatus, GroundTruth
 ├── schemas.py         # Pydantic API sémák (bemenet/kimenet)
 ├── normalize.py        # Wazuh payload -> NormalizedAlert
-├── llm_engine.py        # OpenAI triázs (structured output)
+├── llm_engine.py        # OpenRouter triázs (csak ":free" modell)
 ├── iris_client.py       # DFIR-IRIS eset/note/IoC API kliens
 ├── db.py              # SQLAlchemy async engine/session
 ├── models.py           # AlertRecord ORM tábla (döntésnapló)
@@ -36,7 +36,7 @@ app/
 
 - Python 3.12 (a Dockerfile és a CI is ezt használja)
 - Docker + `docker-compose` (V1, önálló bináris) (konténeres futtatáshoz/deployhoz)
-- OpenAI API kulcs
+- OpenRouter API kulcs (ingyenes, https://openrouter.ai/keys) — opcionális, lásd lent
 - Elérhető DFIR-IRIS instancia + API kulcs
 
 ## Helyi futtatás (venv)
@@ -47,7 +47,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 
 cp .env.example .env
-# .env kitöltése: OPENAI_API_KEY, IRIS_BASE_URL, IRIS_API_KEY, ...
+# .env kitöltése: OPENROUTER_API_KEY, IRIS_BASE_URL, IRIS_API_KEY, ...
 
 uvicorn app.main:app --reload
 ```
@@ -58,8 +58,8 @@ Az app induláskor (`lifespan`) automatikusan létrehozza az SQLite adatbázist 
 
 | Változó | Leírás |
 |---|---|
-| `OPENAI_API_KEY` | OpenAI API kulcs a triázshoz — **opcionális**, lásd lent |
-| `OPENAI_MODEL` | alapértelmezett: `gpt-4o-mini` |
+| `OPENROUTER_API_KEY` | OpenRouter API kulcs a triázshoz — **opcionális**, lásd lent. Ingyenesen igényelhető: https://openrouter.ai/keys |
+| `OPENROUTER_MODEL` | alapértelmezett: `meta-llama/llama-3.3-70b-instruct:free`. **Kizárólag `:free` végződésű modell adható meg** — az `app/llm_engine.py` ezt induláskor ellenőrzi, és nem-free modell esetén nem hív OpenRoutert (mock motorra esik vissza), így véletlenül sem keletkezhet költség |
 | `LLM_MOCK_SEVERITY_THRESHOLD` | mock motor küszöbe (Wazuh severity level), alapértelmezett: `7` |
 | `IRIS_BASE_URL` | DFIR-IRIS instancia URL-je |
 | `IRIS_API_KEY` | DFIR-IRIS API kulcs |
@@ -72,11 +72,11 @@ Az app induláskor (`lifespan`) automatikusan létrehozza az SQLite adatbázist 
 
 ## LLM triázs motor és fallback
 
-Az OpenAI API opcionális. Ha `OPENAI_API_KEY` nincs beállítva, vagy a hívás bármilyen okból hibázik (kvóta, timeout, hálózati hiba), a rendszer automatikusan átvált egy beépített, determinisztikus, szabály-alapú mock motorra (`app/mock_engine.py`) — ez ingyenes, API-kulcsot nem igényel, és CI/demó környezetben is azonnal működik.
+Az OpenRouter API opcionális, és **kizárólag ingyenes (`:free`) modellel hívható** — ez a korlátozás kódban van kikényszerítve (`app/llm_engine.py`), nem csak konfigurációs javaslat. Ha `OPENROUTER_API_KEY` nincs beállítva, a beállított `OPENROUTER_MODEL` nem `:free` végű, vagy a hívás bármilyen okból hibázik (rate limit, timeout, hálózati hiba), a rendszer automatikusan átvált egy beépített, determinisztikus, szabály-alapú mock motorra (`app/mock_engine.py`) — ez ingyenes, API-kulcsot nem igényel, és CI/demó környezetben is azonnal működik.
 
 A mock motor logikája: a Wazuh severity szint ≥ `LLM_MOCK_SEVERITY_THRESHOLD`, vagy a log snippetben gyanús minta (SQLi, XSS, path traversal, base64/powershell payload jelek stb.) egyezik → true positive, egyébként false positive. Az IoC-k a log snippetből regex-szel kinyert IP-kből és a forrás IP-ből állnak össze.
 
-Minden döntésnaplóban eltárolt rekord tartalmazza, melyik motor hozta a döntést (`triage_engine`: `openai` vagy `mock`) — a `GET /api/v1/alerts` végponton ez látható, így a kiértékelésnél (6.3 fejezet) tudatosan lehet szűrni vagy megkülönböztetni, ha vegyesen futott a két motor.
+Minden döntésnaplóban eltárolt rekord tartalmazza, melyik motor hozta a döntést (`triage_engine`: `openrouter` vagy `mock`) — a `GET /api/v1/alerts` végponton ez látható, így a kiértékelésnél (6.3 fejezet) tudatosan lehet szűrni vagy megkülönböztetni, ha vegyesen futott a két motor.
 
 ## Frontend (Analyst Queue dashboard)
 
@@ -84,10 +84,11 @@ A `/` a `/ui/`-ra irányít, ami egy önálló, statikus HTML/CSS/JS oldal (`app
 
 - **Timeline** — riasztások száma időbucketenként (óránként vagy naponta, a szűrt időtartománytól függően), hover tooltippel.
 - **Szűrők** — szabadszavas keresés (rule/alert ID/forrás IP), státusz (escalated/suppressed/error), disposition (confirmed TP/FP/undetermined), időtartomány.
-- **Tábla** — minden riasztás severity, entity (forrás IP), triázs motor (openai/mock), confidence, státusz és disposition badge-ekkel, időbélyeggel.
+- **Tábla** — minden riasztás severity, entity (forrás IP), triázs motor (openrouter/mock), confidence, státusz és disposition badge-ekkel, időbélyeggel.
+- **Riasztás részletei** — egy sorra kattintva (vagy a ▸ gombbal) a sor alatt kinyílik egy panel a teljes LLM indoklással, kinyert IoC-kkel, hibaüzenettel (ha volt) és a DFIR-IRIS eset linkjével. A ⧉ gombbal ugyanez a részletnézet önálló (popup) ablakban is megnyitható (`app/static/alert.html`, a `GET /api/v1/alerts/{alert_id}` végpontot hívja).
 - **Bulk címkézés** — sorok kijelölése + "Label: True Positive" / "Label: False Positive" gomb, ami a `PATCH /api/v1/alerts/{id}/label` végpontot hívja minden kijelölt riasztásra — ez váltja ki a `curl`-lal való kézi címkézést a kiértékelési munkafolyamatban (lásd lent).
 
-Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`), nincs külön build/deploy lépés — a Docker image-ben már benne van.
+Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`, `GET /api/v1/alerts/{id}`, `GET /api/v1/config`), nincs külön build/deploy lépés — a Docker image-ben már benne van.
 
 ## API végpontok
 
@@ -95,7 +96,9 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`)
 |---|---|---|
 | `POST` | `/api/v1/alerts` | Wazuh riasztás fogadása, triázs, esetleges IRIS eset nyitás |
 | `GET` | `/api/v1/alerts` | eltárolt riasztás-rekordok listázása (`limit`, `offset`) |
+| `GET` | `/api/v1/alerts/{alert_id}` | egy riasztás-rekord teljes részlete (a dashboard részletnézetéhez) |
 | `PATCH` | `/api/v1/alerts/{alert_id}/label` | ground truth címkézés (`true_positive` / `false_positive`) |
+| `GET` | `/api/v1/config` | nem-titkos konfiguráció a frontendnek (pl. `iris_base_url` az eset-linkhez) |
 | `GET` | `/api/v1/metrics` | konfúziós mátrix + feldolgozási idő statisztikák a címkézett rekordokból |
 | `GET` | `/healthz` | health check |
 
@@ -185,7 +188,7 @@ A `.forgejo/workflows/deploy.yml` három jobot futtat `main`-re pusholáskor:
 | `DEPLOY_SSH_KEY` | dedikált privát SSH kulcs teljes tartalma |
 | `DEPLOY_PATH` | pl. `/opt/siemantics` |
 
-A célszerveren a valódi `.env` fájlt (OpenAI/IRIS kulcsokkal) kézzel kell létrehozni a `DEPLOY_PATH` alatt, első deploy előtt — a CI ezt sosem írja felül, sosem tölti fel.
+A célszerveren a valódi `.env` fájlt (OpenRouter/IRIS kulcsokkal) kézzel kell létrehozni a `DEPLOY_PATH` alatt, első deploy előtt — a CI ezt sosem írja felül, sosem tölti fel.
 
 ### Szerver előkészítése (dedikált deploy user)
 
