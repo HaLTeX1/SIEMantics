@@ -1,9 +1,13 @@
+import re
+
 import httpx
 
 from app.config import settings
 from app.schemas import IrisCaseResult, NormalizedAlert, TriageResult
 
-NOTE_DIRECTORY_NAME = "SIEMantics"
+NOTE_GROUP_TITLE = "SIEMantics"
+
+_IP_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 
 
 class IrisClient:
@@ -13,6 +17,9 @@ class IrisClient:
             "Authorization": f"Bearer {settings.iris_api_key}",
             "Content-Type": "application/json",
         }
+        # ioc_type_id seed values vary per IRIS instance/version, so they're looked
+        # up dynamically via /manage/ioc-types/list instead of being hardcoded.
+        self._ioc_type_ids: dict[str, int] | None = None
 
     async def create_case_from_alert(
         self, alert: NormalizedAlert, triage: TriageResult
@@ -25,8 +32,8 @@ class IrisClient:
         ) as client:
             case_id = await self._create_case(client, alert, triage)
 
-            directory_id = await self._create_note_directory(client, case_id)
-            await self._add_note(client, case_id, directory_id, alert, triage)
+            group_id = await self._create_note_group(client, case_id)
+            await self._add_note(client, case_id, group_id, alert, triage)
 
             for ioc in triage.iocs:
                 await self._add_ioc(client, case_id, ioc)
@@ -39,35 +46,37 @@ class IrisClient:
     async def _create_case(
         self, client: httpx.AsyncClient, alert: NormalizedAlert, triage: TriageResult
     ) -> int:
-        # POST /api/v2/cases - field names verified against iris-web's
-        # CaseSchemaForAPIV2 (app/schema/marshables.py): case_customer (not
-        # case_customer_id) is the field actually read on the wire.
+        # POST /manage/cases/add - the legacy case API. /api/v2/cases doesn't exist
+        # on every iris-web version (confirmed 404 on 2.3.7), so this targets the
+        # route that's been stable since early iris-web releases. Field names
+        # verified against CaseSchema in iris-web's app/schema/marshables.py:
+        # case_customer (not case_customer_id) is the field actually read on the
+        # wire, and case_soc_id maps to a String(256) column - any alert_id works.
         payload = {
             "case_name": f"[SIEMantics] {alert.rule_description}"[:256],
             "case_description": triage.reasoning,
             "case_soc_id": alert.alert_id,
             "case_customer": settings.iris_customer_id,
         }
-        resp = await client.post("/api/v2/cases", json=payload)
+        resp = await client.post("/manage/cases/add", json=payload)
         resp.raise_for_status()
-        return resp.json()["case_id"]
+        return resp.json()["data"]["case_id"]
 
-    async def _create_note_directory(self, client: httpx.AsyncClient, case_id: int) -> int:
-        # Legacy (v1) endpoint - notes have no v2 route yet in iris-web.
-        # The case id is a query param (?cid=), not a body field.
+    async def _create_note_group(self, client: httpx.AsyncClient, case_id: int) -> int:
+        # Notes are organized into "groups" (not "directories") pre-v3 iris-web.
         resp = await client.post(
-            "/case/notes/directories/add",
+            "/case/notes/groups/add",
             params={"cid": case_id},
-            json={"name": NOTE_DIRECTORY_NAME},
+            json={"group_title": NOTE_GROUP_TITLE},
         )
         resp.raise_for_status()
-        return resp.json()["data"]["id"]
+        return resp.json()["data"]["group_id"]
 
     async def _add_note(
         self,
         client: httpx.AsyncClient,
         case_id: int,
-        directory_id: int,
+        group_id: int,
         alert: NormalizedAlert,
         triage: TriageResult,
     ) -> None:
@@ -80,22 +89,33 @@ class IrisClient:
             f"## Original log snippet\n```\n{alert.log_snippet}\n```"
         )
         payload = {
-            "directory_id": directory_id,
+            "group_id": group_id,
             "note_title": "SIEMantics LLM Analysis",
             "note_content": note_content,
         }
         resp = await client.post("/case/notes/add", params={"cid": case_id}, json=payload)
         resp.raise_for_status()
 
+    async def _ioc_type_id(self, client: httpx.AsyncClient, ioc_value: str) -> int | None:
+        if self._ioc_type_ids is None:
+            resp = await client.get("/manage/ioc-types/list")
+            resp.raise_for_status()
+            self._ioc_type_ids = {row["type_name"]: row["type_id"] for row in resp.json()["data"]}
+
+        type_name = "ip-any" if _IP_RE.match(ioc_value) else "other"
+        return self._ioc_type_ids.get(type_name, self._ioc_type_ids.get("other"))
+
     async def _add_ioc(self, client: httpx.AsyncClient, case_id: int, ioc_value: str) -> None:
-        # POST /api/v2/cases/{case_id}/iocs - ioc_type_id deliberately omitted:
-        # it's optional, and IOC type seed IDs vary per IRIS instance/version,
-        # so guessing one risks a 400 "Invalid IOC type ID" rejection.
+        ioc_type_id = await self._ioc_type_id(client, ioc_value)
+        if ioc_type_id is None:
+            return
+
         payload = {
             "ioc_value": ioc_value,
+            "ioc_type_id": ioc_type_id,
             "ioc_tlp_id": 2,  # green, standard TLP seed data
         }
-        resp = await client.post(f"/api/v2/cases/{case_id}/iocs", json=payload)
+        resp = await client.post("/case/ioc/add", params={"cid": case_id}, json=payload)
         resp.raise_for_status()
 
 
