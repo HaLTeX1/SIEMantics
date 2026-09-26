@@ -43,3 +43,13 @@ async def set_ground_truth(session: AsyncSession, alert_id: str, ground_truth: G
     await session.commit()
     await session.refresh(record)
     return record
+
+
+async def set_assignee(session: AsyncSession, alert_id: str, assignee: str | None) -> AlertRecord | None:
+    record = await get_latest_alert_record(session, alert_id)
+    if record is None:
+        return None
+    record.assigned_to = assignee or None
+    await session.commit()
+    await session.refresh(record)
+    return record

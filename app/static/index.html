@@ -70,6 +70,24 @@
   #refreshBtn:hover { background: #262625; }
   #lastUpdated { color: var(--text-muted); font-size: 12px; margin-left: 10px; }
 
+  .identity {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-right: 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .identity input {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 12px;
+    width: 140px;
+  }
+
   .filters {
     display: flex;
     flex-wrap: wrap;
@@ -308,6 +326,22 @@
     text-decoration: none;
   }
   .detail-panel a.iris-link:hover { text-decoration: underline; }
+
+  .ti-entry {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    font-size: 12.5px;
+  }
+  .ti-entry .ti-ioc {
+    font-family: ui-monospace, Consolas, monospace;
+    font-weight: 600;
+    margin-bottom: 3px;
+  }
+  .ti-entry .ti-line { color: var(--text-secondary); }
+  .ti-entry .ti-none { color: var(--text-muted); font-style: italic; }
 </style>
 </head>
 <body>
@@ -318,6 +352,10 @@
         <span class="sub">Analyst Queue</span>
       </div>
       <div>
+        <span class="identity">
+          Analiszta:
+          <input id="analystNameInput" type="text" placeholder="a neved" />
+        </span>
         <button id="refreshBtn" type="button">Refresh</button>
         <span id="lastUpdated"></span>
       </div>
@@ -343,6 +381,11 @@
         <option value="720">Utolsó 30 nap</option>
         <option value="0">Összes</option>
       </select>
+      <select id="assigneeFilter">
+        <option value="">Mindenki</option>
+        <option value="me">Rám kiosztva</option>
+        <option value="unassigned">Kiosztatlan</option>
+      </select>
     </div>
 
     <div class="card">
@@ -354,6 +397,8 @@
       <span class="count"><span id="selectedCount">0</span> kiválasztva</span>
       <button class="btn primary" id="labelTpBtn" type="button">Label: True Positive</button>
       <button class="btn outline-serious" id="labelFpBtn" type="button">Label: False Positive</button>
+      <button class="btn" id="assignMeBtn" type="button">Assign to me</button>
+      <button class="btn ghost" id="unassignBtn" type="button">Unassign</button>
       <button class="btn ghost" id="clearSelectionBtn" type="button">Kijelölés törlése</button>
     </div>
 
@@ -369,6 +414,7 @@
             <th>Confidence</th>
             <th>Status</th>
             <th>Disposition</th>
+            <th>Assigned</th>
             <th>Time</th>
             <th style="width:70px;"></th>
           </tr>
@@ -393,14 +439,23 @@
 
   const API_ALERTS = "/api/v1/alerts?limit=500";
   const API_LABEL = (alertId) => `/api/v1/alerts/${encodeURIComponent(alertId)}/label`;
+  const API_ASSIGN = (alertId) => `/api/v1/alerts/${encodeURIComponent(alertId)}/assign`;
   const API_CONFIG = "/api/v1/config";
   const DETAIL_PAGE = (alertId) => `alert.html?id=${encodeURIComponent(alertId)}`;
+  const ANALYST_NAME_KEY = "siemantics_analyst_name";
 
   let allAlerts = [];
   let filtered = [];
   const selected = new Set();
   const expandedIds = new Set();
   let irisBaseUrl = "";
+
+  function getAnalystName() {
+    try { return localStorage.getItem(ANALYST_NAME_KEY) || ""; } catch { return ""; }
+  }
+  function setAnalystName(name) {
+    try { localStorage.setItem(ANALYST_NAME_KEY, name); } catch {}
+  }
 
   fetch(API_CONFIG).then((r) => r.ok ? r.json() : null).then((cfg) => {
     if (cfg && cfg.iris_base_url) irisBaseUrl = cfg.iris_base_url;
@@ -411,6 +466,8 @@
   const statusFilter = el("statusFilter");
   const dispositionFilter = el("dispositionFilter");
   const timeRangeFilter = el("timeRangeFilter");
+  const assigneeFilter = el("assigneeFilter");
+  const analystNameInput = el("analystNameInput");
   const tableBody = el("tableBody");
   const emptyState = el("emptyState");
   const errorState = el("errorState");
@@ -419,6 +476,9 @@
   const selectAll = el("selectAll");
   const rowCountEl = el("rowCount");
   const lastUpdatedEl = el("lastUpdated");
+
+  analystNameInput.value = getAnalystName();
+  analystNameInput.addEventListener("change", () => setAnalystName(analystNameInput.value.trim()));
 
   function severityInfo(level) {
     if (level >= 12) return { label: "Critical", cls: "critical" };
@@ -448,12 +508,37 @@
     </div>`;
   }
 
+  function renderTiSection(a) {
+    if (a.ioc_enrichment && a.ioc_enrichment.length > 0) {
+      const entries = a.ioc_enrichment.map((e) => {
+        const lines = [];
+        if (e.virustotal) {
+          const vt = e.virustotal;
+          lines.push(`<div class="ti-line">VT: ${vt.malicious} malicious / ${vt.suspicious} suspicious (reputation ${vt.reputation ?? "-"}, ${escapeHtml(vt.country || "?")}, ${escapeHtml(vt.as_owner || "unknown AS")})</div>`);
+        }
+        if (e.abuseipdb) {
+          const ab = e.abuseipdb;
+          lines.push(`<div class="ti-line">AbuseIPDB: ${ab.abuse_confidence_score}% confidence, ${ab.total_reports ?? 0} reports (${escapeHtml(ab.country_code || "?")}, ${escapeHtml(ab.isp || "unknown ISP")})</div>`);
+        }
+        if (lines.length === 0) lines.push('<div class="ti-none">nincs enrichment adat</div>');
+        return `<div class="ti-entry"><div class="ti-ioc">${escapeHtml(e.ioc)}</div>${lines.join("")}</div>`;
+      }).join("");
+      return detailField("Threat Intelligence", entries, { fullWidth: true });
+    }
+    if (a.llm_iocs && a.llm_iocs.length > 0) {
+      const chips = a.llm_iocs.map((ioc) => `<span class="ioc-chip">${escapeHtml(ioc)}</span>`).join("");
+      return detailField("IoC-k", chips, { fullWidth: true });
+    }
+    return null;
+  }
+
   function renderDetailPanel(a) {
     const fields = [];
     fields.push(detailField("Alert ID", escapeHtml(a.alert_id)));
     fields.push(detailField("Forrás IP", escapeHtml(a.source_ip || "-")));
     fields.push(detailField("Beérkezett", fmtTime(a.received_at)));
     fields.push(detailField("Feldolgozási idő", `${Math.round(a.processing_time_ms)} ms`));
+    fields.push(detailField("Kiosztva", a.assigned_to ? escapeHtml(a.assigned_to) : '<span style="color:var(--text-muted)">Kiosztatlan</span>'));
 
     if (a.triage_engine != null) fields.push(detailField("Triázs motor", escapeHtml(a.triage_engine)));
     if (a.llm_confidence != null) fields.push(detailField("Confidence", Math.round(a.llm_confidence * 100) + "%"));
@@ -472,10 +557,8 @@
       fields.push(detailField("DFIR-IRIS eset", link));
     }
 
-    if (a.llm_iocs && a.llm_iocs.length > 0) {
-      const chips = a.llm_iocs.map((ioc) => `<span class="ioc-chip">${escapeHtml(ioc)}</span>`).join("");
-      fields.push(detailField("IoC-k", chips, { fullWidth: true }));
-    }
+    const tiField = renderTiSection(a);
+    if (tiField) fields.push(tiField);
 
     if (a.llm_reasoning) {
       fields.push(detailField("LLM indoklás", escapeHtml(a.llm_reasoning), { fullWidth: true, mono: true }));
@@ -524,8 +607,10 @@
     const q = searchInput.value.trim().toLowerCase();
     const status = statusFilter.value;
     const disposition = dispositionFilter.value;
+    const assignee = assigneeFilter.value;
     const hours = parseInt(timeRangeFilter.value, 10);
     const cutoff = hours > 0 ? Date.now() - hours * 3600 * 1000 : null;
+    const analystName = getAnalystName();
 
     filtered = allAlerts.filter((a) => {
       if (status && a.status !== status) return false;
@@ -533,6 +618,8 @@
         const gt = a.ground_truth || "undetermined";
         if (gt !== disposition) return false;
       }
+      if (assignee === "unassigned" && a.assigned_to) return false;
+      if (assignee === "me" && (!a.assigned_to || a.assigned_to !== analystName)) return false;
       if (cutoff !== null) {
         const t = new Date(a.received_at + (a.received_at.endsWith("Z") ? "" : "Z")).getTime();
         if (t < cutoff) return false;
@@ -563,7 +650,7 @@
     emptyState.hidden = true;
     rowCountEl.textContent = `${filtered.length} riasztás`;
 
-    const COLSPAN = 10;
+    const COLSPAN = 11;
 
     tableBody.innerHTML = filtered.map((a) => {
       const sev = severityInfo(a.severity);
@@ -588,6 +675,7 @@
           <td class="confidence">${confidence}</td>
           <td>${badge(st.label, st.cls)}</td>
           <td>${badge(disp.label, disp.cls)}</td>
+          <td>${a.assigned_to ? escapeHtml(a.assigned_to) : '<span style="color:var(--text-muted)">-</span>'}</td>
           <td>${fmtTime(a.received_at)}</td>
           <td>
             <div class="row-actions">
@@ -671,8 +759,31 @@
     await fetchAlerts();
   }
 
+  async function assignSelected(assignee) {
+    const ids = Array.from(selected);
+    if (ids.length === 0) return;
+    await Promise.all(ids.map((id) =>
+      fetch(API_ASSIGN(id), {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignee }),
+      }).catch(() => null)
+    ));
+    selected.clear();
+    await fetchAlerts();
+  }
+
   el("labelTpBtn").addEventListener("click", () => labelSelected("true_positive"));
   el("labelFpBtn").addEventListener("click", () => labelSelected("false_positive"));
+  el("assignMeBtn").addEventListener("click", () => {
+    const name = getAnalystName();
+    if (!name) {
+      alert("Előbb add meg a neved az 'Analiszta' mezőben a fejlécben.");
+      return;
+    }
+    assignSelected(name);
+  });
+  el("unassignBtn").addEventListener("click", () => assignSelected(null));
   el("clearSelectionBtn").addEventListener("click", () => {
     selected.clear();
     renderTable();
@@ -688,6 +799,7 @@
   statusFilter.addEventListener("change", applyFilters);
   dispositionFilter.addEventListener("change", applyFilters);
   timeRangeFilter.addEventListener("change", applyFilters);
+  assigneeFilter.addEventListener("change", applyFilters);
   el("refreshBtn").addEventListener("click", fetchAlerts);
 
   // --- Timeline: single-series bar chart, rounded top, square baseline ---

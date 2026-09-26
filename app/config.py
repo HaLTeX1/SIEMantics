@@ -25,6 +25,13 @@ class Settings(BaseSettings):
     # Inbound webhook auth (shared secret, checked via header)
     wazuh_webhook_token: str = ""
 
+    # IoC enrichment (optional; skipped per-provider if its key is unset).
+    # Only runs for true-positive/escalated alerts, capped to a handful of
+    # unique IPs per alert to stay within free-tier rate limits.
+    virustotal_api_key: str = ""
+    abuseipdb_api_key: str = ""
+    enrichment_max_iocs: int = 5
+
     # Decision log / evaluation dataset storage
     database_url: str = "sqlite+aiosqlite:///./siemantics.db"
 

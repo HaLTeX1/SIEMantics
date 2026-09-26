@@ -35,3 +35,9 @@ class AlertRecord(Base):
     # Manually assigned during lab evaluation to build the labeled test set
     ground_truth: Mapped[GroundTruth | None] = mapped_column(Enum(GroundTruth), nullable=True)
     labeled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # Free-text analyst identity - a stand-in for real user accounts until auth exists
+    assigned_to: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    # VirusTotal / AbuseIPDB results per IP IoC, populated for escalated alerts
+    ioc_enrichment: Mapped[list | None] = mapped_column(JSON, nullable=True)

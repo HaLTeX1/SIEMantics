@@ -102,6 +102,40 @@
 
   .state { padding: 40px 10px; text-align: center; color: var(--text-muted); }
   .state.error { color: var(--critical); }
+
+  .ti-entry {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    font-size: 12.5px;
+  }
+  .ti-entry .ti-ioc {
+    font-family: ui-monospace, Consolas, monospace;
+    font-weight: 600;
+    margin-bottom: 3px;
+  }
+  .ti-entry .ti-line { color: var(--text-secondary); }
+  .ti-entry .ti-none { color: var(--text-muted); font-style: italic; }
+
+  .assign-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  button.btn {
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    padding: 5px 11px;
+    font-size: 12px;
+    cursor: pointer;
+    background: var(--surface-2);
+    color: var(--text-primary);
+  }
+  button.btn:hover { background: #262625; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -116,6 +150,11 @@
   const params = new URLSearchParams(window.location.search);
   const alertId = params.get("id");
   const content = document.getElementById("content");
+  const ANALYST_NAME_KEY = "siemantics_analyst_name";
+
+  function getAnalystName() {
+    try { return localStorage.getItem(ANALYST_NAME_KEY) || ""; } catch { return ""; }
+  }
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
@@ -162,6 +201,30 @@
     </div>`;
   }
 
+  function renderTiSection(a) {
+    if (a.ioc_enrichment && a.ioc_enrichment.length > 0) {
+      const entries = a.ioc_enrichment.map((e) => {
+        const lines = [];
+        if (e.virustotal) {
+          const vt = e.virustotal;
+          lines.push(`<div class="ti-line">VT: ${vt.malicious} malicious / ${vt.suspicious} suspicious (reputation ${vt.reputation ?? "-"}, ${escapeHtml(vt.country || "?")}, ${escapeHtml(vt.as_owner || "unknown AS")})</div>`);
+        }
+        if (e.abuseipdb) {
+          const ab = e.abuseipdb;
+          lines.push(`<div class="ti-line">AbuseIPDB: ${ab.abuse_confidence_score}% confidence, ${ab.total_reports ?? 0} reports (${escapeHtml(ab.country_code || "?")}, ${escapeHtml(ab.isp || "unknown ISP")})</div>`);
+        }
+        if (lines.length === 0) lines.push('<div class="ti-none">nincs enrichment adat</div>');
+        return `<div class="ti-entry"><div class="ti-ioc">${escapeHtml(e.ioc)}</div>${lines.join("")}</div>`;
+      }).join("");
+      return field("Threat Intelligence", entries, { fullWidth: true });
+    }
+    if (a.llm_iocs && a.llm_iocs.length > 0) {
+      const chips = a.llm_iocs.map((ioc) => `<span class="ioc-chip">${escapeHtml(ioc)}</span>`).join("");
+      return field("IoC-k", chips, { fullWidth: true });
+    }
+    return null;
+  }
+
   function render(a, irisBaseUrl) {
     document.title = `SIEMantics - ${a.alert_id}`;
     const sev = severityInfo(a.severity);
@@ -173,6 +236,13 @@
     fields.push(field("Forrás IP", escapeHtml(a.source_ip || "-")));
     fields.push(field("Beérkezett", fmtTime(a.received_at)));
     fields.push(field("Feldolgozási idő", `${Math.round(a.processing_time_ms)} ms`));
+    const assignRow = `
+      <div>${a.assigned_to ? escapeHtml(a.assigned_to) : '<span style="color:var(--text-muted)">Kiosztatlan</span>'}</div>
+      <div class="assign-row">
+        <button class="btn primary" id="assignMeBtn" type="button">Assign to me</button>
+        <button class="btn" id="unassignBtn" type="button">Unassign</button>
+      </div>`;
+    fields.push(field("Kiosztva", assignRow));
     if (a.triage_engine != null) fields.push(field("Triázs motor", escapeHtml(a.triage_engine)));
     if (a.llm_confidence != null) fields.push(field("Confidence", Math.round(a.llm_confidence * 100) + "%"));
     if (a.llm_is_true_positive != null) {
@@ -187,10 +257,8 @@
         : `Case #${escapeHtml(a.iris_case_id)}`;
       fields.push(field("DFIR-IRIS eset", link));
     }
-    if (a.llm_iocs && a.llm_iocs.length > 0) {
-      const chips = a.llm_iocs.map((ioc) => `<span class="ioc-chip">${escapeHtml(ioc)}</span>`).join("");
-      fields.push(field("IoC-k", chips, { fullWidth: true }));
-    }
+    const tiField = renderTiSection(a);
+    if (tiField) fields.push(tiField);
     if (a.llm_reasoning) {
       fields.push(field("LLM indoklás", escapeHtml(a.llm_reasoning), { fullWidth: true, mono: true }));
     }
@@ -208,6 +276,33 @@
       </div>
       <div class="panel">${fields.join("")}</div>
     `;
+
+    document.getElementById("assignMeBtn").addEventListener("click", () => {
+      const name = getAnalystName();
+      if (!name) {
+        alert("Előbb állítsd be a neved az Analyst Queue oldal fejlécében ('Analiszta' mező).");
+        return;
+      }
+      assign(name);
+    });
+    document.getElementById("unassignBtn").addEventListener("click", () => assign(null));
+  }
+
+  let lastIrisBaseUrl = "";
+
+  async function assign(assignee) {
+    try {
+      const res = await fetch(`/api/v1/alerts/${encodeURIComponent(alertId)}/assign`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignee }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const alertData = await res.json();
+      render(alertData, lastIrisBaseUrl);
+    } catch (err) {
+      alert("Nem sikerült a kiosztás: " + err.message);
+    }
   }
 
   async function load() {
@@ -223,7 +318,8 @@
       if (!alertRes.ok) throw new Error(`HTTP ${alertRes.status}`);
       const alertData = await alertRes.json();
       const configData = configRes && configRes.ok ? await configRes.json() : {};
-      render(alertData, configData.iris_base_url || "");
+      lastIrisBaseUrl = configData.iris_base_url || "";
+      render(alertData, lastIrisBaseUrl);
     } catch (err) {
       content.innerHTML = `<div class="state error">Nem sikerült betölteni a riasztást: ${escapeHtml(err.message)}</div>`;
     }

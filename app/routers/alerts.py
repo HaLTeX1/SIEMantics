@@ -6,12 +6,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.db import get_session
+from app.enrichment import enrich_iocs
 from app.enums import AlertStatus
 from app.iris_client import iris_client
 from app.llm_engine import triage_alert
 from app.normalize import normalize_wazuh_alert
-from app.repository import create_alert_record, get_latest_alert_record, list_alert_records, set_ground_truth
-from app.schemas import AlertRecordOut, LabelRequest, NormalizedAlert, WazuhAlertPayload
+from app.repository import (
+    create_alert_record,
+    get_latest_alert_record,
+    list_alert_records,
+    set_assignee,
+    set_ground_truth,
+)
+from app.schemas import AlertRecordOut, AssignRequest, LabelRequest, NormalizedAlert, WazuhAlertPayload
 
 logger = logging.getLogger("siemantics.alerts")
 
@@ -72,8 +79,10 @@ async def receive_alert(
         logger.info("alert %s classified as false positive (confidence=%.2f)", alert.alert_id, triage.confidence)
         return {"status": "suppressed", "alert_id": alert.alert_id, "record_id": record.id, "triage": triage}
 
+    enrichment = await enrich_iocs(triage.iocs)
+
     try:
-        case = await iris_client.create_case_from_alert(alert, triage)
+        case = await iris_client.create_case_from_alert(alert, triage, enrichment)
     except Exception as exc:
         await create_alert_record(
             session,
@@ -87,6 +96,7 @@ async def receive_alert(
             llm_reasoning=triage.reasoning,
             llm_iocs=triage.iocs,
             triage_engine=triage.engine,
+            ioc_enrichment=enrichment or None,
             processing_time_ms=_elapsed_ms(started),
             error_detail=f"iris case creation failed: {exc}",
         )
@@ -105,6 +115,7 @@ async def receive_alert(
         llm_reasoning=triage.reasoning,
         llm_iocs=triage.iocs,
         triage_engine=triage.engine,
+        ioc_enrichment=enrichment or None,
         iris_case_id=case.case_id,
         processing_time_ms=_elapsed_ms(started),
     )
@@ -134,6 +145,15 @@ async def get_public_config():
 @router.patch("/alerts/{alert_id}/label", response_model=AlertRecordOut)
 async def label_alert(alert_id: str, body: LabelRequest, session: AsyncSession = Depends(get_session)):
     record = await set_ground_truth(session, alert_id, body.ground_truth)
+    if record is None:
+        raise HTTPException(status_code=404, detail="alert not found")
+    return record
+
+
+@router.patch("/alerts/{alert_id}/assign", response_model=AlertRecordOut)
+async def assign_alert(alert_id: str, body: AssignRequest, session: AsyncSession = Depends(get_session)):
+    """Free-text analyst assignment - a stand-in until real user accounts/auth exist."""
+    record = await set_assignee(session, alert_id, body.assignee)
     if record is None:
         raise HTTPException(status_code=404, detail="alert not found")
     return record

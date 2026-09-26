@@ -65,6 +65,9 @@ Az app induláskor (`lifespan`) automatikusan létrehozza az SQLite adatbázist 
 | `IRIS_API_KEY` | DFIR-IRIS API kulcs |
 | `IRIS_CUSTOMER_ID` | eset létrehozáshoz tartozó ügyfél ID |
 | `IRIS_VERIFY_SSL` | alapértelmezett: `true`. **Csak** ismert, belső/lab IRIS instanciánál önaláírt tanúsítvánnyal állítsd `false`-ra — lásd lent |
+| `VIRUSTOTAL_API_KEY` | opcionális IoC-enrichment. Ingyenesen igényelhető: https://www.virustotal.com/gui/my-apikey |
+| `ABUSEIPDB_API_KEY` | opcionális IoC-enrichment. Ingyenesen igényelhető: https://www.abuseipdb.com/account/api |
+| `ENRICHMENT_MAX_IOCS` | alapértelmezett: `5` — hány egyedi IP-t enrichel maximum riasztásonként (free-tier rate limitek védelme) |
 | `WAZUH_WEBHOOK_TOKEN` | megosztott titok a webhook hívások hitelesítéséhez (`X-Webhook-Token` header) |
 | `DATABASE_URL` | döntésnapló DB elérési útja, alapértelmezett: `sqlite+aiosqlite:///./siemantics.db` |
 
@@ -78,15 +81,28 @@ A mock motor logikája: a Wazuh severity szint ≥ `LLM_MOCK_SEVERITY_THRESHOLD`
 
 Minden döntésnaplóban eltárolt rekord tartalmazza, melyik motor hozta a döntést (`triage_engine`: `openrouter` vagy `mock`) — a `GET /api/v1/alerts` végponton ez látható, így a kiértékelésnél (6.3 fejezet) tudatosan lehet szűrni vagy megkülönböztetni, ha vegyesen futott a két motor.
 
+## IoC enrichment (VirusTotal / AbuseIPDB)
+
+Escalated (true-positive) riasztásoknál a rendszer automatikusan enricheli az IP-típusú IoC-ket, ha be van állítva a megfelelő API kulcs (mindkettő független és opcionális — csak az fut le, amihez van kulcs). Az eredmény:
+
+- bekerül a döntésnaplóba (`ioc_enrichment` mező, `GET /api/v1/alerts`-en és a dashboardon is látszik),
+- egy "Threat Intelligence" szekcióként bekerül a DFIR-IRIS note-ba is (`app/iris_client.py`).
+
+Egyedi IP-nkénti cap (`ENRICHMENT_MAX_IOCS`, alapértelmezett 5) védi a free-tier rate limiteket (VirusTotal ~4 req/perc, AbuseIPDB napi kvóta). Egy adott IoC lekérdezésének hibája (timeout, rate limit) sosem blokkolja a riasztás feldolgozását — legrosszabb esetben az adott IoC enrichment nélkül marad.
+
+## Analyst assignment
+
+Mivel még nincs valódi auth/user rendszer, az "assign to me" egy egyszerű, szabadszöveges helyettesítő megoldás: a dashboard fejlécében megadott név `localStorage`-ban tárolódik a böngészőben, és a `PATCH /api/v1/alerts/{alert_id}/assign` (`{"assignee": "..."}` vagy `{"assignee": null}` az unassignhoz) írja/törli az `assigned_to` mezőt. Ez majd az auth bevezetésekor lecserélendő valódi user ID-ra.
+
 ## Frontend (Analyst Queue dashboard)
 
 A `/` a `/ui/`-ra irányít, ami egy önálló, statikus HTML/CSS/JS oldal (`app/static/index.html`, build lépés nélkül, a FastAPI szolgálja ki `StaticFiles`-szal). Splunk Enterprise Security Analyst Queue nézete ihlette:
 
 - **Timeline** — riasztások száma időbucketenként (óránként vagy naponta, a szűrt időtartománytól függően), hover tooltippel.
-- **Szűrők** — szabadszavas keresés (rule/alert ID/forrás IP), státusz (escalated/suppressed/error), disposition (confirmed TP/FP/undetermined), időtartomány.
-- **Tábla** — minden riasztás severity, entity (forrás IP), triázs motor (openrouter/mock), confidence, státusz és disposition badge-ekkel, időbélyeggel.
-- **Riasztás részletei** — egy sorra kattintva (vagy a ▸ gombbal) a sor alatt kinyílik egy panel a teljes LLM indoklással, kinyert IoC-kkel, hibaüzenettel (ha volt) és a DFIR-IRIS eset linkjével. A ⧉ gombbal ugyanez a részletnézet önálló (popup) ablakban is megnyitható (`app/static/alert.html`, a `GET /api/v1/alerts/{alert_id}` végpontot hívja).
-- **Bulk címkézés** — sorok kijelölése + "Label: True Positive" / "Label: False Positive" gomb, ami a `PATCH /api/v1/alerts/{id}/label` végpontot hívja minden kijelölt riasztásra — ez váltja ki a `curl`-lal való kézi címkézést a kiértékelési munkafolyamatban (lásd lent).
+- **Szűrők** — szabadszavas keresés (rule/alert ID/forrás IP), státusz (escalated/suppressed/error), disposition (confirmed TP/FP/undetermined), időtartomány, kiosztás (mindenki/rám kiosztva/kiosztatlan).
+- **Tábla** — minden riasztás severity, entity (forrás IP), triázs motor (openrouter/mock), confidence, státusz, disposition és kiosztás badge-ekkel/oszlopokkal, időbélyeggel.
+- **Riasztás részletei** — egy sorra kattintva (vagy a ▸ gombbal) a sor alatt kinyílik egy panel a teljes LLM indoklással, kinyert IoC-kkel (VirusTotal/AbuseIPDB enrichmenttel, ha van), hibaüzenettel (ha volt) és a DFIR-IRIS eset linkjével. A ⧉ gombbal ugyanez a részletnézet önálló (popup) ablakban is megnyitható (`app/static/alert.html`, a `GET /api/v1/alerts/{alert_id}` végpontot hívja).
+- **Bulk címkézés és kiosztás** — sorok kijelölése + "Label: True/False Positive" gomb (`PATCH /alerts/{id}/label`) vagy "Assign to me" / "Unassign" gomb (`PATCH /alerts/{id}/assign`) minden kijelölt riasztásra — ez váltja ki a `curl`-lal való kézi címkézést/kiosztást a kiértékelési munkafolyamatban (lásd lent).
 
 Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`, `GET /api/v1/alerts/{id}`, `GET /api/v1/config`), nincs külön build/deploy lépés — a Docker image-ben már benne van.
 
@@ -98,6 +114,7 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `GET` | `/api/v1/alerts` | eltárolt riasztás-rekordok listázása (`limit`, `offset`) |
 | `GET` | `/api/v1/alerts/{alert_id}` | egy riasztás-rekord teljes részlete (a dashboard részletnézetéhez) |
 | `PATCH` | `/api/v1/alerts/{alert_id}/label` | ground truth címkézés (`true_positive` / `false_positive`) |
+| `PATCH` | `/api/v1/alerts/{alert_id}/assign` | analyst kiosztás (`{"assignee": "név"}` vagy `null` az unassignhoz) |
 | `GET` | `/api/v1/config` | nem-titkos konfiguráció a frontendnek (pl. `iris_base_url` az eset-linkhez) |
 | `GET` | `/api/v1/metrics` | konfúziós mátrix + feldolgozási idő statisztikák a címkézett rekordokból |
 | `GET` | `/healthz` | health check |

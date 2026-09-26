@@ -91,10 +91,16 @@ class AlertRecordOut(BaseModel):
     processing_time_ms: float
     ground_truth: Optional[GroundTruth] = None
     labeled_at: Optional[datetime] = None
+    assigned_to: Optional[str] = None
+    ioc_enrichment: Optional[list[dict]] = None
 
 
 class LabelRequest(BaseModel):
     ground_truth: GroundTruth
+
+
+class AssignRequest(BaseModel):
+    assignee: Optional[str] = Field(default=None, max_length=128)
 
 
 # --- Aggregate evaluation metrics (thesis ch. 6.3) ---
