@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "c9335f53-1139-4cdf-9a87-bd9fcc478129",
     "name": "SIEMantics - Test Scenarios",
-    "description": "Manual/automated test scenarios for the SIEMantics SOAR API. Mirrors scripts/test_requests.sh: covers the mock-engine severity threshold, all 9 suspicious-pattern regexes, IoC extraction, edge cases, labeling and metrics.\n\nRun order matters: folders 1-3 create the alert records that folder 4 labels. Use Collection Runner to execute the whole collection top to bottom, or run folder by folder.\n\nSet the `base_url` and `webhook_token` collection variables (Variables tab) to match your deployment. If WAZUH_WEBHOOK_TOKEN isn't set server-side, `webhook_token` can be left empty.",
+    "description": "Manual/automated test scenarios for the SIEMantics SOAR API. Mirrors scripts/test_requests.sh: covers the mock-engine severity threshold, all 9 suspicious-pattern regexes, IoC extraction, edge cases, labeling and metrics.\n\nRun order matters: folders 1-3 create the alert records that folder 4 labels. Use Collection Runner to execute the whole collection top to bottom, or run folder by folder.\n\nSet the `base_url` and `webhook_token` collection variables (Variables tab) to match your deployment. If WAZUH_WEBHOOK_TOKEN isn't set server-side, `webhook_token` can be left empty.\n\nFolders 4-5 need a logged-in dashboard user: set `ui_username` / `ui_password` - the Login request at the start of folder 4 stores the session cookie in Postman's cookie jar.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -13,6 +13,16 @@
     },
     {
       "key": "webhook_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "ui_username",
+      "value": "admin",
+      "type": "string"
+    },
+    {
+      "key": "ui_password",
       "value": "",
       "type": "string"
     }
@@ -1150,6 +1160,49 @@
       "name": "4. Alert management",
       "description": "Run folders 1-3 first so these alert_ids exist. Labeling builds the evaluation dataset for GET /metrics.",
       "item": [
+        {
+          "name": "Login (dashboard user)",
+          "id": "0b6f4c1e-8d2a-4f53-9a57-3c1f4e2d7a90",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ui_username}}\",\n  \"password\": \"{{ui_password}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Sets the siemantics_session cookie used by the rest of folders 4-5."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('session cookie set', () => pm.expect(pm.cookies.has('siemantics_session')).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
         {
           "name": "List alerts",
           "id": "7f9cf086-e560-4a49-9778-244729eb39f1",

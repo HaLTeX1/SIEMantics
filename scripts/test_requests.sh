@@ -4,7 +4,11 @@
 # labeling, and metrics. Useful for lab testing (thesis ch. 6.2).
 #
 # Usage:
-#   BASE_URL=http://localhost:8000 WEBHOOK_TOKEN=... ./scripts/test_requests.sh [scenario]
+#   BASE_URL=http://localhost:8000 WEBHOOK_TOKEN=... UI_PASSWORD=... ./scripts/test_requests.sh [scenario]
+#
+# The list/label/metrics scenarios need a logged-in dashboard user: set
+# UI_USER (default: admin) and UI_PASSWORD - the script logs in once and
+# reuses the session cookie.
 #
 # With no argument, runs every scenario in order. Pass a scenario name
 # (see ALL_SCENARIOS at the bottom) to run just one, e.g.:
@@ -19,6 +23,12 @@ set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://10.64.0.127:8000}"
 WEBHOOK_TOKEN="${WEBHOOK_TOKEN:-}"
+UI_USER="${UI_USER:-admin}"
+UI_PASSWORD="${UI_PASSWORD:-}"
+
+COOKIE_JAR="$(mktemp)"
+trap 'rm -f "$COOKIE_JAR"' EXIT
+LOGGED_IN=0
 
 AUTH_HEADER=()
 if [[ -n "$WEBHOOK_TOKEN" ]]; then
@@ -37,6 +47,19 @@ post_alert() {
     ${AUTH_HEADER[@]+"${AUTH_HEADER[@]}"} \
     -d "$payload" | pretty
   echo
+}
+
+ensure_login() {
+  [[ "$LOGGED_IN" -eq 1 ]] && return
+  if [[ -z "$UI_PASSWORD" ]]; then
+    echo "UI_PASSWORD is not set - requests below will return 401" >&2
+    return
+  fi
+  curl -sS -o /dev/null -w "--- login as $UI_USER: HTTP %{http_code} ---\n" -c "$COOKIE_JAR" \
+    -X POST "$BASE_URL/api/v1/auth/login" \
+    -H "Content-Type: application/json" \
+    -d "{\"username\": \"$UI_USER\", \"password\": \"$UI_PASSWORD\"}"
+  LOGGED_IN=1
 }
 
 # ---------------------------------------------------------------------------
@@ -220,34 +243,38 @@ scenario_invalid_token() {
 # ---------------------------------------------------------------------------
 
 scenario_list_alerts() {
+  ensure_login
   echo "--- GET /api/v1/alerts ---"
-  curl -sS "$BASE_URL/api/v1/alerts?limit=50" | pretty
+  curl -sS -b "$COOKIE_JAR" "$BASE_URL/api/v1/alerts?limit=50" | pretty
   echo
 }
 
 scenario_label_examples() {
+  ensure_login
   echo "--- Labeling ground truth (adjust alert_id as needed) ---"
-  curl -sS -X PATCH "$BASE_URL/api/v1/alerts/test-sqli-union/label" \
+  curl -sS -b "$COOKIE_JAR" -X PATCH "$BASE_URL/api/v1/alerts/test-sqli-union/label" \
     -H "Content-Type: application/json" \
     -d '{"ground_truth": "true_positive"}' | pretty
   echo
-  curl -sS -X PATCH "$BASE_URL/api/v1/alerts/test-low-benign/label" \
+  curl -sS -b "$COOKIE_JAR" -X PATCH "$BASE_URL/api/v1/alerts/test-low-benign/label" \
     -H "Content-Type: application/json" \
     -d '{"ground_truth": "false_positive"}' | pretty
   echo
 }
 
 scenario_label_unknown_alert() {
+  ensure_login
   echo "--- Labeling a non-existent alert -> expected: 404 ---"
-  curl -sS -o /dev/null -w "HTTP %{http_code}\n" -X PATCH "$BASE_URL/api/v1/alerts/does-not-exist/label" \
+  curl -sS -b "$COOKIE_JAR" -o /dev/null -w "HTTP %{http_code}\n" -X PATCH "$BASE_URL/api/v1/alerts/does-not-exist/label" \
     -H "Content-Type: application/json" \
     -d '{"ground_truth": "true_positive"}'
   echo
 }
 
 scenario_metrics() {
+  ensure_login
   echo "--- GET /api/v1/metrics ---"
-  curl -sS "$BASE_URL/api/v1/metrics" | pretty
+  curl -sS -b "$COOKIE_JAR" "$BASE_URL/api/v1/metrics" | pretty
   echo
 }
 

@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIEMantics - Bejelentkezés</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #202020;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --border:      rgba(255,255,255,0.10);
+    --accent:      #3987e5;
+    --accent-dim:  #1c5cab;
+    --critical:    #d03b3b;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+    padding: 16px;
+  }
+
+  .card {
+    width: 100%;
+    max-width: 360px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 28px 24px;
+  }
+
+  .brand { font-weight: 700; font-size: 20px; margin-bottom: 4px; }
+  .sub { color: var(--text-muted); font-size: 13px; margin-bottom: 22px; }
+
+  label {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+
+  input {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 9px 10px;
+    font-size: 14px;
+    margin-bottom: 14px;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+
+  button {
+    width: 100%;
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    color: #ffffff;
+    font-weight: 600;
+    border-radius: 6px;
+    padding: 9px 14px;
+    font-size: 14px;
+    cursor: pointer;
+    margin-top: 4px;
+  }
+  button:hover { background: var(--accent-dim); }
+  button:disabled { opacity: 0.6; cursor: default; }
+
+  .error { color: var(--critical); font-size: 13px; min-height: 18px; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <form class="card" id="loginForm" autocomplete="on">
+    <div class="brand">SIEMantics</div>
+    <div class="sub">Bejelentkezés az Analyst Queue-ba</div>
+
+    <label for="username">Felhasználónév</label>
+    <input id="username" name="username" autocomplete="username" required autofocus />
+
+    <label for="password">Jelszó</label>
+    <input id="password" name="password" type="password" autocomplete="current-password" required />
+
+    <button type="submit" id="submitBtn">Bejelentkezés</button>
+    <div class="error" id="errorMsg" role="alert"></div>
+  </form>
+
+<script>
+(function () {
+  "use strict";
+
+  const form = document.getElementById("loginForm");
+  const submitBtn = document.getElementById("submitBtn");
+  const errorMsg = document.getElementById("errorMsg");
+
+  // only allow same-site relative redirects after login
+  function nextUrl() {
+    const next = new URLSearchParams(window.location.search).get("next") || "";
+    return next.startsWith("/") && !next.startsWith("//") ? next : "/ui/";
+  }
+
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    errorMsg.textContent = "";
+    submitBtn.disabled = true;
+    try {
+      const res = await fetch("/api/v1/auth/login", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: document.getElementById("username").value,
+          password: document.getElementById("password").value,
+        }),
+      });
+      if (res.status === 401) throw new Error("Hibás felhasználónév vagy jelszó.");
+      if (!res.ok) throw new Error(`Sikertelen bejelentkezés (HTTP ${res.status}).`);
+      window.location.href = nextUrl();
+    } catch (err) {
+      errorMsg.textContent = err.message;
+      submitBtn.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>

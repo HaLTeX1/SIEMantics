@@ -11,9 +11,7 @@ logger = logging.getLogger("siemantics.llm_engine")
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Hard guardrail: only ever call a free OpenRouter model - either the auto-routing
-# "openrouter/free" meta-model or a model whose slug ends in ":free" - so triage can
-# never incur cost even if OPENROUTER_MODEL is misconfigured to a paid model.
+
 _model_is_free = settings.openrouter_model == "openrouter/free" or settings.openrouter_model.endswith(":free")
 if settings.openrouter_api_key and not _model_is_free:
     logger.error(
@@ -35,11 +33,21 @@ _client = (
     else None
 )
 
+# A prompt ami alapján a tényleges triázs történni fog. Angol, mivel a promptokat angolul jobban kezelik az LLM-ek.
 _SYSTEM_PROMPT = (
-    "You are a SOC tier-2 analyst. Assess the alert below and decide if it is a "
-    "true positive requiring incident response, or a false positive/noise. "
-    "Extract any concrete IoCs (IPs, hashes, domains, filenames) mentioned in the log. "
-    "Be conservative: only flag true positive when the evidence supports it. "
+    "You are a SOC tier-2 analyst triaging a single Wazuh alert. Decide if it is a true "
+    "positive requiring incident response, or a false positive/noise, and extract any "
+    "concrete IoCs (IPs, hashes, domains, filenames) mentioned in the log.\n\n"
+    "Weigh technique risk, not just destination/impact evidence: encoded or obfuscated "
+    "commands (e.g. `powershell -enc`/-EncodedCommand, base64-wrapped scripts), "
+    "living-off-the-land binaries used for execution or download (certutil, mshta, "
+    "rundll32, regsvr32, wscript/cscript), credential dumping, and disabling of security "
+    "tooling are high-risk techniques on their own - flag these as true positive (at least "
+    "medium/high severity) even with no other IoCs and even on an internal host, unless the "
+    "log gives a concrete, specific reason to believe it's authorized activity. Don't let the "
+    "absence of a malicious IP/hash alone justify calling it noise.\n\n"
+    "Reserve false positive/low severity for genuinely benign, low-signal events (routine "
+    "scans, expected admin tools with no suspicious flags or obfuscation).\n\n"
     "Respond with a single JSON object only, no prose, no markdown fences, matching this shape: "
     '{"is_true_positive": boolean, "confidence": number (0-1), "reasoning": string, '
     '"iocs": string[], "recommended_severity": "low"|"medium"|"high"|"critical"}'

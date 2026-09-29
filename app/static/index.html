@@ -70,23 +70,11 @@
   #refreshBtn:hover { background: #262625; }
   #lastUpdated { color: var(--text-muted); font-size: 12px; margin-left: 10px; }
 
-  .identity {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    margin-right: 10px;
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-  .identity input {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    color: var(--text-primary);
-    border-radius: 6px;
-    padding: 5px 8px;
-    font-size: 12px;
-    width: 140px;
-  }
+  .topbar-right { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+  .user-menu { display: flex; align-items: center; gap: 14px; font-size: 13px; }
+  .user-menu .user-name { color: var(--text-secondary); }
+  .user-menu a { color: var(--accent); text-decoration: none; }
+  .user-menu a:hover { text-decoration: underline; }
 
   .filters {
     display: flex;
@@ -342,6 +330,19 @@
   }
   .ti-entry .ti-line { color: var(--text-secondary); }
   .ti-entry .ti-none { color: var(--text-muted); font-style: italic; }
+  .assignee { color: var(--text-secondary); white-space: nowrap; }
+  .assignee.me { color: var(--accent); font-weight: 600; }
+  .assignee.none { color: var(--text-muted); }
+  .assign-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .assign-control select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-size: 13px;
+  }
+  .assign-control .assign-error { color: var(--critical); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -351,13 +352,12 @@
         <span class="name">SIEMantics</span>
         <span class="sub">Analyst Queue</span>
       </div>
-      <div>
-        <span class="identity">
-          Analiszta:
-          <input id="analystNameInput" type="text" placeholder="a neved" />
-        </span>
-        <button id="refreshBtn" type="button">Refresh</button>
-        <span id="lastUpdated"></span>
+      <div class="topbar-right">
+        <div>
+          <button id="refreshBtn" type="button">Refresh</button>
+          <span id="lastUpdated"></span>
+        </div>
+        <div class="user-menu" id="userMenu"></div>
       </div>
     </header>
 
@@ -382,9 +382,9 @@
         <option value="0">Összes</option>
       </select>
       <select id="assigneeFilter">
-        <option value="">Mindenki</option>
-        <option value="me">Rám kiosztva</option>
-        <option value="unassigned">Kiosztatlan</option>
+        <option value="">Minden felelős</option>
+        <option value="me">Hozzám rendelt</option>
+        <option value="none">Nincs felelős</option>
       </select>
     </div>
 
@@ -397,8 +397,6 @@
       <span class="count"><span id="selectedCount">0</span> kiválasztva</span>
       <button class="btn primary" id="labelTpBtn" type="button">Label: True Positive</button>
       <button class="btn outline-serious" id="labelFpBtn" type="button">Label: False Positive</button>
-      <button class="btn" id="assignMeBtn" type="button">Assign to me</button>
-      <button class="btn ghost" id="unassignBtn" type="button">Unassign</button>
       <button class="btn ghost" id="clearSelectionBtn" type="button">Kijelölés törlése</button>
     </div>
 
@@ -414,7 +412,7 @@
             <th>Confidence</th>
             <th>Status</th>
             <th>Disposition</th>
-            <th>Assigned</th>
+            <th>Felelős</th>
             <th>Time</th>
             <th style="width:70px;"></th>
           </tr>
@@ -433,31 +431,28 @@
 
   <div id="timelineTooltip"></div>
 
+<script src="auth.js"></script>
 <script>
 (function () {
   "use strict";
 
   const API_ALERTS = "/api/v1/alerts?limit=500";
   const API_LABEL = (alertId) => `/api/v1/alerts/${encodeURIComponent(alertId)}/label`;
-  const API_ASSIGN = (alertId) => `/api/v1/alerts/${encodeURIComponent(alertId)}/assign`;
   const API_CONFIG = "/api/v1/config";
+  const API_ASSIGNEES = "/api/v1/cases/assignees";
+  const API_CASE_ASSIGNEE = (caseId) => `/api/v1/cases/${encodeURIComponent(caseId)}/assignee`;
   const DETAIL_PAGE = (alertId) => `alert.html?id=${encodeURIComponent(alertId)}`;
-  const ANALYST_NAME_KEY = "siemantics_analyst_name";
 
   let allAlerts = [];
   let filtered = [];
   const selected = new Set();
   const expandedIds = new Set();
   let irisBaseUrl = "";
+  let currentUser = null;
+  let assignees = [];
+  const assignErrors = new Map();
 
-  function getAnalystName() {
-    try { return localStorage.getItem(ANALYST_NAME_KEY) || ""; } catch { return ""; }
-  }
-  function setAnalystName(name) {
-    try { localStorage.setItem(ANALYST_NAME_KEY, name); } catch {}
-  }
-
-  fetch(API_CONFIG).then((r) => r.ok ? r.json() : null).then((cfg) => {
+  SIEM.api(API_CONFIG).then((r) => r.ok ? r.json() : null).then((cfg) => {
     if (cfg && cfg.iris_base_url) irisBaseUrl = cfg.iris_base_url;
   }).catch(() => {});
 
@@ -467,7 +462,6 @@
   const dispositionFilter = el("dispositionFilter");
   const timeRangeFilter = el("timeRangeFilter");
   const assigneeFilter = el("assigneeFilter");
-  const analystNameInput = el("analystNameInput");
   const tableBody = el("tableBody");
   const emptyState = el("emptyState");
   const errorState = el("errorState");
@@ -476,9 +470,6 @@
   const selectAll = el("selectAll");
   const rowCountEl = el("rowCount");
   const lastUpdatedEl = el("lastUpdated");
-
-  analystNameInput.value = getAnalystName();
-  analystNameInput.addEventListener("change", () => setAnalystName(analystNameInput.value.trim()));
 
   function severityInfo(level) {
     if (level >= 12) return { label: "Critical", cls: "critical" };
@@ -497,6 +488,65 @@
     if (groundTruth === "true_positive") return { label: "Confirmed TP", cls: "good" };
     if (groundTruth === "false_positive") return { label: "Confirmed FP", cls: "serious" };
     return { label: "Undetermined", cls: "muted" };
+  }
+
+  function userLabel(u) {
+    return u.full_name || u.username;
+  }
+
+  function assigneeCell(a) {
+    if (a.iris_case_id == null) return '<span class="assignee none">-</span>';
+    if (!a.assignee) return '<span class="assignee none">Nincs felelős</span>';
+    const isMe = currentUser && a.assignee.id === currentUser.id;
+    return `<span class="assignee${isMe ? " me" : ""}">${escapeHtml(userLabel(a.assignee))}${isMe ? " (én)" : ""}</span>`;
+  }
+
+  // Admins get a dropdown of every active user; analysts can only take an
+  // unowned case or release their own (mirrors the API's permission rules).
+  function assignControl(a) {
+    const caseId = escapeHtml(a.iris_case_id);
+    const current = a.assignee ? a.assignee.id : null;
+    const since = a.assigned_at ? `<span class="title-sub">${fmtTime(a.assigned_at)} óta</span>` : "";
+    const err = assignErrors.get(a.iris_case_id);
+    const errHtml = err ? `<span class="assign-error">${escapeHtml(err)}</span>` : "";
+    let control;
+
+    if (currentUser && currentUser.role === "admin") {
+      const options = [`<option value="">— nincs felelős —</option>`].concat(
+        assignees.map((u) => `<option value="${u.id}" ${u.id === current ? "selected" : ""}>${escapeHtml(userLabel(u))}</option>`)
+      );
+      // keep a deactivated current assignee visible in the dropdown
+      if (current != null && !assignees.some((u) => u.id === current)) {
+        options.push(`<option value="${current}" selected>${escapeHtml(userLabel(a.assignee))} (inaktív)</option>`);
+      }
+      control = `<select class="assign-select" data-case="${caseId}">${options.join("")}</select>${since}`;
+    } else if (currentUser && current == null) {
+      control = `${assigneeCell(a)}<button type="button" class="btn assign-btn" data-case="${caseId}" data-user="${currentUser.id}">Magamhoz rendelem</button>`;
+    } else if (currentUser && current === currentUser.id) {
+      control = `${assigneeCell(a)}${since}<button type="button" class="btn ghost assign-btn" data-case="${caseId}" data-user="">Leadom</button>`;
+    } else {
+      control = assigneeCell(a) + since;
+    }
+    return `<div class="assign-control">${control}${errHtml}</div>`;
+  }
+
+  async function assignCase(caseId, userId) {
+    assignErrors.delete(caseId);
+    try {
+      const res = await SIEM.api(API_CASE_ASSIGNEE(caseId), {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: userId }),
+      });
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try { detail = (await res.json()).detail || detail; } catch (_) { /* not JSON */ }
+        throw new Error(detail);
+      }
+    } catch (err) {
+      assignErrors.set(caseId, "Sikertelen hozzárendelés: " + err.message);
+    }
+    await fetchAlerts();
   }
 
   function detailField(label, valueHtml, opts) {
@@ -538,7 +588,6 @@
     fields.push(detailField("Forrás IP", escapeHtml(a.source_ip || "-")));
     fields.push(detailField("Beérkezett", fmtTime(a.received_at)));
     fields.push(detailField("Feldolgozási idő", `${Math.round(a.processing_time_ms)} ms`));
-    fields.push(detailField("Kiosztva", a.assigned_to ? escapeHtml(a.assigned_to) : '<span style="color:var(--text-muted)">Kiosztatlan</span>'));
 
     if (a.triage_engine != null) fields.push(detailField("Triázs motor", escapeHtml(a.triage_engine)));
     if (a.llm_confidence != null) fields.push(detailField("Confidence", Math.round(a.llm_confidence * 100) + "%"));
@@ -555,6 +604,7 @@
         ? `<a class="iris-link" href="${escapeHtml(irisBaseUrl)}/case?cid=${encodeURIComponent(a.iris_case_id)}" target="_blank" rel="noopener">Case #${escapeHtml(a.iris_case_id)} megnyitása az IRIS-ben ↗</a>`
         : `Case #${escapeHtml(a.iris_case_id)}`;
       fields.push(detailField("DFIR-IRIS eset", link));
+      fields.push(detailField("Felelős", assignControl(a)));
     }
 
     const tiField = renderTiSection(a);
@@ -590,7 +640,7 @@
   async function fetchAlerts() {
     errorState.hidden = true;
     try {
-      const res = await fetch(API_ALERTS);
+      const res = await SIEM.api(API_ALERTS);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       allAlerts = await res.json();
       lastUpdatedEl.textContent = "Frissítve: " + new Date().toLocaleTimeString("hu-HU");
@@ -610,7 +660,6 @@
     const assignee = assigneeFilter.value;
     const hours = parseInt(timeRangeFilter.value, 10);
     const cutoff = hours > 0 ? Date.now() - hours * 3600 * 1000 : null;
-    const analystName = getAnalystName();
 
     filtered = allAlerts.filter((a) => {
       if (status && a.status !== status) return false;
@@ -618,8 +667,13 @@
         const gt = a.ground_truth || "undetermined";
         if (gt !== disposition) return false;
       }
-      if (assignee === "unassigned" && a.assigned_to) return false;
-      if (assignee === "me" && (!a.assigned_to || a.assigned_to !== analystName)) return false;
+      if (assignee === "me") {
+        if (!currentUser || !a.assignee || a.assignee.id !== currentUser.id) return false;
+      } else if (assignee === "none") {
+        if (a.iris_case_id == null || a.assignee) return false;
+      } else if (assignee) {
+        if (!a.assignee || String(a.assignee.id) !== assignee) return false;
+      }
       if (cutoff !== null) {
         const t = new Date(a.received_at + (a.received_at.endsWith("Z") ? "" : "Z")).getTime();
         if (t < cutoff) return false;
@@ -675,7 +729,7 @@
           <td class="confidence">${confidence}</td>
           <td>${badge(st.label, st.cls)}</td>
           <td>${badge(disp.label, disp.cls)}</td>
-          <td>${a.assigned_to ? escapeHtml(a.assigned_to) : '<span style="color:var(--text-muted)">-</span>'}</td>
+          <td>${assigneeCell(a)}</td>
           <td>${fmtTime(a.received_at)}</td>
           <td>
             <div class="row-actions">
@@ -716,6 +770,20 @@
       });
     });
 
+    tableBody.querySelectorAll(".assign-select").forEach((sel) => {
+      sel.addEventListener("change", () => {
+        sel.disabled = true;
+        assignCase(Number(sel.dataset.case), sel.value === "" ? null : Number(sel.value));
+      });
+    });
+
+    tableBody.querySelectorAll(".assign-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        btn.disabled = true;
+        assignCase(Number(btn.dataset.case), btn.dataset.user === "" ? null : Number(btn.dataset.user));
+      });
+    });
+
     tableBody.querySelectorAll("tr.data-row").forEach((row) => {
       row.addEventListener("click", () => toggleExpanded(row.dataset.id));
     });
@@ -749,7 +817,7 @@
     const ids = Array.from(selected);
     if (ids.length === 0) return;
     await Promise.all(ids.map((id) =>
-      fetch(API_LABEL(id), {
+      SIEM.api(API_LABEL(id), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ground_truth: groundTruth }),
@@ -759,31 +827,8 @@
     await fetchAlerts();
   }
 
-  async function assignSelected(assignee) {
-    const ids = Array.from(selected);
-    if (ids.length === 0) return;
-    await Promise.all(ids.map((id) =>
-      fetch(API_ASSIGN(id), {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignee }),
-      }).catch(() => null)
-    ));
-    selected.clear();
-    await fetchAlerts();
-  }
-
   el("labelTpBtn").addEventListener("click", () => labelSelected("true_positive"));
   el("labelFpBtn").addEventListener("click", () => labelSelected("false_positive"));
-  el("assignMeBtn").addEventListener("click", () => {
-    const name = getAnalystName();
-    if (!name) {
-      alert("Előbb add meg a neved az 'Analiszta' mezőben a fejlécben.");
-      return;
-    }
-    assignSelected(name);
-  });
-  el("unassignBtn").addEventListener("click", () => assignSelected(null));
   el("clearSelectionBtn").addEventListener("click", () => {
     selected.clear();
     renderTable();
@@ -935,6 +980,21 @@
 
   window.addEventListener("resize", () => renderTimeline(filtered));
 
+  async function loadAssignees() {
+    const res = await SIEM.api(API_ASSIGNEES);
+    if (!res.ok) return;
+    assignees = await res.json();
+    assigneeFilter.insertAdjacentHTML("beforeend", assignees.map((u) =>
+      `<option value="${u.id}">${escapeHtml(userLabel(u))}</option>`).join(""));
+  }
+
+  // the table is re-rendered once the user is known so "(én)" and the
+  // assignment controls reflect the current user's role
+  SIEM.me().then((user) => {
+    currentUser = user;
+    SIEM.renderUserMenu(el("userMenu"), user);
+    return loadAssignees();
+  }).then(applyFilters).catch(() => {});
   fetchAlerts();
 })();
 </script>

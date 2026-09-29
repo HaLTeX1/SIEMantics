@@ -10,3 +10,8 @@ class AlertStatus(str, enum.Enum):
 class GroundTruth(str, enum.Enum):
     TRUE_POSITIVE = "true_positive"
     FALSE_POSITIVE = "false_positive"
+
+
+class UserRole(str, enum.Enum):
+    ADMIN = "admin"
+    ANALYST = "analyst"

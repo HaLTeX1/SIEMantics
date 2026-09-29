@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIEMantics - Admin</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #202020;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:    #2c2c2a;
+    --border:      rgba(255,255,255,0.10);
+    --accent:      #3987e5;
+    --accent-dim:  #1c5cab;
+    --good:        #0ca30c;
+    --serious:     #ec835a;
+    --critical:    #d03b3b;
+    --violet:      #9085e9;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  header.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand .name { font-weight: 700; font-size: 18px; color: var(--text-primary); text-decoration: none; }
+  .brand .sub { color: var(--text-muted); font-size: 13px; }
+
+  .user-menu { display: flex; align-items: center; gap: 14px; font-size: 13px; }
+  .user-menu .user-name { color: var(--text-secondary); }
+  .user-menu a { color: var(--accent); text-decoration: none; }
+  .user-menu a:hover { text-decoration: underline; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    align-items: end;
+  }
+  label {
+    display: block;
+    color: var(--text-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 4px;
+  }
+  input, select {
+    width: 100%;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+
+  button.btn {
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    background: var(--surface);
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+  button.btn:hover { background: #262625; }
+  button.btn:disabled { opacity: 0.5; cursor: default; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.btn.primary:hover { background: var(--accent-dim); }
+  button.btn.small { padding: 4px 10px; font-size: 12px; }
+  button.btn.danger { border-color: var(--serious); color: var(--serious); background: transparent; }
+  button.btn.danger:hover { background: rgba(236,131,90,0.12); }
+
+  .msg { font-size: 13px; min-height: 18px; margin-top: 10px; }
+  .msg.error { color: var(--critical); }
+  .msg.ok { color: #7be07b; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--gridline);
+    white-space: nowrap;
+  }
+  tbody td { padding: 10px; border-bottom: 1px solid var(--gridline); vertical-align: middle; }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+  tbody tr.inactive td { color: var(--text-muted); }
+  td select { width: auto; padding: 4px 8px; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .title-main { font-weight: 600; }
+  .title-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge-fill-good  { background: rgba(12,163,12,0.16); color: #7be07b; }
+  .badge-fill-muted { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+  dialog {
+    background: var(--surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    width: min(360px, calc(100vw - 32px));
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.6); }
+  dialog h3 { margin: 0 0 14px; font-size: 15px; }
+  dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+
+  .state { padding: 30px 10px; text-align: center; color: var(--text-muted); }
+  .state.error { color: var(--critical); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <a class="name" href="./">SIEMantics</a>
+        <span class="sub">Admin panel</span>
+      </div>
+      <div class="user-menu" id="userMenu"></div>
+    </header>
+
+    <div class="card">
+      <h2>Új felhasználó</h2>
+      <form id="createForm" class="form-grid" autocomplete="off">
+        <div>
+          <label for="newUsername">Felhasználónév</label>
+          <input id="newUsername" required minlength="3" maxlength="64" pattern="[A-Za-z0-9._\-]+" title="Betűk, számok, pont, kötőjel, aláhúzás" />
+        </div>
+        <div>
+          <label for="newFullName">Teljes név</label>
+          <input id="newFullName" maxlength="128" />
+        </div>
+        <div>
+          <label for="newPassword">Kezdő jelszó (min. 8)</label>
+          <input id="newPassword" type="password" required minlength="8" maxlength="128" autocomplete="new-password" />
+        </div>
+        <div>
+          <label for="newRole">Szerepkör</label>
+          <select id="newRole">
+            <option value="analyst">Analyst</option>
+            <option value="admin">Admin</option>
+          </select>
+        </div>
+        <div>
+          <button class="btn primary" type="submit" id="createBtn">Felhasználó létrehozása</button>
+        </div>
+      </form>
+      <div class="msg" id="createMsg" role="status"></div>
+    </div>
+
+    <div class="card" style="padding:0; overflow-x:auto;">
+      <div style="padding:16px 16px 0;"><h2>Felhasználók</h2></div>
+      <table>
+        <thead>
+          <tr>
+            <th>Felhasználó</th>
+            <th>Szerepkör</th>
+            <th>Státusz</th>
+            <th>Utolsó belépés</th>
+            <th>Létrehozva</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="usersBody"></tbody>
+      </table>
+      <div id="usersState" class="state" hidden></div>
+      <div class="msg" id="tableMsg" role="status" style="padding: 0 16px 12px;"></div>
+    </div>
+  </div>
+
+  <dialog id="passwordDialog">
+    <form method="dialog" id="passwordForm">
+      <h3>Jelszó beállítása: <span id="pwUsername"></span></h3>
+      <label for="pwInput">Új jelszó (min. 8)</label>
+      <input id="pwInput" type="password" minlength="8" maxlength="128" required autocomplete="new-password" />
+      <div class="msg error" id="pwMsg"></div>
+      <div class="actions">
+        <button class="btn" type="button" id="pwCancel">Mégse</button>
+        <button class="btn primary" type="submit">Mentés</button>
+      </div>
+    </form>
+  </dialog>
+
+<script src="auth.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const API_USERS = "/api/v1/users";
+  const el = (id) => document.getElementById(id);
+
+  let currentUser = null;
+  let users = [];
+  let pwTargetId = null;
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return "-";
+    const d = new Date(iso + (iso.endsWith("Z") ? "" : "Z"));
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("hu-HU", { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  async function errorDetail(res) {
+    try {
+      const body = await res.json();
+      if (typeof body.detail === "string") return body.detail;
+      if (Array.isArray(body.detail)) return body.detail.map((d) => d.msg).join("; ");
+    } catch (_) { /* not JSON */ }
+    return `HTTP ${res.status}`;
+  }
+
+  function setMsg(node, text, ok) {
+    node.textContent = text;
+    node.className = "msg " + (ok ? "ok" : "error");
+  }
+
+  async function loadUsers() {
+    const state = el("usersState");
+    try {
+      const res = await SIEM.api(API_USERS);
+      if (!res.ok) throw new Error(await errorDetail(res));
+      users = await res.json();
+      state.hidden = true;
+      renderUsers();
+    } catch (err) {
+      el("usersBody").innerHTML = "";
+      state.hidden = false;
+      state.className = "state error";
+      state.textContent = "Nem sikerült betölteni a felhasználókat: " + err.message;
+    }
+  }
+
+  function renderUsers() {
+    el("usersBody").innerHTML = users.map((u) => {
+      const isSelf = u.id === currentUser.id;
+      const status = u.is_active
+        ? '<span class="badge badge-fill-good">Aktív</span>'
+        : '<span class="badge badge-fill-muted">Letiltva</span>';
+      return `
+        <tr class="${u.is_active ? "" : "inactive"}">
+          <td>
+            <div class="title-main">${escapeHtml(u.username)}${isSelf ? " (te)" : ""}</div>
+            <div class="title-sub">${escapeHtml(u.full_name || "-")}</div>
+          </td>
+          <td>
+            <select class="role-select" data-id="${u.id}" ${isSelf ? "disabled" : ""}>
+              <option value="analyst" ${u.role === "analyst" ? "selected" : ""}>Analyst</option>
+              <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
+            </select>
+          </td>
+          <td>${status}</td>
+          <td>${fmtTime(u.last_login_at)}</td>
+          <td>${fmtTime(u.created_at)}</td>
+          <td>
+            <div class="row-actions">
+              <button type="button" class="btn small pw-btn" data-id="${u.id}">Jelszó</button>
+              ${isSelf ? "" : `<button type="button" class="btn small ${u.is_active ? "danger" : ""} toggle-btn" data-id="${u.id}">${u.is_active ? "Letiltás" : "Engedélyezés"}</button>`}
+            </div>
+          </td>
+        </tr>`;
+    }).join("");
+
+    document.querySelectorAll(".role-select").forEach((sel) => {
+      sel.addEventListener("change", () => updateUser(Number(sel.dataset.id), { role: sel.value }));
+    });
+    document.querySelectorAll(".toggle-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const u = users.find((x) => x.id === Number(btn.dataset.id));
+        if (u.is_active && !confirm(`Biztosan letiltod: ${u.username}? A felhasználó azonnal kijelentkeztetésre kerül.`)) return;
+        updateUser(u.id, { is_active: !u.is_active });
+      });
+    });
+    document.querySelectorAll(".pw-btn").forEach((btn) => {
+      btn.addEventListener("click", () => openPasswordDialog(Number(btn.dataset.id)));
+    });
+  }
+
+  async function updateUser(id, patch) {
+    const msg = el("tableMsg");
+    msg.textContent = "";
+    try {
+      const res = await SIEM.api(`${API_USERS}/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error(await errorDetail(res));
+      const updated = await res.json();
+      users = users.map((u) => (u.id === updated.id ? updated : u));
+      renderUsers();
+      setMsg(msg, `${updated.username} frissítve.`, true);
+      return true;
+    } catch (err) {
+      setMsg(msg, "Sikertelen módosítás: " + err.message, false);
+      renderUsers();
+      return false;
+    }
+  }
+
+  el("createForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const msg = el("createMsg");
+    const btn = el("createBtn");
+    msg.textContent = "";
+    btn.disabled = true;
+    try {
+      const res = await SIEM.api(API_USERS, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: el("newUsername").value.trim(),
+          full_name: el("newFullName").value.trim() || null,
+          password: el("newPassword").value,
+          role: el("newRole").value,
+        }),
+      });
+      if (res.status === 409) throw new Error("ez a felhasználónév már foglalt");
+      if (!res.ok) throw new Error(await errorDetail(res));
+      const created = await res.json();
+      el("createForm").reset();
+      setMsg(msg, `${created.username} létrehozva.`, true);
+      await loadUsers();
+    } catch (err) {
+      setMsg(msg, "Sikertelen létrehozás: " + err.message, false);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  const dialog = el("passwordDialog");
+
+  function openPasswordDialog(id) {
+    pwTargetId = id;
+    el("pwUsername").textContent = users.find((u) => u.id === id).username;
+    el("pwInput").value = "";
+    el("pwMsg").textContent = "";
+    dialog.showModal();
+  }
+
+  el("pwCancel").addEventListener("click", () => dialog.close());
+  el("passwordForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const ok = await updateUser(pwTargetId, { password: el("pwInput").value });
+    if (ok) dialog.close();
+    else el("pwMsg").textContent = el("tableMsg").textContent;
+  });
+
+  async function init() {
+    try {
+      currentUser = await SIEM.me();
+    } catch (err) {
+      return; // SIEM.api already redirected to the login page
+    }
+    SIEM.renderUserMenu(el("userMenu"), currentUser);
+    if (currentUser.role !== "admin") {
+      document.querySelectorAll(".card").forEach((c) => { c.hidden = true; });
+      const denied = document.createElement("div");
+      denied.className = "state error";
+      denied.textContent = "Az admin panel csak admin szerepkörű felhasználóknak érhető el.";
+      document.querySelector(".wrap").appendChild(denied);
+      return;
+    }
+    loadUsers();
+  }
+
+  init();
+})();
+</script>
+</body>
+</html>

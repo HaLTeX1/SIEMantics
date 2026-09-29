@@ -4,6 +4,7 @@ import time
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth import get_current_user
 from app.config import settings
 from app.db import get_session
 from app.enrichment import enrich_iocs
@@ -11,14 +12,15 @@ from app.enums import AlertStatus
 from app.iris_client import iris_client
 from app.llm_engine import triage_alert
 from app.normalize import normalize_wazuh_alert
+from app.models import AlertRecord
 from app.repository import (
     create_alert_record,
+    get_case_assignments,
     get_latest_alert_record,
     list_alert_records,
-    set_assignee,
     set_ground_truth,
 )
-from app.schemas import AlertRecordOut, AssignRequest, LabelRequest, NormalizedAlert, WazuhAlertPayload
+from app.schemas import AlertRecordOut, AssigneeOut, LabelRequest, NormalizedAlert, WazuhAlertPayload
 
 logger = logging.getLogger("siemantics.alerts")
 
@@ -32,6 +34,19 @@ def _verify_token(x_webhook_token: str | None) -> None:
 
 def _elapsed_ms(started: float) -> float:
     return (time.perf_counter() - started) * 1000
+
+
+async def _with_assignees(session: AsyncSession, records: list[AlertRecord]) -> list[AlertRecordOut]:
+    assignments = await get_case_assignments(session, [r.iris_case_id for r in records if r.iris_case_id is not None])
+    out = []
+    for record in records:
+        item = AlertRecordOut.model_validate(record)
+        if record.iris_case_id in assignments:
+            assignment, assignee = assignments[record.iris_case_id]
+            item.assignee = AssigneeOut.model_validate(assignee)
+            item.assigned_at = assignment.assigned_at
+        out.append(item)
+    return out
 
 
 @router.post("/alerts", status_code=status.HTTP_202_ACCEPTED)
@@ -123,37 +138,28 @@ async def receive_alert(
     return {"status": "escalated", "alert_id": alert.alert_id, "record_id": record.id, "triage": triage, "case": case}
 
 
-@router.get("/alerts", response_model=list[AlertRecordOut])
+@router.get("/alerts", response_model=list[AlertRecordOut], dependencies=[Depends(get_current_user)])
 async def list_alerts(limit: int = 100, offset: int = 0, session: AsyncSession = Depends(get_session)):
-    return await list_alert_records(session, limit=limit, offset=offset)
+    return await _with_assignees(session, await list_alert_records(session, limit=limit, offset=offset))
 
 
-@router.get("/alerts/{alert_id}", response_model=AlertRecordOut)
+@router.get("/alerts/{alert_id}", response_model=AlertRecordOut, dependencies=[Depends(get_current_user)])
 async def get_alert(alert_id: str, session: AsyncSession = Depends(get_session)):
     record = await get_latest_alert_record(session, alert_id)
     if record is None:
         raise HTTPException(status_code=404, detail="alert not found")
-    return record
+    return (await _with_assignees(session, [record]))[0]
 
 
-@router.get("/config")
+@router.get("/config", dependencies=[Depends(get_current_user)])
 async def get_public_config():
     """Non-secret config the frontend needs (e.g. to link out to the IRIS case)."""
     return {"iris_base_url": settings.iris_base_url.rstrip("/")}
 
 
-@router.patch("/alerts/{alert_id}/label", response_model=AlertRecordOut)
+@router.patch("/alerts/{alert_id}/label", response_model=AlertRecordOut, dependencies=[Depends(get_current_user)])
 async def label_alert(alert_id: str, body: LabelRequest, session: AsyncSession = Depends(get_session)):
     record = await set_ground_truth(session, alert_id, body.ground_truth)
     if record is None:
         raise HTTPException(status_code=404, detail="alert not found")
-    return record
-
-
-@router.patch("/alerts/{alert_id}/assign", response_model=AlertRecordOut)
-async def assign_alert(alert_id: str, body: AssignRequest, session: AsyncSession = Depends(get_session)):
-    """Free-text analyst assignment - a stand-in until real user accounts/auth exist."""
-    record = await set_assignee(session, alert_id, body.assignee)
-    if record is None:
-        raise HTTPException(status_code=404, detail="alert not found")
-    return record
+    return (await _with_assignees(session, [record]))[0]

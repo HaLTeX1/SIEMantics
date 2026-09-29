@@ -43,8 +43,7 @@ class IrisClient:
             "Authorization": f"Bearer {settings.iris_api_key}",
             "Content-Type": "application/json",
         }
-        # ioc_type_id seed values vary per IRIS instance/version, so they're looked
-        # up dynamically via /manage/ioc-types/list instead of being hardcoded.
+        # IOC nevekhez tartozó típus azonosítók cache-elése, hogy ne kelljen minden egyes IOC-hoz lekérdezni a típusokat
         self._ioc_type_ids: dict[str, int] | None = None
 
     async def create_case_from_alert(
@@ -75,12 +74,7 @@ class IrisClient:
     async def _create_case(
         self, client: httpx.AsyncClient, alert: NormalizedAlert, triage: TriageResult
     ) -> int:
-        # POST /manage/cases/add - the legacy case API. /api/v2/cases doesn't exist
-        # on every iris-web version (confirmed 404 on 2.3.7), so this targets the
-        # route that's been stable since early iris-web releases. Field names
-        # verified against CaseSchema in iris-web's app/schema/marshables.py:
-        # case_customer (not case_customer_id) is the field actually read on the
-        # wire, and case_soc_id maps to a String(256) column - any alert_id works.
+        # Max 256 karakter lehet a case name
         payload = {
             "case_name": f"[SIEMantics] {alert.rule_description}"[:256],
             "case_description": triage.reasoning,
@@ -91,7 +85,7 @@ class IrisClient:
         return resp.json()["data"]["case_id"]
 
     async def _create_note_group(self, client: httpx.AsyncClient, case_id: int) -> int:
-        # Notes are organized into "groups" (not "directories") pre-v3 iris-web.
+        # Max 256 karakter lehet a group title
         resp = await self._post(
             client,
             "/case/notes/groups/add",
@@ -142,18 +136,14 @@ class IrisClient:
         payload = {
             "ioc_value": ioc_value,
             "ioc_type_id": ioc_type_id,
-            "ioc_tlp_id": 2,  # green, standard TLP seed data
+            "ioc_tlp_id": 2,  # TLP:AMBER
         }
         await self._post(client, "/case/ioc/add", params={"cid": case_id}, json=payload)
 
     @staticmethod
     async def _post(client: httpx.AsyncClient, path: str, **kwargs) -> httpx.Response:
         resp = await client.post(path, **kwargs)
-        # This is a stateless, bearer-token-authenticated API client: any session
-        # cookie IRIS sets on a response must not be replayed on the next request,
-        # since ac_api_case_requires() demands a CSRF token whenever a "session"
-        # cookie is present on a POST - which we never send, causing a spurious
-        # "Invalid CSRF token" 400 on every request after the first.
+        # 403 Forbidden elkerülése (ha a session cookie-t nem töröljük, akkor a következő hívásnál a cookie miatt 403 Forbidden lesz)
         client.cookies.clear()
         resp.raise_for_status()
         return resp

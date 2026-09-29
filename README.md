@@ -10,7 +10,7 @@ Wazuh --webhook--> POST /api/v1/alerts --normalize--> LLM triázs --true positiv
                                                         false positive              LLM elemzés + IoC-k
                                                              |                        note-ként az esetben
                                                              v
-                                                     döntésnapló (SQLite)  <---- minden ág ide ír
+                                                     döntésnapló (MariaDB)  <---- minden ág ide ír
 ```
 
 ## Projektstruktúra
@@ -19,23 +19,27 @@ Wazuh --webhook--> POST /api/v1/alerts --normalize--> LLM triázs --true positiv
 app/
 ├── main.py           # FastAPI app, lifespan (DB init), router regisztráció
 ├── config.py         # pydantic-settings (.env betöltés)
-├── enums.py           # AlertStatus, GroundTruth
+├── enums.py           # AlertStatus, GroundTruth, UserRole
+├── auth.py            # jelszó-hash (scrypt), cookie-s munkamenetek, auth dependency-k, első admin létrehozása
 ├── schemas.py         # Pydantic API sémák (bemenet/kimenet)
 ├── normalize.py        # Wazuh payload -> NormalizedAlert
 ├── llm_engine.py        # OpenRouter triázs (csak ":free" modell)
 ├── iris_client.py       # DFIR-IRIS eset/note/IoC API kliens
 ├── db.py              # SQLAlchemy async engine/session
-├── models.py           # AlertRecord ORM tábla (döntésnapló)
+├── models.py           # ORM táblák: AlertRecord (döntésnapló), User, UserSession, CaseAssignment
 ├── metrics.py           # konfúziós mátrix + feldolgozási idő statisztikák
 └── routers/
     ├── alerts.py        # POST/GET /alerts, PATCH /alerts/{id}/label
-    └── metrics.py         # GET /metrics
+    ├── metrics.py         # GET /metrics
+    ├── auth.py            # login/logout/me/jelszócsere
+    ├── cases.py           # IRIS case-ek felhasználóhoz rendelése
+    └── users.py           # admin: felhasználók listázása/létrehozása/módosítása
 ```
 
 ## Előfeltételek
 
 - Python 3.12 (a Dockerfile és a CI is ezt használja)
-- Docker + `docker-compose` (V1, önálló bináris) (konténeres futtatáshoz/deployhoz)
+- Docker + `docker-compose` (V1, önálló bináris) (konténeres futtatáshoz/deployhoz — ez indítja a MariaDB-t is)
 - OpenRouter API kulcs (ingyenes, https://openrouter.ai/keys) — opcionális, lásd lent
 - Elérhető DFIR-IRIS instancia + API kulcs
 
@@ -52,7 +56,7 @@ cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
-Az app induláskor (`lifespan`) automatikusan létrehozza az SQLite adatbázist (`siemantics.db`), migráció nem szükséges.
+Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABASE_URL`-ben megadott adatbázisban, migráció nem szükséges. Sima venv-es futtatásnál ez alapértelmezetten egy helyi SQLite fájl (`siemantics.db`) — Docker-rel futtatva viszont a `docker-compose.yml` a bundled MariaDB service-re állítja át (lásd lent), mert egy konténeren belüli SQLite fájl nem éli túl a konténer újralétrehozását.
 
 ## Konfiguráció (.env)
 
@@ -69,7 +73,13 @@ Az app induláskor (`lifespan`) automatikusan létrehozza az SQLite adatbázist 
 | `ABUSEIPDB_API_KEY` | opcionális IoC-enrichment. Ingyenesen igényelhető: https://www.abuseipdb.com/account/api |
 | `ENRICHMENT_MAX_IOCS` | alapértelmezett: `5` — hány egyedi IP-t enrichel maximum riasztásonként (free-tier rate limitek védelme) |
 | `WAZUH_WEBHOOK_TOKEN` | megosztott titok a webhook hívások hitelesítéséhez (`X-Webhook-Token` header) |
-| `DATABASE_URL` | döntésnapló DB elérési útja, alapértelmezett: `sqlite+aiosqlite:///./siemantics.db` |
+| `DATABASE_URL` | döntésnapló DB elérési útja, alapértelmezett: `sqlite+aiosqlite:///./siemantics.db` — **docker-compose-ban ezt felülírja** a `mariadb` service-re mutató URL, ezt a sort csak sima venv-es futtatásnál veszi figyelembe |
+| `MARIADB_ROOT_PASSWORD` | csak docker-compose: a MariaDB konténer root jelszava — állítsd be az **első** `docker-compose up` előtt |
+| `MARIADB_DATABASE` | csak docker-compose: adatbázis neve, alapértelmezett: `siemantics` |
+| `MARIADB_USER` / `MARIADB_PASSWORD` | csak docker-compose: az app saját DB usere/jelszava, alapértelmezett user: `siemantics` |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | az első admin felhasználó — csak akkor jön létre induláskor, ha a `users` tábla üres. Később módosítva **nem** írja át a meglévő admin jelszavát |
+| `SESSION_TTL_HOURS` | bejelentkezés érvényessége órában, alapértelmezett: `12` |
+| `SESSION_COOKIE_SECURE` | alapértelmezett: `false`. HTTPS mögött (pl. reverse proxy) állítsd `true`-ra, hogy a session cookie csak titkosított kapcsolaton menjen |
 
 **Önaláírt IRIS tanúsítvány:** ha a DFIR-IRIS instanciád önaláírt TLS tanúsítványt használ (jellemző egy házon belüli/lab telepítésnél), az `httpx` kliens jogosan elutasítja alapértelmezésben (`certificate verify failed: self-signed certificate`) — ez nem hiba, hanem a várt biztonsági viselkedés. Az `IRIS_VERIFY_SSL=false` beállítással kikapcsolható, de ez a konkrét kapcsolatot védtelenné teszi man-in-the-middle támadással szemben — csak akkor használd, ha az IRIS host egy megbízható, elszigetelt hálózaton van (pl. lab környezet). Éles/külső elérésű IRIS-nél helyette a szerver saját tanúsítványát kellene megbízható CA-ként telepíteni a hoszton, vagy valódi (nem önaláírt) certet használni az IRIS előtt.
 
@@ -90,19 +100,29 @@ Escalated (true-positive) riasztásoknál a rendszer automatikusan enricheli az 
 
 Egyedi IP-nkénti cap (`ENRICHMENT_MAX_IOCS`, alapértelmezett 5) védi a free-tier rate limiteket (VirusTotal ~4 req/perc, AbuseIPDB napi kvóta). Egy adott IoC lekérdezésének hibája (timeout, rate limit) sosem blokkolja a riasztás feldolgozását — legrosszabb esetben az adott IoC enrichment nélkül marad.
 
-## Analyst assignment
+## Felhasználókezelés
 
-Mivel még nincs valódi auth/user rendszer, az "assign to me" egy egyszerű, szabadszöveges helyettesítő megoldás: a dashboard fejlécében megadott név `localStorage`-ban tárolódik a böngészőben, és a `PATCH /api/v1/alerts/{alert_id}/assign` (`{"assignee": "..."}` vagy `{"assignee": null}` az unassignhoz) írja/törli az `assigned_to` mezőt. Ez majd az auth bevezetésekor lecserélendő valódi user ID-ra.
+A dashboard és az olvasó/címkéző API végpontok (`GET /alerts`, `GET /alerts/{id}`, `PATCH /alerts/{id}/label`, `GET /metrics`, `GET /config`) bejelentkezést igényelnek. A Wazuh webhook (`POST /api/v1/alerts`) továbbra is az `X-Webhook-Token` headerrel hitelesít, a `/healthz` nyitott.
+
+- **Első admin:** induláskor, ha még egyetlen felhasználó sincs, az app létrehozza az `ADMIN_USERNAME` / `ADMIN_PASSWORD` adminját. Ha az `ADMIN_PASSWORD` üres, csak egy figyelmeztetést logol — ilyenkor senki nem tud belépni.
+- **Szerepkörök:** `admin` (mindenhez hozzáfér + admin panel) és `analyst` (riasztások megtekintése, címkézés, metrikák).
+- **Admin panel** (`/ui/admin.html`, a fejlécben az „Admin” linkről): új felhasználó felvétele, szerepkör módosítása, jelszó beállítása, letiltás/engedélyezés. Felhasználót törölni nem lehet, csak letiltani — így a hozzá rendelt case-ek megmaradnak. Letiltáskor és jelszó-visszaállításkor a felhasználó összes munkamenete azonnal érvénytelenné válik. Az admin a saját fiókját nem tilthatja le és nem fokozhatja le (hogy ne zárja ki magát).
+- **Munkamenet:** bejelentkezéskor egy véletlen token kerül egy `HttpOnly`, `SameSite=Lax` cookie-ba (`siemantics_session`); az adatbázisban csak a token SHA-256 hash-e tárolódik, így kijelentkezéskor/letiltáskor szerveroldalon visszavonható. A jelszavak `scrypt`-tel (stdlib `hashlib`) sózva hash-elődnek.
+- **Case-ek felhasználóhoz rendelése:** a `case_assignments` tábla (`CaseAssignment` modell) egy DFIR-IRIS esetet (`iris_case_id`) rendel egy felhasználóhoz (`user_id`, `assigned_by_id`, `assigned_at`); egy esetnek egyszerre egy felelőse lehet. Szándékosan külön tábla és nem új oszlop az `alert_records`-on, mert migrációs eszköz nélkül egy meglévő táblához adott oszlop a már futó MariaDB-n nem jönne létre.
+  - **Jogosultság:** admin bármelyik case-t bármelyik aktív felhasználóhoz rendelheti, átrendelheti vagy felelős nélkülivé teheti. Analyst csak egy *felelős nélküli* case-t vehet magához, illetve a saját case-ét adhatja le — más case-ét nem veheti el (403).
+  - **API:** `PUT /api/v1/cases/{iris_case_id}/assignee` (`{"user_id": 3}` vagy `{"user_id": null}` a felelős törléséhez); a riasztás-rekordok (`GET /alerts`, `GET /alerts/{id}`) `assignee` (`id`, `username`, `full_name`) és `assigned_at` mezővel jönnek vissza.
+  - **UI:** a táblában „Felelős” oszlop, a szűrők között „Minden felelős / Hozzám rendelt / Nincs felelős / <felhasználó>” szűrő, a kinyitott részletpanelen pedig adminnak legördülő lista, analystnak „Magamhoz rendelem” / „Leadom” gomb.
 
 ## Frontend (Analyst Queue dashboard)
 
-A `/` a `/ui/`-ra irányít, ami egy önálló, statikus HTML/CSS/JS oldal (`app/static/index.html`, build lépés nélkül, a FastAPI szolgálja ki `StaticFiles`-szal). Splunk Enterprise Security Analyst Queue nézete ihlette:
+A `/` a `/ui/`-ra irányít (bejelentkezés nélkül a `/ui/login.html`-re dob), ami egy önálló, statikus HTML/CSS/JS oldal (`app/static/index.html`, build lépés nélkül, a FastAPI szolgálja ki `StaticFiles`-szal). Splunk Enterprise Security Analyst Queue nézete ihlette:
 
 - **Timeline** — riasztások száma időbucketenként (óránként vagy naponta, a szűrt időtartománytól függően), hover tooltippel.
-- **Szűrők** — szabadszavas keresés (rule/alert ID/forrás IP), státusz (escalated/suppressed/error), disposition (confirmed TP/FP/undetermined), időtartomány, kiosztás (mindenki/rám kiosztva/kiosztatlan).
-- **Tábla** — minden riasztás severity, entity (forrás IP), triázs motor (openrouter/mock), confidence, státusz, disposition és kiosztás badge-ekkel/oszlopokkal, időbélyeggel.
+- **Szűrők** — szabadszavas keresés (rule/alert ID/forrás IP), státusz (escalated/suppressed/error), disposition (confirmed TP/FP/undetermined), időtartomány.
+- **Tábla** — minden riasztás severity, entity (forrás IP), triázs motor (openrouter/mock), confidence, státusz és disposition badge-ekkel, időbélyeggel.
+- **Felelős** — escalated riasztásoknál (van IRIS case) a case felelőse; szűrhető, és a részletpanelen hozzárendelhető (lásd [Felhasználókezelés](#felhasználókezelés)).
 - **Riasztás részletei** — egy sorra kattintva (vagy a ▸ gombbal) a sor alatt kinyílik egy panel a teljes LLM indoklással, kinyert IoC-kkel (VirusTotal/AbuseIPDB enrichmenttel, ha van), hibaüzenettel (ha volt) és a DFIR-IRIS eset linkjével. A ⧉ gombbal ugyanez a részletnézet önálló (popup) ablakban is megnyitható (`app/static/alert.html`, a `GET /api/v1/alerts/{alert_id}` végpontot hívja).
-- **Bulk címkézés és kiosztás** — sorok kijelölése + "Label: True/False Positive" gomb (`PATCH /alerts/{id}/label`) vagy "Assign to me" / "Unassign" gomb (`PATCH /alerts/{id}/assign`) minden kijelölt riasztásra — ez váltja ki a `curl`-lal való kézi címkézést/kiosztást a kiértékelési munkafolyamatban (lásd lent).
+- **Bulk címkézés** — sorok kijelölése + "Label: True Positive" / "Label: False Positive" gomb, ami a `PATCH /api/v1/alerts/{id}/label` végpontot hívja minden kijelölt riasztásra — ez váltja ki a `curl`-lal való kézi címkézést a kiértékelési munkafolyamatban (lásd lent).
 
 Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`, `GET /api/v1/alerts/{id}`, `GET /api/v1/config`), nincs külön build/deploy lépés — a Docker image-ben már benne van.
 
@@ -114,9 +134,17 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `GET` | `/api/v1/alerts` | eltárolt riasztás-rekordok listázása (`limit`, `offset`) |
 | `GET` | `/api/v1/alerts/{alert_id}` | egy riasztás-rekord teljes részlete (a dashboard részletnézetéhez) |
 | `PATCH` | `/api/v1/alerts/{alert_id}/label` | ground truth címkézés (`true_positive` / `false_positive`) |
-| `PATCH` | `/api/v1/alerts/{alert_id}/assign` | analyst kiosztás (`{"assignee": "név"}` vagy `null` az unassignhoz) |
 | `GET` | `/api/v1/config` | nem-titkos konfiguráció a frontendnek (pl. `iris_base_url` az eset-linkhez) |
 | `GET` | `/api/v1/metrics` | konfúziós mátrix + feldolgozási idő statisztikák a címkézett rekordokból |
+| `POST` | `/api/v1/auth/login` | bejelentkezés (`username`, `password`), session cookie-t állít be |
+| `POST` | `/api/v1/auth/logout` | kijelentkezés, a munkamenet törlése |
+| `GET` | `/api/v1/auth/me` | a bejelentkezett felhasználó adatai |
+| `POST` | `/api/v1/auth/password` | saját jelszó módosítása (`current_password`, `new_password`); a többi eszközön kijelentkeztet |
+| `GET` | `/api/v1/cases/assignees` | aktív felhasználók, akikhez case rendelhető |
+| `PUT` | `/api/v1/cases/{iris_case_id}/assignee` | case felelősének beállítása/törlése (`user_id` vagy `null`) — analyst csak magához vehet felelős nélküli case-t, vagy leadhatja a sajátját |
+| `GET` | `/api/v1/users` | **admin:** felhasználók listája |
+| `POST` | `/api/v1/users` | **admin:** új felhasználó (`username`, `full_name`, `password`, `role`) |
+| `PATCH` | `/api/v1/users/{id}` | **admin:** `full_name`, `role`, `is_active`, `password` módosítása |
 | `GET` | `/healthz` | health check |
 
 ### Teszt scenario script
@@ -132,6 +160,9 @@ BASE_URL=http://localhost:8000 ./scripts/test_requests.sh sqli_union
 
 # ha be van állítva WAZUH_WEBHOOK_TOKEN a szerveren
 BASE_URL=http://localhost:8000 WEBHOOK_TOKEN=<token> ./scripts/test_requests.sh
+
+# a list/label/metrics forgatókönyvekhez bejelentkezés kell (UI_USER alapértelmezetten: admin)
+BASE_URL=http://localhost:8000 UI_USER=admin UI_PASSWORD=<jelszó> ./scripts/test_requests.sh
 ```
 
 ### Postman collection
@@ -139,7 +170,7 @@ BASE_URL=http://localhost:8000 WEBHOOK_TOKEN=<token> ./scripts/test_requests.sh
 Ugyanezek a forgatókönyvek `postman/SIEMantics.postman_collection.json` néven, importálható Postman collection formában (mappánként csoportosítva, `pm.test` assertion-ökkel minden requesthez — Collection Runnerrel az egész sorozat egy kattintással végigfuttatható és kiértékelhető).
 
 1. Postman → **Import** → válaszd ki a `postman/SIEMantics.postman_collection.json` fájlt.
-2. A collection **Variables** fülén állítsd be: `base_url` (pl. `http://10.64.0.127:8000`), `webhook_token` (ha van beállítva `WAZUH_WEBHOOK_TOKEN` a szerveren; ha nincs, hagyd üresen).
+2. A collection **Variables** fülén állítsd be: `base_url` (pl. `http://10.64.0.127:8000`), `webhook_token` (ha van beállítva `WAZUH_WEBHOOK_TOKEN` a szerveren; ha nincs, hagyd üresen), valamint `ui_username` / `ui_password` — a „4. Alert management” mappa első requestje ezzel jelentkezik be, a session cookie-t a Postman cookie jar viszi tovább.
 3. Futtasd mappánként, vagy a **Run collection** gombbal az egészet — a "4. Alert management" mappa a korábbi mappákban létrehozott alert ID-kat címkézi, ezért sorrendben érdemes futtatni.
 
 A true-positive kimenetelű requestek `pm.test`-je mindkét kimenetelt elfogadja (202 escalated / 502 IRIS unreachable), mivel IRIS nélkül is helyesen kell viselkedniük — lásd a bash scriptnél leírt megjegyzést.
@@ -164,11 +195,15 @@ curl -X POST http://localhost:8000/api/v1/alerts \
 ### Címkézés és metrika lekérdezés (kiértékeléshez)
 
 ```bash
-curl -X PATCH http://localhost:8000/api/v1/alerts/alert-001/label \
+curl -c cookies.txt -X POST http://localhost:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "<jelszó>"}'
+
+curl -b cookies.txt -X PATCH http://localhost:8000/api/v1/alerts/alert-001/label \
   -H "Content-Type: application/json" \
   -d '{"ground_truth": "true_positive"}'
 
-curl http://localhost:8000/api/v1/metrics
+curl -b cookies.txt http://localhost:8000/api/v1/metrics
 ```
 
 ## Futtatás Dockerrel
@@ -178,7 +213,7 @@ docker-compose up -d --build
 docker-compose logs -f siemantics
 ```
 
-A döntésnapló a `siemantics_data` named volume-ban perzisztál, túléli a konténer újraindítását.
+A döntésnapló egy `mariadb` service-ben (MariaDB) fut, ami a `siemantics_mariadb_data` named volume-ban perzisztál, túléli a konténer újraindítását/újraépítését. (Korábban ez egy konténeren belüli SQLite fájl volt egy nem megfelelően bekötött volume mellett, ami ténylegesen elveszett minden `docker-compose up --build`-nál — ezt váltja ki a MariaDB.)
 
 ## Kiértékelési munkafolyamat (szakdolgozat 6. fejezet)
 
@@ -254,4 +289,6 @@ cat ~/.ssh/siemantics_deploy
 
 - Nincs még labor/teszt log-generátor a 6.1 fejezethez (támadási szenáriók automatikus generálása).
 - A bemeneti séma jelenleg Wazuh-specifikus; több SIEM forrás támogatásához a normalizációs réteget bővíteni kell.
+- A case-felelős csak a SIEMantics-ban él, nincs szinkronizálva a DFIR-IRIS case owner mezőjével.
+- A bejelentkezésnek nincs rate limitingje / fiókzárolása sikertelen próbálkozások után.
 - Az 5.4 fejezetben tárgyalt biztonságos kódolási szempontok (rate limiting, retry/backoff LLM és IRIS hívásokhoz, bővebb audit log) még nincsenek teljeskörűen implementálva.

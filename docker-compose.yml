@@ -1,14 +1,32 @@
 services:
+  mariadb:
+    image: mariadb:11
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-siemantics}
+      MARIADB_USER: ${MARIADB_USER:-siemantics}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+    volumes:
+      - siemantics_mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   siemantics:
     build: .
     image: siemantics:latest
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      DATABASE_URL: mysql+aiomysql://${MARIADB_USER:-siemantics}:${MARIADB_PASSWORD}@mariadb:3306/${MARIADB_DATABASE:-siemantics}
+    depends_on:
+      - mariadb
     ports:
       - "8000:8000"
-    volumes:
-      - siemantics_data:/app/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
       interval: 30s
@@ -16,4 +34,4 @@ services:
       retries: 3
 
 volumes:
-  siemantics_data:
+  siemantics_mariadb_data:

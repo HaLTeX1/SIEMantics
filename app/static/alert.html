@@ -119,23 +119,6 @@
   .ti-entry .ti-line { color: var(--text-secondary); }
   .ti-entry .ti-none { color: var(--text-muted); font-style: italic; }
 
-  .assign-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-top: 6px;
-  }
-  button.btn {
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    padding: 5px 11px;
-    font-size: 12px;
-    cursor: pointer;
-    background: var(--surface-2);
-    color: var(--text-primary);
-  }
-  button.btn:hover { background: #262625; }
-  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -143,6 +126,7 @@
     <div class="state" id="loadingState">Betöltés...</div>
   </div>
 
+<script src="auth.js"></script>
 <script>
 (function () {
   "use strict";
@@ -150,12 +134,6 @@
   const params = new URLSearchParams(window.location.search);
   const alertId = params.get("id");
   const content = document.getElementById("content");
-  const ANALYST_NAME_KEY = "siemantics_analyst_name";
-
-  function getAnalystName() {
-    try { return localStorage.getItem(ANALYST_NAME_KEY) || ""; } catch { return ""; }
-  }
-
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -236,13 +214,6 @@
     fields.push(field("Forrás IP", escapeHtml(a.source_ip || "-")));
     fields.push(field("Beérkezett", fmtTime(a.received_at)));
     fields.push(field("Feldolgozási idő", `${Math.round(a.processing_time_ms)} ms`));
-    const assignRow = `
-      <div>${a.assigned_to ? escapeHtml(a.assigned_to) : '<span style="color:var(--text-muted)">Kiosztatlan</span>'}</div>
-      <div class="assign-row">
-        <button class="btn primary" id="assignMeBtn" type="button">Assign to me</button>
-        <button class="btn" id="unassignBtn" type="button">Unassign</button>
-      </div>`;
-    fields.push(field("Kiosztva", assignRow));
     if (a.triage_engine != null) fields.push(field("Triázs motor", escapeHtml(a.triage_engine)));
     if (a.llm_confidence != null) fields.push(field("Confidence", Math.round(a.llm_confidence * 100) + "%"));
     if (a.llm_is_true_positive != null) {
@@ -256,6 +227,10 @@
         ? `<a class="iris-link" href="${escapeHtml(irisBaseUrl)}/case?cid=${encodeURIComponent(a.iris_case_id)}" target="_blank" rel="noopener">Case #${escapeHtml(a.iris_case_id)} megnyitása az IRIS-ben ↗</a>`
         : `Case #${escapeHtml(a.iris_case_id)}`;
       fields.push(field("DFIR-IRIS eset", link));
+      const owner = a.assignee
+        ? escapeHtml(a.assignee.full_name || a.assignee.username) + (a.assigned_at ? " (" + fmtTime(a.assigned_at) + " óta)" : "")
+        : "Nincs felelős";
+      fields.push(field("Felelős", owner));
     }
     const tiField = renderTiSection(a);
     if (tiField) fields.push(tiField);
@@ -276,33 +251,6 @@
       </div>
       <div class="panel">${fields.join("")}</div>
     `;
-
-    document.getElementById("assignMeBtn").addEventListener("click", () => {
-      const name = getAnalystName();
-      if (!name) {
-        alert("Előbb állítsd be a neved az Analyst Queue oldal fejlécében ('Analiszta' mező).");
-        return;
-      }
-      assign(name);
-    });
-    document.getElementById("unassignBtn").addEventListener("click", () => assign(null));
-  }
-
-  let lastIrisBaseUrl = "";
-
-  async function assign(assignee) {
-    try {
-      const res = await fetch(`/api/v1/alerts/${encodeURIComponent(alertId)}/assign`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ assignee }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const alertData = await res.json();
-      render(alertData, lastIrisBaseUrl);
-    } catch (err) {
-      alert("Nem sikerült a kiosztás: " + err.message);
-    }
   }
 
   async function load() {
@@ -312,14 +260,13 @@
     }
     try {
       const [alertRes, configRes] = await Promise.all([
-        fetch(`/api/v1/alerts/${encodeURIComponent(alertId)}`),
-        fetch("/api/v1/config").catch(() => null),
+        SIEM.api(`/api/v1/alerts/${encodeURIComponent(alertId)}`),
+        SIEM.api("/api/v1/config").catch(() => null),
       ]);
       if (!alertRes.ok) throw new Error(`HTTP ${alertRes.status}`);
       const alertData = await alertRes.json();
       const configData = configRes && configRes.ok ? await configRes.json() : {};
-      lastIrisBaseUrl = configData.iris_base_url || "";
-      render(alertData, lastIrisBaseUrl);
+      render(alertData, configData.iris_base_url || "");
     } catch (err) {
       content.innerHTML = `<div class="state error">Nem sikerült betölteni a riasztást: ${escapeHtml(err.message)}</div>`;
     }

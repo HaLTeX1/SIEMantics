@@ -1,10 +1,10 @@
 from datetime import datetime
 
-from sqlalchemy import JSON, DateTime, Enum, Float, Integer, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
-from app.enums import AlertStatus, GroundTruth
+from app.enums import AlertStatus, GroundTruth, UserRole
 
 
 class AlertRecord(Base):
@@ -36,8 +36,48 @@ class AlertRecord(Base):
     ground_truth: Mapped[GroundTruth | None] = mapped_column(Enum(GroundTruth), nullable=True)
     labeled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    # Free-text analyst identity - a stand-in for real user accounts until auth exists
-    assigned_to: Mapped[str | None] = mapped_column(String(128), nullable=True)
-
     # VirusTotal / AbuseIPDB results per IP IoC, populated for escalated alerts
     ioc_enrichment: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+class User(Base):
+    """Dashboard user. Only an admin can create users (see routers/users.py)."""
+
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    full_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.ANALYST)
+    # Users are deactivated instead of deleted so case assignments keep a valid owner
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class UserSession(Base):
+    """Server-side login session - only the SHA-256 of the cookie token is stored."""
+
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class CaseAssignment(Base):
+    """Assigns a DFIR-IRIS case (AlertRecord.iris_case_id) to a user.
+
+    Kept as a separate table instead of a column on alert_records so it is
+    picked up by create_all() on existing databases without a migration.
+    """
+
+    __tablename__ = "case_assignments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    iris_case_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    assigned_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

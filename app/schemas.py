@@ -3,10 +3,10 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, ConfigDict
 
-from app.enums import AlertStatus, GroundTruth
+from app.enums import AlertStatus, GroundTruth, UserRole
 
 
-# --- Raw Wazuh payload (loose, upstream format varies by ruleset/decoder) ---
+# --- Raw Wazuh alert payloads as received from the webhook integration.
 
 class WazuhRule(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -71,6 +71,14 @@ class IrisCaseResult(BaseModel):
 
 # --- Decision log / evaluation dataset ---
 
+class AssigneeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    full_name: Optional[str] = None
+
+
 class AlertRecordOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -91,16 +99,14 @@ class AlertRecordOut(BaseModel):
     processing_time_ms: float
     ground_truth: Optional[GroundTruth] = None
     labeled_at: Optional[datetime] = None
-    assigned_to: Optional[str] = None
     ioc_enrichment: Optional[list[dict]] = None
+    # Owner of the IRIS case (only possible when iris_case_id is set)
+    assignee: Optional[AssigneeOut] = None
+    assigned_at: Optional[datetime] = None
 
 
 class LabelRequest(BaseModel):
     ground_truth: GroundTruth
-
-
-class AssignRequest(BaseModel):
-    assignee: Optional[str] = Field(default=None, max_length=128)
 
 
 # --- Aggregate evaluation metrics (thesis ch. 6.3) ---
@@ -124,3 +130,58 @@ class TriageMetrics(BaseModel):
     avg_processing_time_ms: Optional[float] = None
     median_processing_time_ms: Optional[float] = None
     p95_processing_time_ms: Optional[float] = None
+
+
+# --- Users / auth ---
+
+class UserOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    username: str
+    full_name: Optional[str] = None
+    role: UserRole
+    is_active: bool
+    created_at: datetime
+    last_login_at: Optional[datetime] = None
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=128)
+
+
+class UserCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=64, pattern=r"^[A-Za-z0-9._-]+$")
+    full_name: Optional[str] = Field(default=None, max_length=128)
+    password: str = Field(min_length=8, max_length=128)
+    role: UserRole = UserRole.ANALYST
+
+
+class UserUpdate(BaseModel):
+    """Admin-side partial update; omitted fields are left unchanged."""
+
+    full_name: Optional[str] = Field(default=None, max_length=128)
+    role: Optional[UserRole] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+
+
+# --- Case assignment ---
+
+class CaseAssignRequest(BaseModel):
+    """`user_id: null` removes the current assignee."""
+
+    user_id: Optional[int] = None
+
+
+class CaseAssignmentOut(BaseModel):
+    iris_case_id: int
+    assignee: Optional[AssigneeOut] = None
+    assigned_by: Optional[AssigneeOut] = None
+    assigned_at: Optional[datetime] = None
