@@ -10,7 +10,10 @@ from app.config import settings
 
 logger = logging.getLogger("siemantics.db")
 
-engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
+# pool_recycle instead of pool_pre_ping: pre-ping is broken with aiomysql 0.3 on
+# SQLAlchemy 2.0.35 (ping() missing "reconnect"); recycling keeps connections
+# younger than MySQL's wait_timeout so they are not dropped server-side.
+engine = create_async_engine(settings.database_url, echo=False, pool_recycle=3600)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
