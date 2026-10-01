@@ -3,6 +3,7 @@
 import json
 import re
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from app.config import settings
@@ -16,6 +17,12 @@ _IP_RE = re.compile(r"^(?:\d{1,3}\.){3}\d{1,3}$")
 _HASH_TYPES = {32: "md5", 40: "sha1", 64: "sha256"}
 _HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
 _DOMAIN_RE = re.compile(r"^(?=.{4,253}$)([a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$")
+
+# Wazuh timestamp formatumok, pl. 2026-10-01T14:20:01.512+0000.
+_WAZUH_TS_FORMATS = ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z")
+
+# IRIS timeline kategoria, ha a szabalynak nincs MITRE taktikaja.
+TIMELINE_DEFAULT_CATEGORY = "Unspecified"
 
 # Compliance mezok a Wazuh szabalyban.
 _COMPLIANCE_KEYS = ["pci_dss", "gdpr", "hipaa", "nist_800_53", "tsc", "gpg13"]
@@ -166,6 +173,8 @@ class CaseContext:
     # Eredeti Wazuh payload, regi rekordoknal ures.
     raw: dict = field(default_factory=dict)
     escalated_by: str | None = None
+    # Korrelacional annak a riasztasnak az ID-ja, akinek az esetebe ez bekerult.
+    correlated_with: str | None = None
 
     @property
     def rule(self) -> dict:
@@ -224,7 +233,7 @@ class CaseContext:
 
 def case_name(ctx: CaseContext) -> str:
     host = f" @ {ctx.alert.agent_name}" if ctx.alert.agent_name else ""
-    name = f"[SIEMantics {ctx.display_id}] [{ctx.priority}/{ctx.severity.upper()}] {ctx.alert.rule_description}{host}"
+    name = f"[SIEMantics {ctx.display_id}] {priority_tag(ctx.severity)} {ctx.alert.rule_description}{host}"
     return name[:256]
 
 
@@ -232,11 +241,32 @@ def case_tags(ctx: CaseContext) -> list[str]:
     tags = ["siemantics", ctx.display_id, f"severity:{ctx.severity}", ctx.priority]
     if ctx.escalated_by:
         tags.append("manual-escalation")
+    if ctx.correlated_with:
+        tags.append("correlated")
     if ctx.rule.get("id"):
         tags.append(f"wazuh-rule:{ctx.rule['id']}")
     tags += [tid for tid, _, _ in ctx.mitre]
     tags += [t.lower().replace(" ", "-") for t in ctx.tactics]
     return list(dict.fromkeys(tags))
+
+
+def _correlation_line(ctx: CaseContext) -> str:
+    return f"Correlated with {ctx.correlated_with}: same source IP and similar alert, added to its case."
+
+
+def priority_tag(severity: str) -> str:
+    return f"[{_PRIORITY[severity]}/{severity.upper()}]"
+
+
+def severity_rank(name: str | None) -> int:
+    # Ismeretlen severity (pl. IRIS Unspecified) a legalacsonyabb.
+    name = (name or "").lower()
+    return _SEVERITY_ORDER.index(name) if name in _SEVERITY_ORDER else -1
+
+
+def raise_case_name(case_name_: str, ctx: CaseContext) -> str:
+    # A meglevo eset neveben a prioritas cimket a magasabbra csereljuk.
+    return re.sub(r"\[P\d/[A-Z]+\]", priority_tag(ctx.severity), case_name_, count=1)[:256]
 
 
 def _verdict_line(ctx: CaseContext) -> str:
@@ -313,7 +343,10 @@ def _triage_note(ctx: CaseContext) -> str:
         ("Case priority", f"**{ctx.priority} / {ctx.severity.upper()}** (higher of Wazuh and triage)"),
         ("Escalation", f"manual, by {ctx.escalated_by}" if ctx.escalated_by else "automatic"),
     ]
+    if ctx.correlated_with:
+        rows.append(("Correlation", _correlation_line(ctx)))
     return "\n\n".join([
+        *([f"**{_correlation_line(ctx)}**"] if ctx.correlated_with else []),
         _verdict_line(ctx),
         _table(rows),
         "## Reasoning",
@@ -510,3 +543,70 @@ def asset_description(ctx: CaseContext) -> str:
         f"Wazuh agent{f' {agent_id}' if agent_id else ''} that raised {ctx.display_id} "
         f"({ctx.alert.rule_description}) at {ctx.detected_at}."
     )
+
+
+# --- Timeline ---
+
+def event_time(ctx: CaseContext) -> tuple[str, str]:
+    # IRIS kulon varja az idopontot (idozona nelkul) es az idozonat.
+    ts = None
+    for fmt in _WAZUH_TS_FORMATS:
+        try:
+            ts = datetime.strptime(ctx.raw.get("timestamp") or "", fmt)
+            break
+        except ValueError:
+            continue
+    if ts is None:
+        ts = ctx.alert.received_at.replace(tzinfo=timezone.utc)
+
+    offset = ts.utcoffset() or timedelta(0)
+    minutes = abs(int(offset.total_seconds())) // 60
+    tz = f"{'-' if offset < timedelta(0) else '+'}{minutes // 60:02d}:{minutes % 60:02d}"
+    return ts.replace(tzinfo=None).isoformat(timespec="milliseconds"), tz
+
+
+def timeline_category(ctx: CaseContext) -> str:
+    return ctx.tactics[0] if ctx.tactics else TIMELINE_DEFAULT_CATEGORY
+
+
+def timeline_title(ctx: CaseContext) -> str:
+    return f"{ctx.display_id} - {ctx.alert.rule_description}"[:255]
+
+
+def timeline_content(ctx: CaseContext) -> str:
+    t = ctx.triage
+    verdict = (
+        f"manually escalated by {ctx.escalated_by}"
+        if ctx.escalated_by
+        else f"triage: true positive, {t.confidence:.0%} ({t.engine})"
+    )
+    lines = [f"**{ctx.priority} / {ctx.severity.upper()}** - {verdict}"]
+
+    facts = []
+    host = ctx.agent.get("name") or ctx.alert.agent_name
+    if host:
+        facts.append(f"Host: {_code(host)}")
+    src = ctx.data.get("srcip") or ctx.alert.source_ip
+    if src:
+        port = ctx.data.get("srcport")
+        facts.append(f"Source: {_code(f'{src}:{port}' if port else src)}")
+    if ctx.data.get("dstuser"):
+        facts.append(f"Target user: {_code(ctx.data['dstuser'])}")
+    if facts:
+        lines.append(" - ".join(facts))
+
+    if ctx.mitre:
+        lines.append("MITRE: " + ", ".join(f"[{tid}]({mitre_url(tid)}) {name}" for tid, name, _ in ctx.mitre))
+    if ctx.correlated_with:
+        lines.append(_correlation_line(ctx))
+    lines.append(f"Details: notes group **SIEMantics {ctx.display_id}**.")
+    return "\n\n".join(lines)
+
+
+def timeline_raw(ctx: CaseContext) -> str:
+    return ctx.raw.get("full_log") or ctx.alert.log_snippet or ""
+
+
+def timeline_source(ctx: CaseContext) -> str:
+    location = ctx.raw.get("location")
+    return f"Wazuh{f' ({location})' if location else ''} via SIEMantics"[:255]

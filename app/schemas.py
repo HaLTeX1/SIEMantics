@@ -115,6 +115,8 @@ class AlertRecordOut(BaseModel):
     auto_status: Optional[AlertStatus] = None
     escalated_by: Optional[AssigneeOut] = None
     escalated_at: Optional[datetime] = None
+    # Annak a riasztasnak az ID-ja, akinek az IRIS esetebe ez is bekerult.
+    correlated_with: Optional[str] = None
     # Az IRIS a riasztas tulajdonosa
     assignee: Optional[AssigneeOut] = None
     assigned_at: Optional[datetime] = None

@@ -43,6 +43,9 @@ class FakeIris:
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
+        # Korrelalt riasztasok, amik meglevo esetbe kerultek.
+        self.added: list[dict] = []
+        self.closed: set[int] = set()
         self.fail = False
 
     async def create_case_from_alert(self, alert: NormalizedAlert, triage, enrichment=None, **kwargs):
@@ -52,11 +55,20 @@ class FakeIris:
         case_id = 1000 + len(self.calls)
         return IrisCaseResult(case_id=case_id, case_url=f"https://iris.invalid/case?cid={case_id}")
 
+    async def add_alert_to_case(self, case_id: int, alert: NormalizedAlert, triage, enrichment=None, **kwargs):
+        if self.fail:
+            raise RuntimeError("iris down")
+        if case_id in self.closed:
+            return None
+        self.added.append({"case_id": case_id, "alert": alert, "triage": triage, **kwargs})
+        return IrisCaseResult(case_id=case_id, case_url=f"https://iris.invalid/case?cid={case_id}")
+
 
 @pytest.fixture
 def iris(monkeypatch) -> FakeIris:
     fake = FakeIris()
     monkeypatch.setattr(alerts_router.iris_client, "create_case_from_alert", fake.create_case_from_alert)
+    monkeypatch.setattr(alerts_router.iris_client, "add_alert_to_case", fake.add_alert_to_case)
     return fake
 
 

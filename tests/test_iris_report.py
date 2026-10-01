@@ -13,9 +13,12 @@ from app.iris_report import (
     case_name,
     case_notes,
     case_tags,
+    event_time,
     ioc_description,
     ioc_type_name,
     mitre_url,
+    timeline_category,
+    timeline_content,
 )
 from app.normalize import normalize_wazuh_alert
 from app.schemas import TriageResult, WazuhAlertPayload
@@ -130,48 +133,177 @@ def test_ioc_helpers():
     assert "source IP" in desc and "ID-42" in desc and "12 malicious" in desc
 
 
+def test_event_time_keeps_wazuh_timezone():
+    assert event_time(_ctx()) == ("2026-10-01T14:20:01.512", "+00:00")
+    cest = {**SSH_BRUTE_FORCE, "timestamp": "2026-10-01T16:20:01.512+0200"}
+    assert event_time(_ctx(raw=cest)) == ("2026-10-01T16:20:01.512", "+02:00")
+    negative = {**SSH_BRUTE_FORCE, "timestamp": "2026-10-01T09:20:01-0530"}
+    assert event_time(_ctx(raw=negative)) == ("2026-10-01T09:20:01.000", "-05:30")
+
+
+def test_event_time_falls_back_to_received_at():
+    ctx = _ctx(raw={**SSH_BRUTE_FORCE, "timestamp": "not a date"})
+    date, tz = event_time(ctx)
+    assert tz == "+00:00"
+    assert date == ctx.alert.received_at.isoformat(timespec="milliseconds")
+
+
+def test_timeline_category_and_content():
+    ctx = _ctx()
+    assert timeline_category(ctx) == "Credential Access"
+    no_mitre = {**SSH_BRUTE_FORCE, "rule": {k: v for k, v in SSH_BRUTE_FORCE["rule"].items() if k != "mitre"}}
+    assert timeline_category(_ctx(raw=no_mitre)) == "Unspecified"
+    content = timeline_content(ctx)
+    assert "P2 / HIGH" in content and "`185.220.101.45:51122`" in content and "[T1110]" in content
+    assert "manually escalated by analyst1" in timeline_content(_ctx(escalated_by="analyst1"))
+
+
+class FakeIris:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict | None]] = []
+        self.failing: set[str] = set()
+        # Utvonal szerinti egyedi valasz adatok.
+        self.responses: dict[str, object] = {}
+
+    def by_path(self) -> dict[str, list]:
+        out: dict[str, list] = {}
+        for path, body in self.calls:
+            out.setdefault(path, []).append(body)
+        return out
+
+
 @pytest.fixture
-def fake_iris(monkeypatch):
-    calls: list[tuple[str, str, dict | None]] = []
+def fake_iris(monkeypatch) -> FakeIris:
+    fake = FakeIris()
     lookups = {
         "/manage/ioc-types/list": [{"type_name": "ip-any", "type_id": 76}, {"type_name": "other", "type_id": 96}],
         "/manage/asset-type/list": [{"asset_name": "Linux - Server", "asset_id": 3}],
-        "/manage/severities/list": [{"severity_name": "High", "severity_id": 5}],
+        "/manage/severities/list": [
+            {"severity_name": "Medium", "severity_id": 4},
+            {"severity_name": "High", "severity_id": 5},
+            {"severity_name": "Critical", "severity_id": 6},
+        ],
+        "/manage/event-categories/list": [{"name": "Unspecified", "id": 1}, {"name": "Credential Access", "id": 8}],
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        body = json.loads(request.content) if request.content else None
-        calls.append((request.method, request.url.path, body))
         path = request.url.path
+        fake.calls.append((path, json.loads(request.content) if request.content else None))
+        if path in fake.failing:
+            return httpx.Response(400, json={"message": "rejected"})
+        if path in fake.responses:
+            return httpx.Response(200, json={"data": fake.responses[path]})
         if path in lookups:
             return httpx.Response(200, json={"data": lookups[path]})
-        if path == "/case/assets/add":
-            return httpx.Response(400, json={"message": "rejected"})
-        return httpx.Response(200, json={"data": {"case_id": 7, "group_id": 9}})
+        return httpx.Response(200, json={"data": {"case_id": 7, "group_id": 9, "ioc_id": 55, "asset_id": 31}})
 
     real_client = httpx.AsyncClient
     monkeypatch.setattr(
         iris_module.httpx, "AsyncClient", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw)
     )
-    return calls
+    return fake
+
+
+def _create_case():
+    ctx = _ctx()
+    return asyncio.run(iris_module.IrisClient().create_case_from_alert(
+        ctx.alert, ctx.triage, ctx.enrichment, display_id="ID-42", raw_payload=SSH_BRUTE_FORCE
+    ))
 
 
 def test_iris_client_sends_full_case(fake_iris):
-    ctx = _ctx()
-    client = iris_module.IrisClient()
-    result = asyncio.run(client.create_case_from_alert(
-        ctx.alert, ctx.triage, ctx.enrichment, display_id="ID-42", raw_payload=SSH_BRUTE_FORCE
-    ))
-    assert result.case_id == 7
+    assert _create_case().case_id == 7
 
-    by_path = {}
-    for _, path, body in fake_iris:
-        by_path.setdefault(path, []).append(body)
-    assert by_path["/manage/cases/add"][0]["case_name"].startswith("[SIEMantics ID-42]")
-    assert by_path["/case/notes/groups/add"][0]["group_title"] == "SIEMantics ID-42"
-    assert len(by_path["/case/notes/add"]) == 5
-    ioc = by_path["/case/ioc/add"][0]
+    calls = fake_iris.by_path()
+    assert calls["/manage/cases/add"][0]["case_name"].startswith("[SIEMantics ID-42]")
+    assert calls["/case/notes/groups/add"][0]["group_title"] == "SIEMantics ID-42"
+    assert len(calls["/case/notes/add"]) == 5
+    ioc = calls["/case/ioc/add"][0]
     assert ioc["ioc_type_id"] == 76 and "ID-42" in ioc["ioc_tags"]
-    # Az asset hiba ellenere az eset elkeszul.
-    assert by_path["/manage/cases/update/7"][0]["severity_id"] == 5
-    assert "T1110" in by_path["/manage/cases/update/7"][0]["case_tags"]
+    assert calls["/manage/cases/update/7"][0]["severity_id"] == 5
+    assert "T1110" in calls["/manage/cases/update/7"][0]["case_tags"]
+
+    event = calls["/case/timeline/events/add"][0]
+    assert event["event_date"] == "2026-10-01T14:20:01.512" and event["event_tz"] == "+00:00"
+    assert event["event_category_id"] == 8
+    # Az esemeny a letrehozott assethez es IoC-hoz kapcsolodik.
+    assert event["event_assets"] == [31] and event["event_iocs"] == [55]
+    assert event["event_raw"] == SSH_BRUTE_FORCE["full_log"]
+    assert event["event_in_summary"] and event["event_in_graph"]
+
+
+def test_iris_client_failures_after_case_creation_are_best_effort(fake_iris):
+    fake_iris.failing = {"/case/assets/add", "/case/ioc/add"}
+    assert _create_case().case_id == 7
+
+    calls = fake_iris.by_path()
+    event = calls["/case/timeline/events/add"][0]
+    assert event["event_assets"] == [] and event["event_iocs"] == []
+    assert "/manage/cases/update/7" in calls
+
+
+def test_iris_client_timeline_failure_keeps_case(fake_iris):
+    fake_iris.failing = {"/case/timeline/events/add"}
+    assert _create_case().case_id == 7
+    assert "/manage/cases/update/7" in fake_iris.by_path()
+
+
+def _add_to_case():
+    ctx = _ctx()
+    return asyncio.run(iris_module.IrisClient().add_alert_to_case(
+        7, ctx.alert, ctx.triage, ctx.enrichment,
+        display_id="ID-43", correlated_with="ID-42", raw_payload=SSH_BRUTE_FORCE,
+    ))
+
+
+def _open_case(fake: FakeIris, **case):
+    fake.responses.update({
+        "/manage/cases/7": {
+            "close_date": None, "case_tags": "siemantics,ID-42,P3",
+            "severity_id": 4, "case_name": "[SIEMantics ID-42] [P3/MEDIUM] sshd brute force @ lab-web01", **case,
+        },
+        "/case/ioc/list": {"ioc": [{"ioc_value": "185.220.101.45", "ioc_id": 99}]},
+        "/case/assets/list": {"assets": [{"asset_name": "lab-web01", "asset_id": 77}]},
+    })
+
+
+def test_correlated_alert_extends_existing_case(fake_iris):
+    _open_case(fake_iris)
+    assert _add_to_case().case_id == 7
+
+    calls = fake_iris.by_path()
+    assert "/manage/cases/add" not in calls
+    # A meglevo IoC-t es assetet nem vesszuk fel ujra, az esemeny hozzajuk kapcsolodik.
+    assert "/case/ioc/add" not in calls and "/case/assets/add" not in calls
+    event = calls["/case/timeline/events/add"][0]
+    assert event["event_iocs"] == [99] and event["event_assets"] == [77]
+    assert "Correlated with ID-42" in event["event_content"]
+
+    assert calls["/case/notes/groups/add"][0]["group_title"] == "SIEMantics ID-43"
+    triage_note = calls["/case/notes/add"][0]["note_content"]
+    assert "Correlated with ID-42" in triage_note
+
+    meta = calls["/manage/cases/update/7"][0]
+    tags = meta["case_tags"].split(",")
+    assert {"ID-42", "ID-43", "correlated", "T1110"} <= set(tags) and len(tags) == len(set(tags))
+    # Medium esetet a high riasztas megemeli.
+    assert meta["severity_id"] == 5
+    assert meta["case_name"] == "[SIEMantics ID-42] [P2/HIGH] sshd brute force @ lab-web01"
+
+
+def test_correlation_never_lowers_case_severity(fake_iris):
+    _open_case(fake_iris, severity_id=6, case_name="[SIEMantics ID-42] [P1/CRITICAL] x")
+    _add_to_case()
+    meta = fake_iris.by_path()["/manage/cases/update/7"][0]
+    assert "severity_id" not in meta and "case_name" not in meta
+
+
+def test_closed_case_is_not_extended(fake_iris):
+    _open_case(fake_iris, close_date="2026-10-01T18:00:00")
+    assert _add_to_case() is None
+    assert "/case/notes/add" not in fake_iris.by_path()
+
+
+def test_unreadable_case_is_not_extended(fake_iris):
+    fake_iris.failing = {"/manage/cases/7"}
+    assert _add_to_case() is None

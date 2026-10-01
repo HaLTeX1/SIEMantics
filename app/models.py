@@ -49,11 +49,17 @@ class AlertRecord(Base):
     auto_status: Mapped[AlertStatus | None] = mapped_column(Enum(AlertStatus), nullable=True)
     escalated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # A korabbi riasztas ID-ja, akinek az IRIS esetebe ez a riasztas bekerult.
+    correlated_with_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     @property
     def display_id(self) -> str:
         """Unique, human-facing alert ID (the Wazuh alert_id is not unique)."""
         return f"ID-{self.id}"
+
+    @property
+    def correlated_with(self) -> str | None:
+        return f"ID-{self.correlated_with_id}" if self.correlated_with_id else None
 
 
 class User(Base):

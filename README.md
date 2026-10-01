@@ -76,6 +76,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `IRIS_BASE_URL` | DFIR-IRIS instancia URL-je |
 | `IRIS_API_KEY` | DFIR-IRIS API kulcs |
 | `IRIS_CUSTOMER_ID` | eset létrehozáshoz tartozó ügyfél ID |
+| `CORRELATION_WINDOW_HOURS` | alapértelmezett: `24`; ennyi órán belül az azonos forrás IP-ről jövő hasonló riasztás a meglévő IRIS esetbe kerül, `0` = kikapcsolva (lásd [Korreláció](#korreláció)) |
 | `SIEMANTICS_PUBLIC_URL` | opcionális; ha meg van adva, az IRIS eset visszalinkel a SIEMantics riasztás-részletre |
 | `IRIS_VERIFY_SSL` | alapértelmezett: `true`. **Csak** ismert, belső/lab IRIS instanciánál önaláírt tanúsítvánnyal állítsd `false`-ra — lásd lent |
 | `VIRUSTOTAL_API_KEY` | opcionális IoC-enrichment. Ingyenesen igényelhető: https://www.virustotal.com/gui/my-apikey |
@@ -149,9 +150,25 @@ Az eset L2 analystáknak (vizsgálat) és Lead Analystoknak (priorizálás, revi
 - **Név:** `[SIEMantics ID-42] [P2/HIGH] <rule> @ <host>` — a prioritás a Wazuh szint és a triázs ajánlás közül a **magasabb** (az LLM emelhet, de nem csökkenthet): critical=P1, high=P2, medium=P3, low=P4.
 - **Leírás (összefoglaló):** ítélet és confidence, kulcsadatok táblázatban (szabály, MITRE ATT&CK linkkel, érintett host/agent, forrás IP:port, cél user, log forrás, IoC-k), az indoklás és az első 3 javasolt lépés.
 - **Note-ok** (`SIEMantics ID-42` csoport): 1. triázs összefoglaló, 2. riasztás részletei (szabály, csoportok, compliance – PCI DSS/GDPR/…, MITRE, agent/decoder/location, minden `data.*` mező), 3. threat intelligence (VirusTotal/AbuseIPDB táblázat + manuális lookup linkek), 4. vizsgálati checklist (MITRE taktika és Wazuh csoport alapján, Wazuh pivot query-k, Lead Analyst eszkalációs kritériumok), 5. nyers bizonyíték (teljes log + eredeti Wazuh JSON).
-- **IoC-k** típussal (IP/domain/URL/hash), leírással (szerep + TI eredmény) és tagekkel; az érintett host **assetként**; az eset **severity**-je és **tagjei** (`ID-42`, `P2`, `T1110`, `credential-access`, …) is beállításra kerülnek. Ezek best-effort lépések: ha az IRIS elutasítja őket, csak warning kerül a logba, az eset megmarad.
+- **IoC-k** típussal (IP/domain/URL/hash), leírással (szerep + TI eredmény) és tagekkel; az érintett host **assetként**; az eset **severity**-je és **tagjei** (`ID-42`, `P2`, `T1110`, `credential-access`, …) is beállításra kerülnek.
+- **Timeline esemény:** a riasztás a Wazuh esemény idején (a saját időzónájával; ha nincs `timestamp`, a beérkezés ideje UTC-ben) bekerül az eset timeline-jára. A kategória az első MITRE taktika (ennek hiányában `Unspecified`), az esemény az assethez és az IoC-khez kapcsolódik, a nyers log az `event_raw` mezőben van, és megjelenik az IRIS summary-ban és gráfban.
+
+Az IoC, asset, timeline és severity/tag lépések best-effort jellegűek: ha az IRIS elutasítja őket, csak warning kerül a logba, az eset megmarad.
 
 A riasztásból származó szöveg (log, `data` mezők, agent név) támadó által befolyásolható, ezért mindig kódként (inline code / code block) kerül az esetbe, nem élő markdownként.
+
+## Korreláció
+
+Egy eszkalált riasztás nem nyit új IRIS esetet, ha `CORRELATION_WINDOW_HOURS` (alapból 24 óra) belül már volt eszkalált riasztás
+- **ugyanarról a forrás IP-ről** (`data.srcip` — az agent IP nem számít; forrás IP nélküli riasztás sosem korrelálódik), és
+- **hasonló**: azonos Wazuh szabály ID, vagy legalább egy közös MITRE technika (az altechnika a fő technikának számít, pl. T1110.001 ~ T1110.003).
+
+Ilyenkor a riasztás a legutóbbi hasonló riasztás esetébe kerül (`app/correlation.py`):
+- saját `SIEMantics ID-43` note-csoportot kap (a triázs note jelzi: „Correlated with ID-42”), és új timeline eseményt, ami a már meglévő assethez/IoC-khoz kapcsolódik — a meglévő IoC-k és assetek nem kerülnek fel újra,
+- az eset tagjei bővülnek (`ID-43`, `correlated`, …), a severity és a névben a prioritás csak **emelkedhet** (pl. `[P3/MEDIUM]` → `[P1/CRITICAL]`),
+- a rekordon a `correlated_with` mező mutatja, melyik riasztás esetébe került (API, dashboard).
+
+Lezárt (vagy nem olvasható) esetbe nem kerül riasztás, ilyenkor új eset nyílik. A kézi eszkaláció ugyanígy korrelálódik.
 
 ## Kézi eszkaláció
 
@@ -253,8 +270,23 @@ BASE_URL=http://localhost:8000 UI_USER=admin UI_PASSWORD=<jelszó> ./scripts/tes
 Ugyanezek a forgatókönyvek `postman/SIEMantics.postman_collection.json` néven, importálható Postman collection formában (mappánként csoportosítva, `pm.test` assertion-ökkel minden requesthez — Collection Runnerrel az egész sorozat egy kattintással végigfuttatható és kiértékelhető).
 
 1. Postman → **Import** → válaszd ki a `postman/SIEMantics.postman_collection.json` fájlt.
-2. A collection **Variables** fülén állítsd be: `base_url` (pl. `http://10.64.0.127:8000`), `webhook_token` (ha van beállítva `WAZUH_WEBHOOK_TOKEN` a szerveren; ha nincs, hagyd üresen), valamint `ui_username` / `ui_password` — a „4. Alert management” mappa első requestje ezzel jelentkezik be, a session cookie-t a Postman cookie jar viszi tovább.
-3. Futtasd mappánként, vagy a **Run collection** gombbal az egészet — a "4. Alert management" mappa a korábbi mappákban létrehozott alert ID-kat címkézi, ezért sorrendben érdemes futtatni.
+2. A collection **Variables** fülén állítsd be: `base_url` (pl. `http://10.64.0.127:8000`), `webhook_token` (ha van beállítva `WAZUH_WEBHOOK_TOKEN` a szerveren; ha nincs, hagyd üresen), valamint `ui_username` / `ui_password` (admin felhasználó) — a 4., 7., 8. és 9. mappa első requestje ezzel jelentkezik be, a session cookie-t a Postman cookie jar viszi tovább.
+3. Futtasd a **Run collection** gombbal az egészet, vagy mappánként sorrendben — a későbbi mappák a korábbiakban létrehozott riasztásokra hivatkoznak.
+
+Mappák:
+
+| Mappa | Mit fed le |
+| --- | --- |
+| 0. Health check | `/healthz`, hibás jelszó → 401 |
+| 1–3. | mock motor küszöb, 9 gyanús minta, IoC kinyerés, edge case-ek, prompt injection, hibás webhook token |
+| 4. Alert management | `/auth/me`, `/config`, lekérés `ID-42` / régi `#ID-42` / Wazuh `alert_id` alapján, címkézés, kézi eszkaláció, 404/409/422 esetek |
+| 5. Metrics | a metrika mezők |
+| 6. Realistic multi-source | valósághű riasztások 10+ forrásból |
+| 7. IRIS case content | teljes tartalmú P1 eset (3 MITRE technika, compliance, IoC-k), Windows riasztás kézi eszkalálása, markdown/HTML injection a logban, timeline időzóna (+0200, hiányzó timestamp/MITRE), duplikált Wazuh `alert_id` |
+| 8. Correlation | azonos IP + azonos szabály / közös MITRE technika → ugyanaz az eset; más technika vagy más IP → új eset; kézi eszkaláció korrelációja (futtatásonként véletlen forrás IP) |
+| 9. Users, case assignment & auth | felhasználókezelés, case hozzárendelés, analyst/admin jogosultságok, jelszócsere, deaktiválás, kijelentkezés → 401 |
+
+Minden riasztás-válaszra egy collection-szintű teszt ellenőrzi az `ID-<szám>` formátumot (és eszkalációnál az IRIS case ID-t), majd elmenti `ref_<wazuh alert id>` változóba (pl. `ref_test_sqli_union`), így a későbbi requestek pontosan azt a rekordot érik el. Az IRIS eset *tartalmát* az API nem adja vissza: a 7. mappa requestjeinek leírása sorolja fel, mit kell ellenőrizni az IRIS-ben, az eset linkje pedig a Postman konzolra íródik.
 
 A true-positive kimenetelű requestek `pm.test`-je mindkét kimenetelt elfogadja (202 escalated / 502 IRIS unreachable), mivel IRIS nélkül is helyesen kell viselkedniük — lásd a bash scriptnél leírt megjegyzést.
 

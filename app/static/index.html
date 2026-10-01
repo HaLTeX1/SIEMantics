@@ -668,6 +668,10 @@
         ? `<a class="iris-link" href="${escapeHtml(irisBaseUrl)}/case?cid=${encodeURIComponent(a.iris_case_id)}" target="_blank" rel="noopener">Case #${escapeHtml(a.iris_case_id)} megnyitása az IRIS-ben ↗</a>`
         : `Case #${escapeHtml(a.iris_case_id)}`;
       fields.push(detailField("DFIR-IRIS eset", link));
+      if (a.correlated_with) {
+        fields.push(detailField("Korrelálva",
+          `<a class="alert-ref" href="${escapeHtml(DETAIL_PAGE(a.correlated_with))}" target="_blank" rel="noopener">${escapeHtml(a.correlated_with)}</a> esetébe került (azonos forrás IP, hasonló riasztás)`));
+      }
       fields.push(detailField("Felelős", assignControl(a)));
     }
 

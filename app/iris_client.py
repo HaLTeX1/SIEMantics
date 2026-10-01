@@ -4,6 +4,7 @@ import httpx
 
 from app.config import settings
 from app.iris_report import (
+    TIMELINE_DEFAULT_CATEGORY,
     CaseContext,
     asset_description,
     asset_os,
@@ -11,9 +12,17 @@ from app.iris_report import (
     case_name,
     case_notes,
     case_tags,
+    event_time,
     ioc_description,
     ioc_tags,
     ioc_type_name,
+    raise_case_name,
+    severity_rank,
+    timeline_category,
+    timeline_content,
+    timeline_raw,
+    timeline_source,
+    timeline_title,
 )
 from app.schemas import IrisCaseResult, NormalizedAlert, TriageResult
 
@@ -43,6 +52,18 @@ class IrisClient:
         self._ioc_type_ids: dict[str, int] | None = None
         self._asset_type_ids: dict[str, int] | None = None
         self._severity_ids: dict[str, int] | None = None
+        self._event_category_ids: dict[str, int] | None = None
+
+    def _client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            base_url=self._base_url,
+            headers=self._headers,
+            timeout=15,
+            verify=settings.iris_verify_ssl,
+        )
+
+    def _result(self, case_id: int) -> IrisCaseResult:
+        return IrisCaseResult(case_id=case_id, case_url=f"{self._base_url}/case?cid={case_id}")
 
     async def create_case_from_alert(
         self,
@@ -62,29 +83,98 @@ class IrisClient:
             raw=raw_payload or {},
             escalated_by=escalated_by,
         )
-        async with httpx.AsyncClient(
-            base_url=self._base_url,
-            headers=self._headers,
-            timeout=15,
-            verify=settings.iris_verify_ssl,
-        ) as client:
+        async with self._client() as client:
             case_id = await self._create_case(client, ctx)
-
-            group_id = await self._create_note_group(client, case_id, display_id)
-            for title, content in case_notes(ctx):
-                await self._add_note(client, case_id, group_id, title, content)
-
-            # Az eset mar letezik, ezert innentol a hibakat csak logoljuk.
-            for ioc in triage.iocs:
-                await self._best_effort(f"IOC {ioc!r}", self._add_ioc(client, case_id, ctx, ioc), case_id)
-            if ctx.agent.get("name") or alert.agent_name:
-                await self._best_effort("asset", self._add_asset(client, case_id, ctx), case_id)
+            await self._add_alert_content(client, case_id, ctx, existing_iocs={}, existing_assets={})
             await self._best_effort("severity/tags", self._update_case_meta(client, case_id, ctx), case_id)
+            return self._result(case_id)
 
-            return IrisCaseResult(
-                case_id=case_id,
-                case_url=f"{self._base_url}/case?cid={case_id}",
+    async def add_alert_to_case(
+        self,
+        case_id: int,
+        alert: NormalizedAlert,
+        triage: TriageResult,
+        enrichment: list[dict] | None = None,
+        *,
+        display_id: str,
+        correlated_with: str,
+        escalated_by: str | None = None,
+        raw_payload: dict | None = None,
+    ) -> IrisCaseResult | None:
+        # Korrelalt riasztas hozzaadasa egy meglevo esethez, None ha az eset lezart vagy nem olvashato.
+        ctx = CaseContext(
+            display_id=display_id,
+            alert=alert,
+            triage=triage,
+            enrichment=enrichment or [],
+            raw=raw_payload or {},
+            escalated_by=escalated_by,
+            correlated_with=correlated_with,
+        )
+        async with self._client() as client:
+            case = await self._get_case(client, case_id)
+            if case is None or case.get("close_date"):
+                return None
+
+            existing_iocs = await self._existing(client, case_id, "/case/ioc/list", "ioc", "ioc_value", "ioc_id")
+            existing_assets = await self._existing(
+                client, case_id, "/case/assets/list", "assets", "asset_name", "asset_id"
             )
+            await self._add_alert_content(client, case_id, ctx, existing_iocs, existing_assets)
+            await self._best_effort("severity/tags", self._update_case_meta(client, case_id, ctx, case), case_id)
+            return self._result(case_id)
+
+    async def _add_alert_content(
+        self,
+        client: httpx.AsyncClient,
+        case_id: int,
+        ctx: CaseContext,
+        existing_iocs: dict[str, int],
+        existing_assets: dict[str, int],
+    ) -> None:
+        group_id = await self._create_note_group(client, case_id, ctx.display_id)
+        for title, content in case_notes(ctx):
+            await self._add_note(client, case_id, group_id, title, content)
+
+        # Az eset mar letezik, ezert innentol a hibakat csak logoljuk.
+        ioc_ids = []
+        for ioc in ctx.triage.iocs:
+            ioc_id = existing_iocs.get(ioc)
+            if ioc_id is None:
+                ioc_id = await self._best_effort(f"IOC {ioc!r}", self._add_ioc(client, case_id, ctx, ioc), case_id)
+            if ioc_id is not None:
+                ioc_ids.append(ioc_id)
+
+        asset_id = None
+        host = ctx.agent.get("name") or ctx.alert.agent_name
+        if host:
+            asset_id = existing_assets.get(host)
+            if asset_id is None:
+                asset_id = await self._best_effort("asset", self._add_asset(client, case_id, ctx), case_id)
+        await self._best_effort(
+            "timeline event", self._add_timeline_event(client, case_id, ctx, asset_id, ioc_ids), case_id
+        )
+
+    async def _get_case(self, client: httpx.AsyncClient, case_id: int) -> dict | None:
+        try:
+            resp = await self._get(client, f"/manage/cases/{case_id}")
+            return resp.json()["data"]
+        except Exception as exc:
+            logger.warning("IRIS case %s could not be read, opening a new case instead: %s", case_id, exc)
+            return None
+
+    async def _existing(
+        self, client: httpx.AsyncClient, case_id: int, path: str, list_key: str, name_key: str, id_key: str
+    ) -> dict[str, int]:
+        # A mar meglevo IoC-k / assetek, hogy ne vegyuk fel oket ujra.
+        try:
+            resp = await self._get(client, path, params={"cid": case_id})
+            data = resp.json()["data"]
+            rows = data.get(list_key, []) if isinstance(data, dict) else data
+            return {row[name_key]: row[id_key] for row in rows}
+        except Exception as exc:
+            logger.warning("IRIS case %s: listing %s failed: %s", case_id, path, exc)
+            return {}
 
     async def _create_case(self, client: httpx.AsyncClient, ctx: CaseContext) -> int:
         payload = {
@@ -114,12 +204,12 @@ class IrisClient:
         resp = await self._get(client, path)
         return {row[name_key]: row[id_key] for row in resp.json()["data"]}
 
-    async def _add_ioc(self, client: httpx.AsyncClient, case_id: int, ctx: CaseContext, ioc_value: str) -> None:
+    async def _add_ioc(self, client: httpx.AsyncClient, case_id: int, ctx: CaseContext, ioc_value: str) -> int | None:
         if self._ioc_type_ids is None:
             self._ioc_type_ids = await self._lookup(client, "/manage/ioc-types/list", "type_name", "type_id")
         ioc_type_id = self._ioc_type_ids.get(ioc_type_name(ioc_value), self._ioc_type_ids.get("other"))
         if ioc_type_id is None:
-            return
+            return None
 
         payload = {
             "ioc_value": ioc_value,
@@ -128,14 +218,15 @@ class IrisClient:
             "ioc_description": ioc_description(ctx, ioc_value),
             "ioc_tags": ioc_tags(ctx),
         }
-        await self._post(client, "/case/ioc/add", params={"cid": case_id}, json=payload)
+        resp = await self._post(client, "/case/ioc/add", params={"cid": case_id}, json=payload)
+        return resp.json()["data"]["ioc_id"]
 
-    async def _add_asset(self, client: httpx.AsyncClient, case_id: int, ctx: CaseContext) -> None:
+    async def _add_asset(self, client: httpx.AsyncClient, case_id: int, ctx: CaseContext) -> int | None:
         if self._asset_type_ids is None:
             self._asset_type_ids = await self._lookup(client, "/manage/asset-type/list", "asset_name", "asset_id")
         asset_type_id = self._asset_type_ids.get(_IRIS_ASSET_TYPE[asset_os(ctx)])
         if asset_type_id is None:
-            return
+            return None
 
         payload = {
             "asset_name": ctx.agent.get("name") or ctx.alert.agent_name,
@@ -146,23 +237,71 @@ class IrisClient:
         }
         if ctx.agent.get("ip"):
             payload["asset_ip"] = ctx.agent["ip"]
-        await self._post(client, "/case/assets/add", params={"cid": case_id}, json=payload)
+        resp = await self._post(client, "/case/assets/add", params={"cid": case_id}, json=payload)
+        return resp.json()["data"]["asset_id"]
 
-    async def _update_case_meta(self, client: httpx.AsyncClient, case_id: int, ctx: CaseContext) -> None:
+    async def _add_timeline_event(
+        self, client: httpx.AsyncClient, case_id: int, ctx: CaseContext, asset_id: int | None, ioc_ids: list[int]
+    ) -> None:
+        if self._event_category_ids is None:
+            self._event_category_ids = await self._lookup(client, "/manage/event-categories/list", "name", "id")
+        category_id = self._event_category_ids.get(
+            timeline_category(ctx), self._event_category_ids.get(TIMELINE_DEFAULT_CATEGORY)
+        )
+        event_date, event_tz = event_time(ctx)
+
+        payload = {
+            "event_title": timeline_title(ctx),
+            "event_date": event_date,
+            "event_tz": event_tz,
+            "event_content": timeline_content(ctx),
+            "event_raw": timeline_raw(ctx),
+            "event_source": timeline_source(ctx),
+            "event_tags": ioc_tags(ctx),
+            "event_assets": [asset_id] if asset_id is not None else [],
+            "event_iocs": ioc_ids,
+            "event_in_summary": True,
+            "event_in_graph": True,
+        }
+        if category_id is not None:
+            payload["event_category_id"] = category_id
+        await self._post(client, "/case/timeline/events/add", params={"cid": case_id}, json=payload)
+
+    async def _update_case_meta(
+        self, client: httpx.AsyncClient, case_id: int, ctx: CaseContext, existing: dict | None = None
+    ) -> None:
         if self._severity_ids is None:
             self._severity_ids = await self._lookup(client, "/manage/severities/list", "severity_name", "severity_id")
-        payload: dict = {"case_tags": ",".join(case_tags(ctx))}
+        tags = case_tags(ctx)
+        payload: dict = {}
+
+        if existing is None:
+            payload["case_tags"] = ",".join(tags)
+            raise_severity = True
+        else:
+            # Meglevo esetnel a tageket bovitjuk, a severity-t csak emeljuk.
+            if existing.get("case_tags") is not None:
+                old = [t for t in str(existing["case_tags"]).split(",") if t]
+                payload["case_tags"] = ",".join(dict.fromkeys(old + tags))
+            names = {v: k for k, v in self._severity_ids.items()}
+            current = names.get(existing.get("severity_id"))
+            raise_severity = severity_rank(_IRIS_SEVERITY[ctx.severity]) > severity_rank(current)
+            if raise_severity and existing.get("case_name"):
+                payload["case_name"] = raise_case_name(existing["case_name"], ctx)
+
         severity_id = self._severity_ids.get(_IRIS_SEVERITY[ctx.severity])
-        if severity_id is not None:
+        if raise_severity and severity_id is not None:
             payload["severity_id"] = severity_id
-        await self._post(client, f"/manage/cases/update/{case_id}", json=payload)
+        if payload:
+            await self._post(client, f"/manage/cases/update/{case_id}", json=payload)
 
     @staticmethod
-    async def _best_effort(what: str, coro, case_id: int) -> None:
+    async def _best_effort(what: str, coro, case_id: int):
         try:
-            await coro
+            return await coro
         except Exception as exc:
             logger.warning("IRIS case %s: adding %s failed: %s", case_id, what, exc)
+            return None
 
     @staticmethod
     async def _post(client: httpx.AsyncClient, path: str, **kwargs) -> httpx.Response:

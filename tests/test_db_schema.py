@@ -3,7 +3,9 @@ from sqlalchemy import MetaData, Table, create_engine, inspect, text
 from app.db import _add_missing_columns
 from app.models import AlertRecord
 
-NEW_COLUMNS = {"raw_payload", "triage_model", "review_reason", "auto_status", "escalated_by_id", "escalated_at"}
+NEW_COLUMNS = {
+    "raw_payload", "triage_model", "review_reason", "auto_status", "escalated_by_id", "escalated_at", "correlated_with_id",
+}
 
 
 def test_missing_nullable_columns_are_added_to_existing_table():

@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     iris_verify_ssl: bool = True
     # Publikus URL, ha meg van adva, az IRIS eset visszalinkel a riasztasra.
     siemantics_public_url: str = ""
+    # Ennyi oran belul az azonos forras IP-rol jovo hasonlo riasztas a meglevo IRIS esetbe kerul, 0 = kikapcsolva.
+    correlation_window_hours: int = Field(default=24, ge=0)
 
     wazuh_webhook_token: str = ""
 

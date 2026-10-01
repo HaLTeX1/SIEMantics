@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
 from app.config import settings
+from app.correlation import find_correlated_record
 from app.db import get_session
 from app.enrichment import enrich_iocs
 from app.enums import AlertStatus, GroundTruth
@@ -27,6 +28,7 @@ from app.repository import (
 from app.schemas import (
     AlertRecordOut,
     AssigneeOut,
+    IrisCaseResult,
     LabelRequest,
     NormalizedAlert,
     TriageResult,
@@ -64,6 +66,35 @@ async def _with_assignees(session: AsyncSession, records: list[AlertRecord]) -> 
             item.escalated_by = AssigneeOut.model_validate(escalators[record.escalated_by_id])
         out.append(item)
     return out
+
+
+async def _send_to_iris(
+    session: AsyncSession,
+    record: AlertRecord,
+    alert: NormalizedAlert,
+    triage: TriageResult,
+    enrichment: list[dict],
+    escalated_by: str | None = None,
+) -> tuple[IrisCaseResult, AlertRecord | None]:
+    # Hasonlo riasztas ugyanarrol a forras IP-rol a meglevo nyitott esetbe kerul, kulonben uj eset nyilik.
+    related = await find_correlated_record(session, record)
+    if related is not None:
+        case = await iris_client.add_alert_to_case(
+            related.iris_case_id,
+            alert,
+            triage,
+            enrichment,
+            display_id=record.display_id,
+            correlated_with=related.display_id,
+            escalated_by=escalated_by,
+            raw_payload=record.raw_payload,
+        )
+        if case is not None:
+            return case, related
+    case = await iris_client.create_case_from_alert(
+        alert, triage, enrichment, display_id=record.display_id, escalated_by=escalated_by, raw_payload=record.raw_payload
+    )
+    return case, None
 
 
 @router.post("/alerts", status_code=status.HTTP_202_ACCEPTED)
@@ -149,9 +180,7 @@ async def receive_alert(
     )
 
     try:
-        case = await iris_client.create_case_from_alert(
-            alert, triage, enrichment, display_id=record.display_id, raw_payload=record.raw_payload
-        )
+        case, related = await _send_to_iris(session, record, alert, triage, enrichment)
     except Exception as exc:
         record.status = AlertStatus.ERROR
         record.error_detail = f"iris case creation failed: {exc}"
@@ -161,9 +190,16 @@ async def receive_alert(
         raise HTTPException(status_code=502, detail="incident management backend unavailable") from exc
 
     record.iris_case_id = case.case_id
+    record.correlated_with_id = related.id if related else None
     record.processing_time_ms = _elapsed_ms(started)
     await save_alert_record(session, record)
-    logger.info("alert %s (%s) escalated to IRIS case %s", alert.alert_id, record.display_id, case.case_id)
+    logger.info(
+        "alert %s (%s) escalated to IRIS case %s%s",
+        alert.alert_id,
+        record.display_id,
+        case.case_id,
+        f" (correlated with {related.display_id})" if related else "",
+    )
     return {
         "status": "escalated",
         "id": record.display_id,
@@ -171,6 +207,7 @@ async def receive_alert(
         "record_id": record.id,
         "triage": triage,
         "case": case,
+        "correlated_with": related.display_id if related else None,
     }
 
 
@@ -266,13 +303,8 @@ async def escalate_alert(
         triage = _manual_triage(record, user)
         enrichment = await enrich_iocs(triage.iocs)
         try:
-            case = await iris_client.create_case_from_alert(
-                alert,
-                triage,
-                enrichment,
-                display_id=record.display_id,
-                escalated_by=user.username,
-                raw_payload=record.raw_payload,
+            case, related = await _send_to_iris(
+                session, record, alert, triage, enrichment, escalated_by=user.username
             )
         except Exception as exc:
             logger.exception("manual escalation of %s failed", record.display_id)
@@ -283,6 +315,7 @@ async def escalate_alert(
             record.auto_status = record.status
         record.status = AlertStatus.ESCALATED
         record.iris_case_id = case.case_id
+        record.correlated_with_id = related.id if related else None
         record.ioc_enrichment = enrichment or record.ioc_enrichment
         record.error_detail = None
         record.escalated_by_id = user.id
