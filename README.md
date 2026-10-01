@@ -27,7 +27,8 @@ app/
 ├── mock_engine.py       # determinisztikus, szabály-alapú fallback triázs
 ├── guardrails.py        # döntés: escalated / needs_review / suppressed (prompt injection védőháló)
 ├── enrichment.py        # VirusTotal / AbuseIPDB IoC enrichment
-├── iris_client.py       # DFIR-IRIS eset/note/IoC API kliens
+├── iris_client.py       # DFIR-IRIS eset/note/IoC/asset API kliens
+├── iris_report.py       # az IRIS eset tartalma (név, összefoglaló, note-ok, checklist)
 ├── db.py              # SQLAlchemy async engine/session, induláskori sémafrissítés (új oszlopok, ENUM értékek)
 ├── models.py           # ORM táblák: AlertRecord (döntésnapló), User, UserSession, CaseAssignment
 ├── metrics.py           # konfúziós mátrix + feldolgozási idő statisztikák
@@ -75,6 +76,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `IRIS_BASE_URL` | DFIR-IRIS instancia URL-je |
 | `IRIS_API_KEY` | DFIR-IRIS API kulcs |
 | `IRIS_CUSTOMER_ID` | eset létrehozáshoz tartozó ügyfél ID |
+| `SIEMANTICS_PUBLIC_URL` | opcionális; ha meg van adva, az IRIS eset visszalinkel a SIEMantics riasztás-részletre |
 | `IRIS_VERIFY_SSL` | alapértelmezett: `true`. **Csak** ismert, belső/lab IRIS instanciánál önaláírt tanúsítvánnyal állítsd `false`-ra — lásd lent |
 | `VIRUSTOTAL_API_KEY` | opcionális IoC-enrichment. Ingyenesen igényelhető: https://www.virustotal.com/gui/my-apikey |
 | `ABUSEIPDB_API_KEY` | opcionális IoC-enrichment. Ingyenesen igényelhető: https://www.abuseipdb.com/account/api |
@@ -132,13 +134,24 @@ Ha a triázs eszkalált, de az IRIS eset létrehozása hibára futott, a rekord 
 
 **Sémafrissítés induláskor (`app/db.py`):** a `create_all()` meglévő táblát nem módosít, migrációs eszköz pedig nincs a projektben. Ezért induláskor az app (1) a modellhez később hozzáadott, **nullable** oszlopokat `ALTER TABLE ... ADD COLUMN`-nal hozzáadja a meglévő táblákhoz (SQLite-on és MariaDB-n is), és (2) MariaDB-n a natív `ENUM` státuszoszlopokhoz hozzáadja az új értékeket (`ALTER TABLE ... MODIFY COLUMN`). Ez a „új opcionális oszlop / új enum érték” esetet fedi le; átnevezéshez, típusváltáshoz vagy NOT NULL oszlophoz továbbra is migráció (pl. Alembic) kellene.
 
-## Egyedi riasztás-azonosító (#ID-…)
+## Egyedi riasztás-azonosító (ID-…)
 
-A Wazuh `alert_id` nem egyedi (ugyanaz az ID többször is beérkezhet, hiányzó ID esetén pedig mindegyik `unknown`), ezért minden döntésnapló-rekord kap egy saját, egyedi azonosítót **`#ID-<szám>`** formátumban (pl. `#ID-42`), ami a rekord adatbázis-azonosítójából képződik:
+A Wazuh `alert_id` nem egyedi (ugyanaz az ID többször is beérkezhet, hiányzó ID esetén pedig mindegyik `unknown`), ezért minden döntésnapló-rekord kap egy saját, egyedi azonosítót **`ID-<szám>`** formátumban (pl. `ID-42`), ami a rekord adatbázis-azonosítójából képződik:
 
-- a webhook válaszában (`"id": "#ID-42"`), a `GET /alerts` rekordokban (`display_id`), a dashboard táblájában és részletnézetében látszik, és kereshető,
-- az IRIS eset neve is tartalmazza (`[SIEMantics #ID-42] <rule>`), a note fejlécében pedig a Wazuh ID mellett szerepel,
-- az API-ban minden riasztásra hivatkozó végpont (`GET /alerts/{ref}`, `PATCH /alerts/{ref}/label`, `POST /alerts/{ref}/escalate`) elfogadja `ID-42` (vagy URL-kódolva `%23ID-42`) alakban — ez mindig pontosan egy rekordot jelent. Wazuh `alert_id`-vel is működik továbbra is, akkor a legutóbbi ilyen ID-jű rekordra vonatkozik.
+- a webhook válaszában (`"id": "ID-42"`), a `GET /alerts` rekordokban (`display_id`), a dashboard táblájában és részletnézetében látszik, és kereshető,
+- az IRIS eset neve is tartalmazza (`[SIEMantics ID-42] [P2/HIGH] <rule> @ <host>`), a note-csoport neve `SIEMantics ID-42`, az összefoglalóban pedig a Wazuh ID mellett szerepel,
+- az API-ban minden riasztásra hivatkozó végpont (`GET /alerts/{ref}`, `PATCH /alerts/{ref}/label`, `POST /alerts/{ref}/escalate`) elfogadja `ID-42` alakban — ez mindig pontosan egy rekordot jelent. Wazuh `alert_id`-vel is működik továbbra is, akkor a legutóbbi ilyen ID-jű rekordra vonatkozik.
+
+## DFIR-IRIS eset tartalma
+
+Az eset L2 analystáknak (vizsgálat) és Lead Analystoknak (priorizálás, review) készül (`app/iris_report.py`):
+
+- **Név:** `[SIEMantics ID-42] [P2/HIGH] <rule> @ <host>` — a prioritás a Wazuh szint és a triázs ajánlás közül a **magasabb** (az LLM emelhet, de nem csökkenthet): critical=P1, high=P2, medium=P3, low=P4.
+- **Leírás (összefoglaló):** ítélet és confidence, kulcsadatok táblázatban (szabály, MITRE ATT&CK linkkel, érintett host/agent, forrás IP:port, cél user, log forrás, IoC-k), az indoklás és az első 3 javasolt lépés.
+- **Note-ok** (`SIEMantics ID-42` csoport): 1. triázs összefoglaló, 2. riasztás részletei (szabály, csoportok, compliance – PCI DSS/GDPR/…, MITRE, agent/decoder/location, minden `data.*` mező), 3. threat intelligence (VirusTotal/AbuseIPDB táblázat + manuális lookup linkek), 4. vizsgálati checklist (MITRE taktika és Wazuh csoport alapján, Wazuh pivot query-k, Lead Analyst eszkalációs kritériumok), 5. nyers bizonyíték (teljes log + eredeti Wazuh JSON).
+- **IoC-k** típussal (IP/domain/URL/hash), leírással (szerep + TI eredmény) és tagekkel; az érintett host **assetként**; az eset **severity**-je és **tagjei** (`ID-42`, `P2`, `T1110`, `credential-access`, …) is beállításra kerülnek. Ezek best-effort lépések: ha az IRIS elutasítja őket, csak warning kerül a logba, az eset megmarad.
+
+A riasztásból származó szöveg (log, `data` mezők, agent név) támadó által befolyásolható, ezért mindig kódként (inline code / code block) kerül az esetbe, nem élő markdownként.
 
 ## Kézi eszkaláció
 
@@ -154,7 +167,7 @@ A `needs_review`, `suppressed` vagy `error` (IRIS eset nélküli) riasztásokat 
 Escalated (true-positive) riasztásoknál a rendszer automatikusan enricheli az IP-típusú IoC-ket, ha be van állítva a megfelelő API kulcs (mindkettő független és opcionális — csak az fut le, amihez van kulcs). Az eredmény:
 
 - bekerül a döntésnaplóba (`ioc_enrichment` mező, `GET /api/v1/alerts`-en és a dashboardon is látszik),
-- egy "Threat Intelligence" szekcióként bekerül a DFIR-IRIS note-ba is (`app/iris_client.py`).
+- a DFIR-IRIS eset "3. Threat intelligence" note-jába és az IoC-k leírásába is bekerül (`app/iris_report.py`).
 
 Egyedi IP-nkénti cap (`ENRICHMENT_MAX_IOCS`, alapértelmezett 5) védi a free-tier rate limiteket (VirusTotal ~4 req/perc, AbuseIPDB napi kvóta). Egy adott IoC lekérdezésének hibája (timeout, rate limit) sosem blokkolja a riasztás feldolgozását — legrosszabb esetben az adott IoC enrichment nélkül marad.
 
@@ -176,8 +189,8 @@ A dashboard és az olvasó/címkéző API végpontok (`GET /alerts`, `GET /alert
 A `/` a `/ui/`-ra irányít (bejelentkezés nélkül a `/ui/login.html`-re dob), ami egy önálló, statikus HTML/CSS/JS oldal (`app/static/index.html`, build lépés nélkül, a FastAPI szolgálja ki `StaticFiles`-szal). Splunk Enterprise Security Analyst Queue nézete ihlette:
 
 - **Timeline** — riasztások száma időbucketenként (óránként vagy naponta, a szűrt időtartománytól függően), hover tooltippel.
-- **Szűrők** — szabadszavas keresés (`#ID`/rule/Wazuh alert ID/forrás IP), státusz (escalated/needs review/suppressed/error), disposition (confirmed TP/FP/undetermined), időtartomány.
-- **Tábla** — minden riasztás egyedi `#ID`-ja, severity, entity (forrás IP), triázs motor (openrouter/mock), confidence, státusz és disposition badge-ekkel, időbélyeggel.
+- **Szűrők** — szabadszavas keresés (`ID`/rule/Wazuh alert ID/forrás IP), státusz (escalated/needs review/suppressed/error), disposition (confirmed TP/FP/undetermined), időtartomány.
+- **Tábla** — minden riasztás egyedi `ID`-ja, severity, entity (forrás IP), triázs motor (openrouter/mock), confidence, státusz és disposition badge-ekkel, időbélyeggel.
 - **Felelős** — escalated riasztásoknál (van IRIS case) a case felelőse; szűrhető, és a részletpanelen hozzárendelhető (lásd [Felhasználókezelés](#felhasználókezelés)).
 - **Riasztás részletei** — egy sorra kattintva (vagy a ▸ gombbal) a sor alatt kinyílik egy panel a teljes LLM indoklással, a döntést hozó modellel, kinyert IoC-kkel (VirusTotal/AbuseIPDB enrichmenttel, ha van), hibaüzenettel (ha volt) és a DFIR-IRIS eset linkjével. `needs_review` riasztásnál kiemelve látszik a felülvizsgálat oka, nem eszkalált riasztásnál pedig az „Eszkalálás IRIS esetté” gomb (lásd [Kézi eszkaláció](#kézi-eszkaláció)). A ⧉ gombbal ugyanez a részletnézet önálló (popup) ablakban is megnyitható (`app/static/alert.html`, a `GET /api/v1/alerts/{ref}` végpontot hívja).
 - **Bulk címkézés** — sorok kijelölése + "Label: True Positive" / "Label: False Positive" gomb, ami a `PATCH /api/v1/alerts/{ref}/label` végpontot hívja minden kijelölt riasztásra — ez váltja ki a `curl`-lal való kézi címkézést a kiértékelési munkafolyamatban (lásd lent).
@@ -188,7 +201,7 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 
 | Metódus | Útvonal | Leírás |
 |---|---|---|
-| `POST` | `/api/v1/alerts` | Wazuh riasztás fogadása, triázs, esetleges IRIS eset nyitás; a válaszban az egyedi `id` (`#ID-42`) |
+| `POST` | `/api/v1/alerts` | Wazuh riasztás fogadása, triázs, esetleges IRIS eset nyitás; a válaszban az egyedi `id` (`ID-42`) |
 | `GET` | `/api/v1/alerts` | eltárolt riasztás-rekordok listázása (`limit`, `offset`) |
 | `GET` | `/api/v1/alerts/{ref}` | egy riasztás-rekord teljes részlete; `ref` = `ID-42` vagy Wazuh `alert_id` (legutóbbi) |
 | `PATCH` | `/api/v1/alerts/{ref}/label` | ground truth címkézés (`true_positive` / `false_positive`) |
@@ -208,7 +221,7 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 
 ### Tesztek (pytest)
 
-A `tests/` mappában automatizált tesztek vannak: normalizálás, mock motor, prompt-építés (injection-kitörés), guardrail döntések, metrikák, a teljes webhook → triázs → IRIS folyamat (hamis IRIS klienssel), az `#ID` hivatkozások, a kézi eszkaláció, a jogosultsági szabályok és az induláskori sémafrissítés. Külső szolgáltatást (OpenRouter, VirusTotal, AbuseIPDB, IRIS) nem hívnak, és egy ideiglenes SQLite adatbázist használnak — a helyi `.env`-et felülírják.
+A `tests/` mappában automatizált tesztek vannak: normalizálás, mock motor, prompt-építés (injection-kitörés), guardrail döntések, metrikák, a teljes webhook → triázs → IRIS folyamat (hamis IRIS klienssel), az `ID` hivatkozások, a kézi eszkaláció, a jogosultsági szabályok és az induláskori sémafrissítés. Külső szolgáltatást (OpenRouter, VirusTotal, AbuseIPDB, IRIS) nem hívnak, és egy ideiglenes SQLite adatbázist használnak — a helyi `.env`-et felülírják.
 
 ```bash
 pip install -r requirements-dev.txt
@@ -300,7 +313,7 @@ A konténer NAT-on keresztül éri el a DB-t, ezért a MySQL a **docker host** I
 ## Kiértékelési munkafolyamat (szakdolgozat 6. fejezet)
 
 1. Teszt/labor riasztásokat küldesz a webhookra (valós vagy szimulált támadási forgatókönyvekből).
-2. Minden riasztásnál eltárolódik: az egyedi `#ID`, az eredeti Wazuh payload, az LLM döntése, indoklása, a döntést hozó modell, kinyert IoC-k, az automatikus döntés (`auto_status`), feldolgozási idő (`processing_time_ms`).
+2. Minden riasztásnál eltárolódik: az egyedi `ID`, az eredeti Wazuh payload, az LLM döntése, indoklása, a döntést hozó modell, kinyert IoC-k, az automatikus döntés (`auto_status`), feldolgozási idő (`processing_time_ms`).
 3. Utólag, a labor eredmények ismeretében felcímkézed, hogy az adott riasztás valóban true positive vagy false positive volt — akár a `/ui/` dashboardon (sorok kijelölése + bulk label gombok), akár közvetlenül `PATCH /alerts/{id}/label`-lel.
 4. `GET /api/v1/metrics` visszaadja a konfúziós mátrixot (TP/FP/TN/FN), accuracy/precision/recall/F1-et, hamis pozitív arányt, a review sor számait (`needs_review_count`, `needs_review_true_positive`, `manually_escalated_count`), valamint az átlag/medián/p95 feldolgozási időt — ezek kerülnek a 6.3 fejezet táblázataiba/ábráiba.
 

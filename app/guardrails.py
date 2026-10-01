@@ -9,8 +9,7 @@ from app.enums import AlertStatus
 from app.mock_engine import has_suspicious_pattern
 from app.schemas import NormalizedAlert, TriageResult
 
-# Text in an alert that addresses the model instead of describing an event.
-# Not a complete filter (no regex can be) - a hit only forces human review.
+# Szoveg alapú prompt injection minták, amikre ha a LLM-ben ráakadunk, a riasztást NEEDS_REVIEW-re kell állítani.
 _INJECTION_PATTERNS = [
     r"\b(ignore|disregard|forget|override)\s+(all\s+|any\s+|the\s+|your\s+)?(previous|prior|above|earlier|system)\s+(instructions?|prompts?|rules)",
     r"\b(classify|mark|treat|label|report)\s+(this|it|the\s+alert)\s+as\s+(benign|safe|harmless|a\s+false\s+positive|false\s+positive|noise)",

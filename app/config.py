@@ -23,24 +23,21 @@ class Settings(BaseSettings):
     iris_api_key: str
     iris_customer_id: int = 1
     iris_verify_ssl: bool = True
+    # Publikus URL, ha meg van adva, az IRIS eset visszalinkel a riasztasra.
+    siemantics_public_url: str = ""
 
     wazuh_webhook_token: str = ""
 
-    # IoC enrichment (optional; skipped per-provider if its key is unset).
-    # Only runs for true-positive/escalated alerts, capped to a handful of
-    # unique IPs per alert to stay within free-tier rate limits.
     virustotal_api_key: str = ""
     abuseipdb_api_key: str = ""
     enrichment_max_iocs: int = 5
 
-    # Decision log / evaluation dataset storage
     database_url: str = "sqlite+aiosqlite:///./siemantics.db"
 
     # Felhasználókezelés: ha még nincs egyetlen felhasználó sem, induláskor ezzel jön létre az első admin.
     admin_username: str = "admin"
     admin_password: str = ""
     session_ttl_hours: int = 12
-    # HTTPS mögött (reverse proxy) true-ra állítandó, sima HTTP-s lab környezetben false.
     session_cookie_secure: bool = False
 
 

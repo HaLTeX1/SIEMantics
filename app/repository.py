@@ -108,7 +108,7 @@ async def save_user(session: AsyncSession, user: User) -> User:
 async def create_user_session(session: AsyncSession, user: User, token_hash: str, expires_at: datetime) -> None:
     user.last_login_at = datetime.utcnow()
     session.add(UserSession(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
-    # opportunistic cleanup so the table doesn't grow forever
+    # Töröljük a lejárt session-öket, hogy ne halmozzanak fel a DB-ben.
     await session.execute(delete(UserSession).where(UserSession.expires_at < datetime.utcnow()))
     await session.commit()
 
@@ -139,7 +139,7 @@ async def delete_sessions_for_user(session: AsyncSession, user_id: int, keep_tok
     await session.commit()
 
 
-# --- Case assignments ---
+# --- Case assignments (DFIR-IRIS) ---
 
 async def case_exists(session: AsyncSession, iris_case_id: int) -> bool:
     result = await session.execute(select(AlertRecord.id).where(AlertRecord.iris_case_id == iris_case_id).limit(1))

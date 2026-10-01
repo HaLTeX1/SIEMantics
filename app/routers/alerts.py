@@ -149,7 +149,9 @@ async def receive_alert(
     )
 
     try:
-        case = await iris_client.create_case_from_alert(alert, triage, enrichment, display_id=record.display_id)
+        case = await iris_client.create_case_from_alert(
+            alert, triage, enrichment, display_id=record.display_id, raw_payload=record.raw_payload
+        )
     except Exception as exc:
         record.status = AlertStatus.ERROR
         record.error_detail = f"iris case creation failed: {exc}"
@@ -265,7 +267,12 @@ async def escalate_alert(
         enrichment = await enrich_iocs(triage.iocs)
         try:
             case = await iris_client.create_case_from_alert(
-                alert, triage, enrichment, display_id=record.display_id, escalated_by=user.username
+                alert,
+                triage,
+                enrichment,
+                display_id=record.display_id,
+                escalated_by=user.username,
+                raw_payload=record.raw_payload,
             )
         except Exception as exc:
             logger.exception("manual escalation of %s failed", record.display_id)

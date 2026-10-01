@@ -27,8 +27,7 @@ def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
     for record in records:
         if record.ground_truth is None:
             continue
-        # NEEDS_REVIEW counts as a negative prediction (not auto-escalated); the
-        # true positives among them are the FNs the review queue catches.
+            # NEEDS_REVIEW riasztásokat nem lehet belevenni a statisztikába, mert az analyst döntésén múlik, nem a rendszerén.
         auto_status = _automatic_status(record)
         if auto_status == AlertStatus.NEEDS_REVIEW and record.ground_truth == GroundTruth.TRUE_POSITIVE:
             review_true_positive += 1

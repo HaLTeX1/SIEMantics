@@ -373,7 +373,7 @@
     </header>
 
     <div class="filters">
-      <input id="searchInput" type="search" placeholder="Keresés: #ID, rule, alert ID, forrás IP..." />
+      <input id="searchInput" type="search" placeholder="Keresés: ID, rule, alert ID, forrás IP..." />
       <select id="statusFilter">
         <option value="">Minden státusz</option>
         <option value="escalated">Escalated</option>
@@ -449,7 +449,7 @@
   "use strict";
 
   const API_ALERTS = "/api/v1/alerts?limit=500";
-  // "#ID-42" -> "ID-42": the API accepts it, and "#" would start a URL fragment
+  // Strip a legacy "#" prefix: it would start a URL fragment
   const refOf = (displayId) => displayId.replace(/^#/, "");
   const API_LABEL = (displayId) => `/api/v1/alerts/${encodeURIComponent(refOf(displayId))}/label`;
   const API_ESCALATE = (displayId) => `/api/v1/alerts/${encodeURIComponent(refOf(displayId))}/escalate`;

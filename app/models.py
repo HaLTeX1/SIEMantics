@@ -32,23 +32,20 @@ class AlertRecord(Base):
 
     processing_time_ms: Mapped[float] = mapped_column(Float)
 
-    # Manually assigned during lab evaluation to build the labeled test set
+    # Manualisan escalalt riasztasoknal a ground_truth mezot az analyst allitja be, a system nem.
     ground_truth: Mapped[GroundTruth | None] = mapped_column(Enum(GroundTruth), nullable=True)
     labeled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    # VirusTotal / AbuseIPDB results per IP IoC, populated for escalated alerts
+    # A riasztas feldolgozasa soran a system altal talalt IOC-k (pl. hash, IP, domain) - a triage logban is megjelenik.
     ioc_enrichment: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
-    # Columns below were added later: they must stay nullable so init_db() can
-    # add them to an existing table (see db._add_missing_columns).
-
-    # Original Wazuh payload, so a record can be escalated/reprocessed later from the full log
+    # A riasztas eredeti payload-ja, hogy a teljes log alapjan később is lehetőség legyen a riasztás újrafeldolgozására.
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # Concrete model that answered (openrouter/free routes to a different model per call)
+    # A riasztas feldolgozasa soran a system altal talalt IOC-k (pl. hash, IP, domain) - a triage logban is megjelenik.
     triage_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # Why a false-positive verdict was routed to NEEDS_REVIEW instead of SUPPRESSED
+    # review_reason mező csak akkor van kitöltve, ha a riasztás NEEDS_REVIEW státuszba került, és az analystnak kell dönteni róla.
     review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # The automatic decision, kept unchanged when an analyst escalates by hand - metrics use this
+    # Automatikus döntés a riasztás státuszáról (ESCALATED, SUPPRESSED, NEEDS_REVIEW) - az analyst döntése nem számít bele a statisztikába.
     auto_status: Mapped[AlertStatus | None] = mapped_column(Enum(AlertStatus), nullable=True)
     escalated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -56,7 +53,7 @@ class AlertRecord(Base):
     @property
     def display_id(self) -> str:
         """Unique, human-facing alert ID (the Wazuh alert_id is not unique)."""
-        return f"#ID-{self.id}"
+        return f"ID-{self.id}"
 
 
 class User(Base):
@@ -69,7 +66,7 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.ANALYST)
-    # Users are deactivated instead of deleted so case assignments keep a valid owner
+    # A felhasználó aktív-e (be tud-e lépni). Ha egy admin deaktiválja, a session cookie-k azonnal lejárnak.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

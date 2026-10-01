@@ -10,7 +10,7 @@ from app.schemas import TriageResult
 
 from conftest import WEBHOOK_HEADERS, wazuh_alert
 
-DISPLAY_ID_RE = re.compile(r"^#ID-\d+$")
+DISPLAY_ID_RE = re.compile(r"^ID-\d+$")
 
 
 def post_alert(client, payload):
