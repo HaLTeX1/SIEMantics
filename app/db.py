@@ -1,10 +1,16 @@
+import asyncio
+import logging
+
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
 
-engine = create_async_engine(settings.database_url, echo=False)
+logger = logging.getLogger("siemantics.db")
+
+engine = create_async_engine(settings.database_url, echo=False, pool_pre_ping=True)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -12,7 +18,21 @@ class Base(DeclarativeBase):
     pass
 
 
-async def init_db() -> None:
+async def init_db(attempts: int = 30, delay: float = 2.0) -> None:
+    # The database container may still be starting (MariaDB refuses connections
+    # until it is initialized), so wait for it instead of crashing on boot.
+    for attempt in range(1, attempts + 1):
+        try:
+            await _init_db()
+            return
+        except OperationalError as exc:
+            if attempt == attempts:
+                raise
+            logger.warning("database not reachable (attempt %d/%d): %s", attempt, attempts, exc.orig)
+            await asyncio.sleep(delay)
+
+
+async def _init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_missing_columns)

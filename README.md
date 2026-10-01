@@ -43,7 +43,8 @@ tests/                   # pytest tesztek (lásd Tesztek)
 ## Előfeltételek
 
 - Python 3.12 (a Dockerfile és a CI is ezt használja)
-- Docker + `docker-compose` (V1, önálló bináris) (konténeres futtatáshoz/deployhoz — ez indítja a MariaDB-t is)
+- Docker + `docker-compose` (V1, önálló bináris) (konténeres futtatáshoz/deployhoz)
+- Külső MySQL/MariaDB szerver (Dockerrel futtatva)
 - OpenRouter API kulcs (ingyenes, https://openrouter.ai/keys) — opcionális, lásd lent
 - Elérhető DFIR-IRIS instancia + API kulcs
 
@@ -60,7 +61,7 @@ cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
-Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABASE_URL`-ben megadott adatbázisban, migráció nem szükséges. Sima venv-es futtatásnál ez alapértelmezetten egy helyi SQLite fájl (`siemantics.db`) — Docker-rel futtatva viszont a `docker-compose.yml` a bundled MariaDB service-re állítja át (lásd lent), mert egy konténeren belüli SQLite fájl nem éli túl a konténer újralétrehozását.
+Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABASE_URL`-ben megadott adatbázisban, migráció nem szükséges. Sima venv-es futtatásnál ez alapértelmezetten egy helyi SQLite fájl (`siemantics.db`) — Docker-rel futtatva viszont egy külső MySQL/MariaDB szerverre kell mutatnia (lásd lent), mert egy konténeren belüli SQLite fájl nem éli túl a konténer újralétrehozását. Ha az adatbázis induláskor még nem elérhető, az app kb. 60 másodpercig újrapróbálkozik, mielőtt leállna.
 
 ## Konfiguráció (.env)
 
@@ -79,10 +80,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `ABUSEIPDB_API_KEY` | opcionális IoC-enrichment. Ingyenesen igényelhető: https://www.abuseipdb.com/account/api |
 | `ENRICHMENT_MAX_IOCS` | alapértelmezett: `5` — hány egyedi IP-t enrichel maximum riasztásonként (free-tier rate limitek védelme) |
 | `WAZUH_WEBHOOK_TOKEN` | megosztott titok a webhook hívások hitelesítéséhez (`X-Webhook-Token` header) |
-| `DATABASE_URL` | döntésnapló DB elérési útja, alapértelmezett: `sqlite+aiosqlite:///./siemantics.db` — **docker-compose-ban ezt felülírja** a `mariadb` service-re mutató URL, ezt a sort csak sima venv-es futtatásnál veszi figyelembe |
-| `MARIADB_ROOT_PASSWORD` | csak docker-compose: a MariaDB konténer root jelszava — állítsd be az **első** `docker-compose up` előtt |
-| `MARIADB_DATABASE` | csak docker-compose: adatbázis neve, alapértelmezett: `siemantics` |
-| `MARIADB_USER` / `MARIADB_PASSWORD` | csak docker-compose: az app saját DB usere/jelszava, alapértelmezett user: `siemantics` |
+| `DATABASE_URL` | döntésnapló DB elérési útja, alapértelmezett: `sqlite+aiosqlite:///./siemantics.db` (sima venv-es futtatáshoz). Docker-rel külső MySQL/MariaDB kell, pl. `mysql+aiomysql://siemantics:JELSZO@db-host:3306/siemantics` — a jelszó speciális karaktereit URL-kódolni kell (`@` → `%40`) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | az első admin felhasználó — csak akkor jön létre induláskor, ha a `users` tábla üres. Később módosítva **nem** írja át a meglévő admin jelszavát |
 | `SESSION_TTL_HOURS` | bejelentkezés érvényessége órában, alapértelmezett: `12` |
 | `SESSION_COOKIE_SECURE` | alapértelmezett: `false`. HTTPS mögött (pl. reverse proxy) állítsd `true`-ra, hogy a session cookie csak titkosított kapcsolaton menjen |
@@ -288,7 +286,16 @@ docker-compose up -d --build
 docker-compose logs -f siemantics
 ```
 
-A döntésnapló egy `mariadb` service-ben (MariaDB) fut, ami a `siemantics_mariadb_data` named volume-ban perzisztál, túléli a konténer újraindítását/újraépítését. (Korábban ez egy konténeren belüli SQLite fájl volt egy nem megfelelően bekötött volume mellett, ami ténylegesen elveszett minden `docker-compose up --build`-nál — ezt váltja ki a MariaDB.)
+A döntésnapló egy külső MySQL/MariaDB szerveren van, a `.env`-beli `DATABASE_URL` szerint (a compose nem indít saját adatbázist). Az adatbázist és az app userét előre létre kell hozni; a táblákat az app induláskor maga hozza létre:
+
+```sql
+CREATE DATABASE siemantics CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'siemantics'@'<docker-host-ip>' IDENTIFIED BY '...';
+GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
+  ON siemantics.* TO 'siemantics'@'<docker-host-ip>';
+```
+
+A konténer NAT-on keresztül éri el a DB-t, ezért a MySQL a **docker host** IP-jét látja, nem a konténerét — a usert ahhoz kell engedélyezni.
 
 ## Kiértékelési munkafolyamat (szakdolgozat 6. fejezet)
 
