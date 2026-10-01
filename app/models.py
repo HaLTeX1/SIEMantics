@@ -39,6 +39,26 @@ class AlertRecord(Base):
     # VirusTotal / AbuseIPDB results per IP IoC, populated for escalated alerts
     ioc_enrichment: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
+    # Columns below were added later: they must stay nullable so init_db() can
+    # add them to an existing table (see db._add_missing_columns).
+
+    # Original Wazuh payload, so a record can be escalated/reprocessed later from the full log
+    raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # Concrete model that answered (openrouter/free routes to a different model per call)
+    triage_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Why a false-positive verdict was routed to NEEDS_REVIEW instead of SUPPRESSED
+    review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The automatic decision, kept unchanged when an analyst escalates by hand - metrics use this
+    auto_status: Mapped[AlertStatus | None] = mapped_column(Enum(AlertStatus), nullable=True)
+    escalated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def display_id(self) -> str:
+        """Unique, human-facing alert ID (the Wazuh alert_id is not unique)."""
+        return f"#ID-{self.id}"
+
+
 class User(Base):
     """Dashboard user. Only an admin can create users (see routers/users.py)."""
 

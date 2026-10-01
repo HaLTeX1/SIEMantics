@@ -42,7 +42,7 @@ jobs:
       - name: Create venv and install dependencies
         run: |
           python3 -m venv /tmp/venv
-          /tmp/venv/bin/pip install --no-cache-dir -r requirements.txt
+          /tmp/venv/bin/pip install --no-cache-dir -r requirements-dev.txt
           echo "/tmp/venv/bin" >> "$GITHUB_PATH"
 
       - name: Compile check
@@ -54,6 +54,9 @@ jobs:
           IRIS_BASE_URL: https://iris.invalid
           IRIS_API_KEY: dummy
         run: python -c "from app.main import app"
+
+      - name: Run tests
+        run: python -m pytest -q
 
   remote-prereqs:
     runs-on: docker

@@ -29,10 +29,14 @@ def _severity_bucket(level: int) -> str:
     return "low"
 
 
+def has_suspicious_pattern(text: str) -> bool:
+    return bool(_SUSPICIOUS_RE.search(text))
+
+
 def mock_triage(alert: NormalizedAlert) -> TriageResult:
     """Deterministic rule-based fallback - no API key or network call needed."""
 
-    pattern_hit = bool(_SUSPICIOUS_RE.search(alert.log_snippet))
+    pattern_hit = has_suspicious_pattern(alert.log_snippet)
     is_true_positive = alert.severity >= settings.llm_mock_severity_threshold or pattern_hit
 
     confidence = (

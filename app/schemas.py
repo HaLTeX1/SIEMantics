@@ -59,7 +59,10 @@ class TriageResult(BaseModel):
     reasoning: str
     iocs: list[str] = Field(default_factory=list)
     recommended_severity: Optional[str] = None
-    engine: Literal["openrouter", "mock"]
+    # "manual": built from a stored record when an analyst escalates by hand
+    engine: Literal["openrouter", "mock", "manual"]
+    # Concrete model that answered (None for the mock engine)
+    model: Optional[str] = None
 
 
 # --- IRIS response ---
@@ -83,6 +86,8 @@ class AlertRecordOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    # "#ID-<id>": unique, human-facing ID; the API also accepts it (as "ID-<id>") wherever it takes an alert reference
+    display_id: str
     alert_id: str
     received_at: datetime
     source_ip: Optional[str] = None
@@ -100,6 +105,12 @@ class AlertRecordOut(BaseModel):
     ground_truth: Optional[GroundTruth] = None
     labeled_at: Optional[datetime] = None
     ioc_enrichment: Optional[list[dict]] = None
+    triage_model: Optional[str] = None
+    review_reason: Optional[str] = None
+    # Automatic decision; differs from `status` when an analyst escalated by hand
+    auto_status: Optional[AlertStatus] = None
+    escalated_by: Optional[AssigneeOut] = None
+    escalated_at: Optional[datetime] = None
     # Owner of the IRIS case (only possible when iris_case_id is set)
     assignee: Optional[AssigneeOut] = None
     assigned_at: Optional[datetime] = None
@@ -115,6 +126,10 @@ class TriageMetrics(BaseModel):
     sample_size: int
     labeled_size: int
     error_count: int
+    needs_review_count: int
+    # Labeled TP among NEEDS_REVIEW records: false negatives caught by the review queue
+    needs_review_true_positive: int
+    manually_escalated_count: int
 
     true_positive: int
     false_positive: int

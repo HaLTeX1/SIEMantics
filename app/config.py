@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -9,6 +10,13 @@ class Settings(BaseSettings):
 
     # Ez egy mock, azaz ha elérhetetlen az OR akkor erre fog visszaesni és csak a detection adatok alapján elemez.
     llm_mock_severity_threshold: int = 7
+
+    # Ha a triázs false positive-ot mond, de a confidence ez alatt van, a riasztás nem
+    # SUPPRESSED, hanem NEEDS_REVIEW lesz (analystnak kell ránéznie, IRIS eset nem nyílik).
+    review_confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    # Prompt injection védőháló: ilyen Wazuh severity felett az LLM nem nyomhatja el a riasztást
+    # (false positive ítélet esetén is NEEDS_REVIEW lesz belőle).
+    review_severity_floor: int = 12
 
     # DFIR-IRIS
     iris_base_url: str

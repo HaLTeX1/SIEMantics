@@ -343,6 +343,17 @@
     font-size: 13px;
   }
   .assign-control .assign-error { color: var(--critical); font-size: 12px; }
+  .alert-ref { color: var(--text-secondary); font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
+  .detail-field .value.review-reason {
+    background: rgba(250,178,25,0.10);
+    border: 1px solid rgba(250,178,25,0.35);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #fdd68a;
+  }
+  .escalate-control { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+  .escalate-control .hint { color: var(--text-muted); font-size: 12px; }
+  .escalate-control .escalate-error { color: var(--critical); font-size: 12px; }
 </style>
 </head>
 <body>
@@ -362,10 +373,11 @@
     </header>
 
     <div class="filters">
-      <input id="searchInput" type="search" placeholder="Keresés: rule, alert ID, forrás IP..." />
+      <input id="searchInput" type="search" placeholder="Keresés: #ID, rule, alert ID, forrás IP..." />
       <select id="statusFilter">
         <option value="">Minden státusz</option>
         <option value="escalated">Escalated</option>
+        <option value="needs_review">Needs review</option>
         <option value="suppressed">Suppressed</option>
         <option value="error">Error</option>
       </select>
@@ -437,11 +449,14 @@
   "use strict";
 
   const API_ALERTS = "/api/v1/alerts?limit=500";
-  const API_LABEL = (alertId) => `/api/v1/alerts/${encodeURIComponent(alertId)}/label`;
+  // "#ID-42" -> "ID-42": the API accepts it, and "#" would start a URL fragment
+  const refOf = (displayId) => displayId.replace(/^#/, "");
+  const API_LABEL = (displayId) => `/api/v1/alerts/${encodeURIComponent(refOf(displayId))}/label`;
+  const API_ESCALATE = (displayId) => `/api/v1/alerts/${encodeURIComponent(refOf(displayId))}/escalate`;
   const API_CONFIG = "/api/v1/config";
   const API_ASSIGNEES = "/api/v1/cases/assignees";
   const API_CASE_ASSIGNEE = (caseId) => `/api/v1/cases/${encodeURIComponent(caseId)}/assignee`;
-  const DETAIL_PAGE = (alertId) => `alert.html?id=${encodeURIComponent(alertId)}`;
+  const DETAIL_PAGE = (displayId) => `alert.html?id=${encodeURIComponent(refOf(displayId))}`;
 
   let allAlerts = [];
   let filtered = [];
@@ -451,6 +466,9 @@
   let currentUser = null;
   let assignees = [];
   const assignErrors = new Map();
+  const escalateErrors = new Map();
+  const escalating = new Set();
+  const ESCALATABLE = new Set(["needs_review", "suppressed", "error"]);
 
   SIEM.api(API_CONFIG).then((r) => r.ok ? r.json() : null).then((cfg) => {
     if (cfg && cfg.iris_base_url) irisBaseUrl = cfg.iris_base_url;
@@ -481,6 +499,7 @@
   function statusInfo(status) {
     if (status === "escalated") return { label: "Escalated", cls: "good" };
     if (status === "error") return { label: "Error", cls: "critical" };
+    if (status === "needs_review") return { label: "Needs review", cls: "warning" };
     return { label: "Suppressed", cls: "muted" };
   }
 
@@ -549,9 +568,40 @@
     await fetchAlerts();
   }
 
+  function escalateControl(a) {
+    const busy = escalating.has(a.display_id);
+    const err = escalateErrors.get(a.display_id);
+    return `<div class="escalate-control">
+      <button type="button" class="btn primary escalate-btn" data-id="${escapeHtml(a.display_id)}" ${busy ? "disabled" : ""}>
+        ${busy ? "Eszkalálás..." : "Eszkalálás IRIS esetté"}
+      </button>
+      <span class="hint">Valódi incidens: IRIS esetet nyit, és True Positive-nak címkézi.</span>
+      ${err ? `<span class="escalate-error">${escapeHtml(err)}</span>` : ""}
+    </div>`;
+  }
+
+  async function escalateAlert(displayId) {
+    if (!window.confirm(`${displayId} eszkalálása: IRIS eset nyílik, és a riasztás True Positive címkét kap. Folytatod?`)) return;
+    escalateErrors.delete(displayId);
+    escalating.add(displayId);
+    renderTable();
+    try {
+      const res = await SIEM.api(API_ESCALATE(displayId), { method: "POST" });
+      if (!res.ok) {
+        let detail = `HTTP ${res.status}`;
+        try { detail = (await res.json()).detail || detail; } catch (_) { /* not JSON */ }
+        throw new Error(detail);
+      }
+    } catch (err) {
+      escalateErrors.set(displayId, "Sikertelen eszkalálás: " + err.message);
+    }
+    escalating.delete(displayId);
+    await fetchAlerts();
+  }
+
   function detailField(label, valueHtml, opts) {
     opts = opts || {};
-    const cls = "value" + (opts.mono ? " reasoning" : "");
+    const cls = "value" + (opts.mono ? " reasoning" : "") + (opts.cls ? " " + opts.cls : "");
     return `<div class="detail-field${opts.fullWidth ? " full-width" : ""}">
       <div class="label">${escapeHtml(label)}</div>
       <div class="${cls}">${valueHtml}</div>
@@ -584,12 +634,20 @@
 
   function renderDetailPanel(a) {
     const fields = [];
-    fields.push(detailField("Alert ID", escapeHtml(a.alert_id)));
+    if (a.review_reason && a.status === "needs_review") {
+      fields.push(detailField("Felülvizsgálat oka", escapeHtml(a.review_reason), { fullWidth: true, cls: "review-reason" }));
+    }
+    if (ESCALATABLE.has(a.status) && a.iris_case_id == null) {
+      fields.push(detailField("Művelet", escalateControl(a), { fullWidth: true }));
+    }
+    fields.push(detailField("Azonosító", `<span class="alert-ref">${escapeHtml(a.display_id)}</span>`));
+    fields.push(detailField("Wazuh alert ID", escapeHtml(a.alert_id)));
     fields.push(detailField("Forrás IP", escapeHtml(a.source_ip || "-")));
     fields.push(detailField("Beérkezett", fmtTime(a.received_at)));
     fields.push(detailField("Feldolgozási idő", `${Math.round(a.processing_time_ms)} ms`));
 
     if (a.triage_engine != null) fields.push(detailField("Triázs motor", escapeHtml(a.triage_engine)));
+    if (a.triage_model) fields.push(detailField("Modell", escapeHtml(a.triage_model)));
     if (a.llm_confidence != null) fields.push(detailField("Confidence", Math.round(a.llm_confidence * 100) + "%"));
     if (a.llm_is_true_positive != null) {
       fields.push(detailField("LLM döntés", a.llm_is_true_positive ? "True positive" : "False positive"));
@@ -597,6 +655,12 @@
 
     if (a.ground_truth) {
       fields.push(detailField("Ground truth", escapeHtml(a.ground_truth) + (a.labeled_at ? " (" + fmtTime(a.labeled_at) + ")" : "")));
+    }
+
+    if (a.escalated_by) {
+      const auto = a.auto_status ? statusInfo(a.auto_status).label : "-";
+      fields.push(detailField("Kézi eszkaláció",
+        `${escapeHtml(userLabel(a.escalated_by))}${a.escalated_at ? " (" + fmtTime(a.escalated_at) + ")" : ""} — automatikus döntés: ${escapeHtml(auto)}`));
     }
 
     if (a.iris_case_id != null) {
@@ -679,14 +743,14 @@
         if (t < cutoff) return false;
       }
       if (q) {
-        const hay = `${a.alert_id} ${a.rule_description} ${a.source_ip || ""}`.toLowerCase();
+        const hay = `${a.display_id} ${a.alert_id} ${a.rule_description} ${a.source_ip || ""}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       return true;
     });
 
     for (const id of Array.from(selected)) {
-      if (!filtered.some((a) => a.alert_id === id)) selected.delete(id);
+      if (!filtered.some((a) => a.display_id === id)) selected.delete(id);
     }
 
     renderTable();
@@ -710,18 +774,19 @@
       const sev = severityInfo(a.severity);
       const st = statusInfo(a.status);
       const disp = dispositionInfo(a.ground_truth);
-      const isSelected = selected.has(a.alert_id);
-      const isExpanded = expandedIds.has(a.alert_id);
+      const isSelected = selected.has(a.display_id);
+      const isExpanded = expandedIds.has(a.display_id);
+      const rowId = escapeHtml(a.display_id);
       const engineCls = a.triage_engine === "openrouter" ? "engine-openrouter" : "engine-mock";
       const engineLabel = a.triage_engine || "-";
       const confidence = a.llm_confidence != null ? Math.round(a.llm_confidence * 100) + "%" : "-";
 
       const mainRow = `
-        <tr class="data-row ${isSelected ? "selected" : ""}" data-id="${escapeHtml(a.alert_id)}">
-          <td><input type="checkbox" class="row-check" data-id="${escapeHtml(a.alert_id)}" ${isSelected ? "checked" : ""} /></td>
+        <tr class="data-row ${isSelected ? "selected" : ""}" data-id="${rowId}">
+          <td><input type="checkbox" class="row-check" data-id="${rowId}" ${isSelected ? "checked" : ""} /></td>
           <td>
             <div class="title-main">${escapeHtml(a.rule_description)}</div>
-            <div class="title-sub">${escapeHtml(a.alert_id)}</div>
+            <div class="title-sub"><span class="alert-ref">${rowId}</span> · ${escapeHtml(a.alert_id)}</div>
           </td>
           <td>${badge(sev.label, sev.cls)}</td>
           <td>${escapeHtml(a.source_ip || "-")}</td>
@@ -733,14 +798,14 @@
           <td>${fmtTime(a.received_at)}</td>
           <td>
             <div class="row-actions">
-              <button type="button" class="icon-btn expand-btn ${isExpanded ? "expanded" : ""}" data-id="${escapeHtml(a.alert_id)}" title="Részletek">${isExpanded ? "▾" : "▸"}</button>
-              <button type="button" class="icon-btn open-btn" data-id="${escapeHtml(a.alert_id)}" title="Megnyitás új ablakban">⧉</button>
+              <button type="button" class="icon-btn expand-btn ${isExpanded ? "expanded" : ""}" data-id="${rowId}" title="Részletek">${isExpanded ? "▾" : "▸"}</button>
+              <button type="button" class="icon-btn open-btn" data-id="${rowId}" title="Megnyitás új ablakban">⧉</button>
             </div>
           </td>
         </tr>`;
 
       const detailRow = isExpanded
-        ? `<tr class="detail-row" data-detail-for="${escapeHtml(a.alert_id)}"><td colspan="${COLSPAN}">${renderDetailPanel(a)}</td></tr>`
+        ? `<tr class="detail-row" data-detail-for="${rowId}"><td colspan="${COLSPAN}">${renderDetailPanel(a)}</td></tr>`
         : "";
 
       return mainRow + detailRow;
@@ -784,6 +849,10 @@
       });
     });
 
+    tableBody.querySelectorAll(".escalate-btn").forEach((btn) => {
+      btn.addEventListener("click", () => escalateAlert(btn.dataset.id));
+    });
+
     tableBody.querySelectorAll("tr.data-row").forEach((row) => {
       row.addEventListener("click", () => toggleExpanded(row.dataset.id));
     });
@@ -796,19 +865,19 @@
   }
 
   function openInNewWindow(id) {
-    window.open(DETAIL_PAGE(id), `siemantics-alert-${id}`, "width=760,height=860,noopener");
+    window.open(DETAIL_PAGE(id), `siemantics-alert-${refOf(id)}`, "width=760,height=860,noopener");
   }
 
   function updateBulkbar() {
     selectedCountEl.textContent = String(selected.size);
     bulkbar.classList.toggle("visible", selected.size > 0);
-    const allChecked = filtered.length > 0 && filtered.every((a) => selected.has(a.alert_id));
+    const allChecked = filtered.length > 0 && filtered.every((a) => selected.has(a.display_id));
     selectAll.checked = allChecked;
   }
 
   selectAll.addEventListener("change", () => {
-    if (selectAll.checked) filtered.forEach((a) => selected.add(a.alert_id));
-    else filtered.forEach((a) => selected.delete(a.alert_id));
+    if (selectAll.checked) filtered.forEach((a) => selected.add(a.display_id));
+    else filtered.forEach((a) => selected.delete(a.display_id));
     renderTable();
     updateBulkbar();
   });

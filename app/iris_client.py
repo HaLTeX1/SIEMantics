@@ -51,6 +51,9 @@ class IrisClient:
         alert: NormalizedAlert,
         triage: TriageResult,
         enrichment: list[dict] | None = None,
+        *,
+        display_id: str,
+        escalated_by: str | None = None,
     ) -> IrisCaseResult:
         async with httpx.AsyncClient(
             base_url=self._base_url,
@@ -58,10 +61,10 @@ class IrisClient:
             timeout=15,
             verify=settings.iris_verify_ssl,
         ) as client:
-            case_id = await self._create_case(client, alert, triage)
+            case_id = await self._create_case(client, alert, triage, display_id)
 
             group_id = await self._create_note_group(client, case_id)
-            await self._add_note(client, case_id, group_id, alert, triage, enrichment)
+            await self._add_note(client, case_id, group_id, alert, triage, enrichment, display_id, escalated_by)
 
             for ioc in triage.iocs:
                 await self._add_ioc(client, case_id, ioc)
@@ -72,11 +75,11 @@ class IrisClient:
             )
 
     async def _create_case(
-        self, client: httpx.AsyncClient, alert: NormalizedAlert, triage: TriageResult
+        self, client: httpx.AsyncClient, alert: NormalizedAlert, triage: TriageResult, display_id: str
     ) -> int:
         # Max 256 karakter lehet a case name
         payload = {
-            "case_name": f"[SIEMantics] {alert.rule_description}"[:256],
+            "case_name": f"[SIEMantics {display_id}] {alert.rule_description}"[:256],
             "case_description": triage.reasoning,
             "case_soc_id": alert.alert_id,
             "case_customer": settings.iris_customer_id,
@@ -101,11 +104,18 @@ class IrisClient:
         group_id: int,
         alert: NormalizedAlert,
         triage: TriageResult,
-        enrichment: list[dict] | None = None,
+        enrichment: list[dict] | None,
+        display_id: str,
+        escalated_by: str | None,
     ) -> None:
+        header = f"SIEMantics alert: **{display_id}** (Wazuh alert ID: {alert.alert_id})\n\n"
+        if escalated_by:
+            header += f"**Manually escalated by {escalated_by}** - the automatic triage did not escalate this alert.\n\n"
         note_content = (
-            f"## LLM Triage\n\n"
+            header
+            + f"## LLM Triage\n\n"
             f"- Engine: {triage.engine}\n"
+            f"- Model: {triage.model or '-'}\n"
             f"- Confidence: {triage.confidence}\n"
             f"- Recommended severity: {triage.recommended_severity}\n\n"
             f"{triage.reasoning}\n\n"

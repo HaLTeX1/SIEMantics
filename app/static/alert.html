@@ -118,6 +118,13 @@
   }
   .ti-entry .ti-line { color: var(--text-secondary); }
   .ti-entry .ti-none { color: var(--text-muted); font-style: italic; }
+  .field .value.review-reason {
+    background: rgba(250,178,25,0.10);
+    border: 1px solid rgba(250,178,25,0.35);
+    border-radius: 6px;
+    padding: 8px 12px;
+    color: #fdd68a;
+  }
 
 </style>
 </head>
@@ -157,6 +164,7 @@
   function statusInfo(status) {
     if (status === "escalated") return { label: "Escalated", cls: "good" };
     if (status === "error") return { label: "Error", cls: "critical" };
+    if (status === "needs_review") return { label: "Needs review", cls: "warning" };
     return { label: "Suppressed", cls: "muted" };
   }
 
@@ -172,7 +180,7 @@
 
   function field(label, valueHtml, opts) {
     opts = opts || {};
-    const cls = "value" + (opts.mono ? " mono" : "");
+    const cls = "value" + (opts.mono ? " mono" : "") + (opts.cls ? " " + opts.cls : "");
     return `<div class="field${opts.fullWidth ? " full-width" : ""}">
       <div class="label">${escapeHtml(label)}</div>
       <div class="${cls}">${valueHtml}</div>
@@ -204,23 +212,33 @@
   }
 
   function render(a, irisBaseUrl) {
-    document.title = `SIEMantics - ${a.alert_id}`;
+    document.title = `SIEMantics - ${a.display_id}`;
     const sev = severityInfo(a.severity);
     const st = statusInfo(a.status);
     const disp = dispositionInfo(a.ground_truth);
 
     const fields = [];
-    fields.push(field("Alert ID", escapeHtml(a.alert_id)));
+    if (a.review_reason && a.status === "needs_review") {
+      fields.push(field("Felülvizsgálat oka", escapeHtml(a.review_reason), { fullWidth: true, cls: "review-reason" }));
+    }
+    fields.push(field("Azonosító", escapeHtml(a.display_id)));
+    fields.push(field("Wazuh alert ID", escapeHtml(a.alert_id)));
     fields.push(field("Forrás IP", escapeHtml(a.source_ip || "-")));
     fields.push(field("Beérkezett", fmtTime(a.received_at)));
     fields.push(field("Feldolgozási idő", `${Math.round(a.processing_time_ms)} ms`));
     if (a.triage_engine != null) fields.push(field("Triázs motor", escapeHtml(a.triage_engine)));
+    if (a.triage_model) fields.push(field("Modell", escapeHtml(a.triage_model)));
     if (a.llm_confidence != null) fields.push(field("Confidence", Math.round(a.llm_confidence * 100) + "%"));
     if (a.llm_is_true_positive != null) {
       fields.push(field("LLM döntés", a.llm_is_true_positive ? "True positive" : "False positive"));
     }
     if (a.ground_truth) {
       fields.push(field("Ground truth", escapeHtml(a.ground_truth) + (a.labeled_at ? " (" + fmtTime(a.labeled_at) + ")" : "")));
+    }
+    if (a.escalated_by) {
+      const auto = a.auto_status ? statusInfo(a.auto_status).label : "-";
+      fields.push(field("Kézi eszkaláció",
+        `${escapeHtml(a.escalated_by.full_name || a.escalated_by.username)}${a.escalated_at ? " (" + fmtTime(a.escalated_at) + ")" : ""} — automatikus döntés: ${escapeHtml(auto)}`));
     }
     if (a.iris_case_id != null) {
       const link = irisBaseUrl
@@ -243,7 +261,7 @@
 
     content.innerHTML = `
       <h1>${escapeHtml(a.rule_description)}</h1>
-      <div class="sub">${escapeHtml(a.alert_id)}</div>
+      <div class="sub">${escapeHtml(a.display_id)} · ${escapeHtml(a.alert_id)}</div>
       <div class="badges-row">
         ${badge(sev.label, sev.cls)}
         ${badge(st.label, st.cls)}

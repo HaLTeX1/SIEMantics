@@ -1,3 +1,4 @@
+import re
 from datetime import datetime
 
 from sqlalchemy import delete, func, select
@@ -34,8 +35,26 @@ async def get_latest_alert_record(session: AsyncSession, alert_id: str) -> Alert
     return result.scalars().first()
 
 
-async def set_ground_truth(session: AsyncSession, alert_id: str, ground_truth: GroundTruth) -> AlertRecord | None:
-    record = await get_latest_alert_record(session, alert_id)
+_DISPLAY_ID_RE = re.compile(r"#?ID-(\d+)", re.IGNORECASE)
+
+
+async def get_alert_record_by_ref(session: AsyncSession, ref: str) -> AlertRecord | None:
+    """`ref` is either our unique display ID ("ID-42" / "#ID-42") or a Wazuh
+    alert_id - the latter is not unique, so it resolves to the latest record."""
+    match = _DISPLAY_ID_RE.fullmatch(ref.strip())
+    if match:
+        return await session.get(AlertRecord, int(match.group(1)))
+    return await get_latest_alert_record(session, ref)
+
+
+async def save_alert_record(session: AsyncSession, record: AlertRecord) -> AlertRecord:
+    await session.commit()
+    await session.refresh(record)
+    return record
+
+
+async def set_ground_truth(session: AsyncSession, ref: str, ground_truth: GroundTruth) -> AlertRecord | None:
+    record = await get_alert_record_by_ref(session, ref)
     if record is None:
         return None
     record.ground_truth = ground_truth
@@ -58,6 +77,13 @@ async def list_users(session: AsyncSession) -> list[User]:
 
 async def get_user(session: AsyncSession, user_id: int) -> User | None:
     return await session.get(User, user_id)
+
+
+async def get_users_by_ids(session: AsyncSession, user_ids: list[int]) -> dict[int, User]:
+    if not user_ids:
+        return {}
+    result = await session.execute(select(User).where(User.id.in_(set(user_ids))))
+    return {user.id: user for user in result.scalars().all()}
 
 
 async def get_user_by_username(session: AsyncSession, username: str) -> User | None:
