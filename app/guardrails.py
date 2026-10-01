@@ -25,7 +25,7 @@ _INJECTION_RE = re.compile("|".join(_INJECTION_PATTERNS), re.IGNORECASE)
 def looks_like_prompt_injection(alert: NormalizedAlert) -> bool:
     return any(
         _INJECTION_RE.search(text)
-        for text in (alert.log_snippet, alert.agent_name or "", alert.rule_description)
+        for text in (alert.searchable_text(), alert.agent_name or "", alert.rule_description)
     )
 
 
@@ -43,7 +43,7 @@ def decide_status(alert: NormalizedAlert, triage: TriageResult) -> tuple[AlertSt
         reasons.append("possible prompt injection: the alert text addresses the model")
     # The mock engine already escalates on these, so they only matter for the LLM
     if triage.engine == "openrouter":
-        if has_suspicious_pattern(alert.log_snippet):
+        if has_suspicious_pattern(alert.searchable_text()):
             reasons.append("LLM said benign, but a rule-based suspicious pattern matched the log")
         if alert.severity >= settings.review_severity_floor:
             reasons.append(f"LLM said benign, but Wazuh severity {alert.severity} >= {settings.review_severity_floor}")

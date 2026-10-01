@@ -52,6 +52,10 @@ class AlertRecord(Base):
     auto_status: Mapped[AlertStatus | None] = mapped_column(Enum(AlertStatus), nullable=True)
     escalated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Correlation key (related alerts from the same host)
+    agent_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Structured LLM ticket content (summary, actions, investigation steps, ...)
+    llm_analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     @property
     def display_id(self) -> str:

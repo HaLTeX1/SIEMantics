@@ -1,7 +1,8 @@
+import json
 from datetime import datetime
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.enums import AlertStatus, GroundTruth, UserRole
 
@@ -50,8 +51,51 @@ class NormalizedAlert(BaseModel):
     log_snippet: str
     received_at: datetime = Field(default_factory=datetime.utcnow)
 
+    # Context for the analyst/LLM, taken from the full Wazuh alert
+    timestamp: Optional[str] = None
+    rule_id: Optional[str] = None
+    rule_groups: list[str] = Field(default_factory=list)
+    mitre_ids: list[str] = Field(default_factory=list)
+    mitre_tactics: list[str] = Field(default_factory=list)
+    mitre_techniques: list[str] = Field(default_factory=list)
+    agent_id: Optional[str] = None
+    agent_ip: Optional[str] = None
+    location: Optional[str] = None
+    decoder: Optional[str] = None
+    # Flattened, size-capped event fields ("data.win.eventdata.commandLine" -> value)
+    event_fields: dict[str, str] = Field(default_factory=dict)
+
+    def searchable_text(self) -> str:
+        """Log plus event field values (not keys) - what the pattern/injection checks scan."""
+        return "\n".join([self.log_snippet, *self.event_fields.values()])
+
+
+class RelatedAlert(BaseModel):
+    """Another alert from the same host or source IP, for correlation."""
+
+    display_id: str
+    received_at: datetime
+    rule_id: Optional[str] = None
+    rule_description: str
+    severity: int
+    status: AlertStatus
+    agent_name: Optional[str] = None
+    source_ip: Optional[str] = None
+    iris_case_id: Optional[int] = None
+    log_excerpt: str = ""
+
 
 # --- LLM triage output ---
+
+_LIST_MAX_ITEMS = 12
+_ITEM_MAX_LEN = 600
+_TEXT_MAX_LEN = 4000
+
+
+def _clip(text: str, limit: int) -> str:
+    text = text.strip()
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
 
 class TriageResult(BaseModel):
     is_true_positive: bool
@@ -63,6 +107,57 @@ class TriageResult(BaseModel):
     engine: Literal["openrouter", "mock", "manual"]
     # Concrete model that answered (None for the mock engine)
     model: Optional[str] = None
+
+    # Structured ticket content (LLM only; empty for the mock engine)
+    summary: Optional[str] = None
+    potential_impact: Optional[str] = None
+    benign_explanations: list[str] = Field(default_factory=list)
+    mitre_techniques: list[str] = Field(default_factory=list)
+    immediate_actions: list[str] = Field(default_factory=list)
+    investigation_steps: list[str] = Field(default_factory=list)
+    escalation_criteria: list[str] = Field(default_factory=list)
+    missing_information: list[str] = Field(default_factory=list)
+
+    @field_validator(
+        "iocs", "benign_explanations", "mitre_techniques", "immediate_actions",
+        "investigation_steps", "escalation_criteria", "missing_information",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_list(cls, value):
+        # Free models do not always follow the schema: accept a bare string or null
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [line for line in value.splitlines() if line.strip()]
+        if not isinstance(value, list):
+            value = [value]
+        items = [_clip(v if isinstance(v, str) else json.dumps(v, ensure_ascii=False), _ITEM_MAX_LEN) for v in value]
+        return [item for item in items if item][:_LIST_MAX_ITEMS]
+
+    @field_validator("summary", "potential_impact", mode="before")
+    @classmethod
+    def _coerce_text(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, list):
+            value = " ".join(str(v) for v in value)
+        return _clip(str(value), _ITEM_MAX_LEN * 2) or None
+
+    @field_validator("reasoning", mode="before")
+    @classmethod
+    def _clip_reasoning(cls, value):
+        return _clip(value, _TEXT_MAX_LEN) if isinstance(value, str) else value
+
+    def analysis(self) -> dict:
+        """The non-empty structured ticket fields, as stored in AlertRecord.llm_analysis."""
+        return {k: v for k, v in self.model_dump(include=set(ANALYSIS_FIELDS)).items() if v}
+
+
+ANALYSIS_FIELDS = (
+    "summary", "potential_impact", "benign_explanations", "mitre_techniques",
+    "immediate_actions", "investigation_steps", "escalation_criteria", "missing_information",
+)
 
 
 # --- IRIS response ---
@@ -91,6 +186,7 @@ class AlertRecordOut(BaseModel):
     alert_id: str
     received_at: datetime
     source_ip: Optional[str] = None
+    agent_name: Optional[str] = None
     rule_description: str
     severity: int
     status: AlertStatus
@@ -98,6 +194,7 @@ class AlertRecordOut(BaseModel):
     llm_confidence: Optional[float] = None
     llm_reasoning: Optional[str] = None
     llm_iocs: Optional[list[str]] = None
+    llm_analysis: Optional[dict] = None
     triage_engine: Optional[str] = None
     iris_case_id: Optional[int] = None
     error_detail: Optional[str] = None

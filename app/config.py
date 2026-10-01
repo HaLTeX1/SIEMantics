@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     abuseipdb_api_key: str = ""
     enrichment_max_iocs: int = 5
 
+    # Korreláció: ugyanarról a hostról / forrás IP-ről érkezett riasztások ennyi órán belül
+    # kerülnek az LLM elé és az IRIS ticketbe ("Related alerts").
+    correlation_window_hours: int = Field(default=24, ge=0)
+    correlation_max_alerts: int = Field(default=10, ge=0)
+
+    # Opcionális: a SIEMantics UI címe (pl. http://10.64.0.x:8000), hogy a ticketből linkelni lehessen a riasztásra
+    siemantics_base_url: str = ""
+
     # Decision log / evaluation dataset storage
     database_url: str = "sqlite+aiosqlite:///./siemantics.db"
 

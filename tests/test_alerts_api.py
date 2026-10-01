@@ -22,7 +22,7 @@ def llm_says(monkeypatch):
     """Replace the triage engine with a fixed OpenRouter-style verdict."""
 
     def _set(is_tp, confidence, model="vendor/some-model:free"):
-        async def fake_triage(alert):
+        async def fake_triage(alert, related=None):
             return TriageResult(
                 is_true_positive=is_tp, confidence=confidence, reasoning="llm reasoning",
                 iocs=[alert.source_ip] if alert.source_ip else [], engine="openrouter", model=model,

@@ -27,7 +27,8 @@ app/
 ├── mock_engine.py       # determinisztikus, szabály-alapú fallback triázs
 ├── guardrails.py        # döntés: escalated / needs_review / suppressed (prompt injection védőháló)
 ├── enrichment.py        # VirusTotal / AbuseIPDB IoC enrichment
-├── iris_client.py       # DFIR-IRIS eset/note/IoC API kliens
+├── iris_client.py       # DFIR-IRIS eset/note/IoC/asset API kliens
+├── ticket.py            # az IRIS eset neve, leírása és elemző note-ja (markdown sablon)
 ├── db.py              # SQLAlchemy async engine/session, induláskori sémafrissítés (új oszlopok, ENUM értékek)
 ├── models.py           # ORM táblák: AlertRecord (döntésnapló), User, UserSession, CaseAssignment
 ├── metrics.py           # konfúziós mátrix + feldolgozási idő statisztikák
@@ -78,6 +79,9 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `IRIS_VERIFY_SSL` | alapértelmezett: `true`. **Csak** ismert, belső/lab IRIS instanciánál önaláírt tanúsítvánnyal állítsd `false`-ra — lásd lent |
 | `VIRUSTOTAL_API_KEY` | opcionális IoC-enrichment. Ingyenesen igényelhető: https://www.virustotal.com/gui/my-apikey |
 | `ABUSEIPDB_API_KEY` | opcionális IoC-enrichment. Ingyenesen igényelhető: https://www.abuseipdb.com/account/api |
+| `CORRELATION_WINDOW_HOURS` | alapértelmezett: `24` — ennyi órán belül ugyanarról a hostról / forrás IP-ről érkezett riasztások kerülnek az LLM elé és a ticketbe (`0` = kikapcsolva) |
+| `CORRELATION_MAX_ALERTS` | alapértelmezett: `10` — legfeljebb ennyi kapcsolódó riasztás riasztásonként |
+| `SIEMANTICS_BASE_URL` | opcionális — a SIEMantics UI címe (pl. `http://10.64.0.x:8000`); ha meg van adva, az IRIS note linkel a riasztás részletoldalára |
 | `ENRICHMENT_MAX_IOCS` | alapértelmezett: `5` — hány egyedi IP-t enrichel maximum riasztásonként (free-tier rate limitek védelme) |
 | `WAZUH_WEBHOOK_TOKEN` | megosztott titok a webhook hívások hitelesítéséhez (`X-Webhook-Token` header) |
 | `DATABASE_URL` | döntésnapló DB elérési útja, alapértelmezett: `sqlite+aiosqlite:///./siemantics.db` (sima venv-es futtatáshoz). Docker-rel külső MySQL/MariaDB kell, pl. `mysql+aiomysql://siemantics:JELSZO@db-host:3306/siemantics` — a jelszó speciális karaktereit URL-kódolni kell (`@` → `%40`) |
@@ -154,9 +158,24 @@ A `needs_review`, `suppressed` vagy `error` (IRIS eset nélküli) riasztásokat 
 Escalated (true-positive) riasztásoknál a rendszer automatikusan enricheli az IP-típusú IoC-ket, ha be van állítva a megfelelő API kulcs (mindkettő független és opcionális — csak az fut le, amihez van kulcs). Az eredmény:
 
 - bekerül a döntésnaplóba (`ioc_enrichment` mező, `GET /api/v1/alerts`-en és a dashboardon is látszik),
-- egy "Threat Intelligence" szekcióként bekerül a DFIR-IRIS note-ba is (`app/iris_client.py`).
+- egy "Threat intelligence" szekcióként bekerül a DFIR-IRIS note-ba is (`app/ticket.py`).
 
 Egyedi IP-nkénti cap (`ENRICHMENT_MAX_IOCS`, alapértelmezett 5) védi a free-tier rate limiteket (VirusTotal ~4 req/perc, AbuseIPDB napi kvóta). Egy adott IoC lekérdezésének hibája (timeout, rate limit) sosem blokkolja a riasztás feldolgozását — legrosszabb esetben az adott IoC enrichment nélkül marad.
+
+## IRIS ticket tartalma
+
+Az IRIS eset szövege angol, és úgy épül fel, hogy egy L1 analyst azonnal tudjon belőle dolgozni, egy L2 pedig ki tudja vizsgálni (`app/ticket.py`):
+
+- **Eset neve:** `[SIEMantics #ID-42] <rule> on <host>`; **leírása:** egy-két mondatos összefoglaló + súlyosság, host, forrás IP, triázs.
+- **Note** (`SIEMantics Triage Analysis`): összefoglaló, verdikt, riasztás részletei (idő, host/agent, Wazuh rule ID/szint/csoportok, MITRE a Wazuh szabályból, log forrás/decoder, Wazuh keresőkifejezés), elemzés, lehetséges hatás, ártalmatlan magyarázatok, MITRE (elemzés), **azonnali teendők (L1)**, **vizsgálati lépések (L2)** konkrét parancsokkal, eszkalációs kritériumok, hiányzó információ, **kapcsolódó riasztások**, IoC-k típussal, threat intelligence, az esemény mezői és az eredeti log.
+- **IoC-k** típussal kerülnek az esetbe (`ip-any`, `md5`/`sha1`/`sha256`, `url`, `domain`, `email`, `filename`, egyébként `other`).
+- **Asset:** az érintett host (Wazuh agent) assetként is felkerül (`Linux - Server` / `Windows - Computer`). Ez best-effort: ha az IRIS-ben nincs ilyen asset típus, csak egy warning kerül a logba, az eset ettől még létrejön. A Wazuh manager (agent `000`, pl. tűzfal/felhő integrációk) nem kerül fel assetként.
+
+**Bemenet:** a normalizáló a teljes Wazuh riasztásból dolgozik — rule ID/csoportok/MITRE, agent, `location`, decoder, valamint a `data.*` és `syscheck` mezők kilapítva és méretkorláttal (`data.win.eventdata.commandLine` → érték). A forrás IP-t a Suricata (`data.src_ip`), Windows (`data.win.eventdata.ipAddress`), AWS (`data.aws.sourceIPAddress`), Office 365 (`data.office365.ClientIP`) mezőkből is kiolvassa. A szabály-alapú mintaillesztés és a prompt injection szűrő az esemény mezőinek értékeit is vizsgálja, nem csak a `full_log`-ot.
+
+**Strukturált LLM kimenet:** az LLM a verdikt mellett a fenti szekciókat is JSON mezőkként adja vissza; ezek a döntésnaplóba is bekerülnek (`llm_analysis`), a riasztás részletoldalán megjelennek, és kézi eszkalációnál az IRIS eset ezekből épül. A mock motornál ezek üresek — a note ilyenkor jelzi, hogy kézi triázs kell.
+
+**Korreláció:** a triázs előtt az app lekérdezi az elmúlt `CORRELATION_WINDOW_HOURS` óra riasztásait ugyanarról a hostról (agent név) vagy forrás IP-ről. Ezeket az LLM is látja (a promptban, a többi riasztásadattal együtt megbízhatatlan adatként kezelve), így fel tud ismerni egy támadási láncot (pl. letöltés → perzisztencia → jogosultság-emelés → malware), a ticketben pedig táblázatként szerepelnek log-kivonattal és az esetleges IRIS eset számával. Kézi eszkalációnál az ablak a riasztás utáni időszakot is lefedi. A korreláció az `agent_name` oszlopot használja, ami csak az új verzió óta érkezett riasztásoknál van kitöltve — a régebbi rekordok csak forrás IP alapján kapcsolódnak.
 
 ## Felhasználókezelés
 

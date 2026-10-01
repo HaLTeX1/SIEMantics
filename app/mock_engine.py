@@ -36,7 +36,8 @@ def has_suspicious_pattern(text: str) -> bool:
 def mock_triage(alert: NormalizedAlert) -> TriageResult:
     """Deterministic rule-based fallback - no API key or network call needed."""
 
-    pattern_hit = has_suspicious_pattern(alert.log_snippet)
+    text = alert.searchable_text()
+    pattern_hit = has_suspicious_pattern(text)
     is_true_positive = alert.severity >= settings.llm_mock_severity_threshold or pattern_hit
 
     confidence = (
@@ -45,7 +46,7 @@ def mock_triage(alert: NormalizedAlert) -> TriageResult:
         else max(0.9 - alert.severity / 20, 0.5)
     )
 
-    iocs = set(_IOC_IP_RE.findall(alert.log_snippet))
+    iocs = set(_IOC_IP_RE.findall(text))
     if alert.source_ip:
         iocs.add(alert.source_ip)
 

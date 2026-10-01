@@ -1,6 +1,6 @@
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,10 +13,11 @@ from app.enums import AlertStatus, GroundTruth
 from app.guardrails import decide_status
 from app.iris_client import iris_client
 from app.llm_engine import triage_alert
-from app.normalize import normalize_wazuh_alert
+from app.normalize import normalize_wazuh_alert, related_log_excerpt
 from app.models import AlertRecord, User
 from app.repository import (
     create_alert_record,
+    find_related_alerts,
     get_alert_record_by_ref,
     get_case_assignments,
     get_users_by_ids,
@@ -29,6 +30,7 @@ from app.schemas import (
     AssigneeOut,
     LabelRequest,
     NormalizedAlert,
+    RelatedAlert,
     TriageResult,
     WazuhAlertPayload,
 )
@@ -48,6 +50,49 @@ def _verify_token(x_webhook_token: str | None) -> None:
 
 def _elapsed_ms(started: float) -> float:
     return (time.perf_counter() - started) * 1000
+
+
+async def _related_alerts(
+    session: AsyncSession,
+    alert: NormalizedAlert,
+    around: datetime,
+    *,
+    include_later: bool = False,
+    exclude_id: int | None = None,
+) -> list[RelatedAlert]:
+    """Other alerts from the same host or source IP within the correlation window.
+    Live triage only sees the past; a later manual escalation also sees what came after."""
+    if settings.correlation_window_hours <= 0 or settings.correlation_max_alerts <= 0:
+        return []
+    window = timedelta(hours=settings.correlation_window_hours)
+    # Agent 000 is the Wazuh manager: every firewall/cloud integration alert carries
+    # its name, so matching on it would link unrelated events - use the source IP only.
+    agent_name = alert.agent_name if alert.agent_id != "000" else None
+    records = await find_related_alerts(
+        session,
+        agent_name=agent_name,
+        source_ip=alert.source_ip,
+        around=around,
+        before=window,
+        after=window if include_later else timedelta(0),
+        exclude_id=exclude_id,
+        limit=settings.correlation_max_alerts,
+    )
+    return [
+        RelatedAlert(
+            display_id=r.display_id,
+            received_at=r.received_at,
+            rule_id=((r.raw_payload or {}).get("rule") or {}).get("id"),
+            rule_description=r.rule_description,
+            severity=r.severity,
+            status=r.status,
+            agent_name=r.agent_name,
+            source_ip=r.source_ip,
+            iris_case_id=r.iris_case_id,
+            log_excerpt=related_log_excerpt(r.raw_payload),
+        )
+        for r in records
+    ]
 
 
 async def _with_assignees(session: AsyncSession, records: list[AlertRecord]) -> list[AlertRecordOut]:
@@ -76,16 +121,18 @@ async def receive_alert(
 
     alert: NormalizedAlert = normalize_wazuh_alert(payload)
     started = time.perf_counter()
+    related = await _related_alerts(session, alert, alert.received_at)
     base_fields = dict(
         alert_id=alert.alert_id,
         source_ip=alert.source_ip,
+        agent_name=alert.agent_name,
         rule_description=alert.rule_description,
         severity=alert.severity,
         raw_payload=payload.model_dump(mode="json"),
     )
 
     try:
-        triage = await triage_alert(alert)
+        triage = await triage_alert(alert, related)
     except Exception as exc:
         await create_alert_record(
             session,
@@ -105,6 +152,7 @@ async def receive_alert(
         llm_iocs=triage.iocs,
         triage_engine=triage.engine,
         triage_model=triage.model,
+        llm_analysis=triage.analysis() or None,
     )
     alert_status, review_reason = decide_status(alert, triage)
 
@@ -149,7 +197,9 @@ async def receive_alert(
     )
 
     try:
-        case = await iris_client.create_case_from_alert(alert, triage, enrichment, display_id=record.display_id)
+        case = await iris_client.create_case_from_alert(
+            alert, triage, enrichment, display_id=record.display_id, related_alerts=related
+        )
     except Exception as exc:
         record.status = AlertStatus.ERROR
         record.error_detail = f"iris case creation failed: {exc}"
@@ -202,14 +252,18 @@ async def label_alert(alert_ref: str, body: LabelRequest, session: AsyncSession 
 
 def _alert_from_record(record: AlertRecord) -> NormalizedAlert:
     if record.raw_payload:
-        return normalize_wazuh_alert(WazuhAlertPayload.model_validate(record.raw_payload))
+        alert = normalize_wazuh_alert(WazuhAlertPayload.model_validate(record.raw_payload))
+        alert.received_at = record.received_at
+        return alert
     # Records stored before raw_payload existed
     return NormalizedAlert(
         alert_id=record.alert_id,
         source_ip=record.source_ip,
+        agent_name=record.agent_name,
         rule_description=record.rule_description,
         severity=record.severity,
         log_snippet="(original log not stored for this record)",
+        received_at=record.received_at,
     )
 
 
@@ -237,6 +291,8 @@ def _manual_triage(record: AlertRecord, user: User) -> TriageResult:
         iocs=record.llm_iocs or [],
         engine="manual",
         model=record.triage_model,
+        # Keep the original structured analysis (summary, actions, ...) for the ticket
+        **(record.llm_analysis or {}),
     )
 
 
@@ -262,10 +318,18 @@ async def escalate_alert(
     try:
         alert = _alert_from_record(record)
         triage = _manual_triage(record, user)
+        related = await _related_alerts(
+            session, alert, record.received_at, include_later=True, exclude_id=record.id
+        )
         enrichment = await enrich_iocs(triage.iocs)
         try:
             case = await iris_client.create_case_from_alert(
-                alert, triage, enrichment, display_id=record.display_id, escalated_by=user.username
+                alert,
+                triage,
+                enrichment,
+                display_id=record.display_id,
+                escalated_by=user.username,
+                related_alerts=related,
             )
         except Exception as exc:
             logger.exception("manual escalation of %s failed", record.display_id)

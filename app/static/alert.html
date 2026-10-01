@@ -118,6 +118,9 @@
   }
   .ti-entry .ti-line { color: var(--text-secondary); }
   .ti-entry .ti-none { color: var(--text-muted); font-style: italic; }
+  .field .value ul.analysis-list,
+  .field .value ol.analysis-list { margin: 0; padding-left: 20px; }
+  .field .value .analysis-list li + li { margin-top: 4px; }
   .field .value.review-reason {
     background: rgba(250,178,25,0.10);
     border: 1px solid rgba(250,178,25,0.35);
@@ -187,6 +190,32 @@
     </div>`;
   }
 
+  // Structured LLM ticket content (llm_analysis); key -> [label, numbered list?]
+  const ANALYSIS_LISTS = [
+    ["immediate_actions", "Azonnali teendők (L1)", true],
+    ["investigation_steps", "Vizsgálati lépések (L2)", true],
+    ["escalation_criteria", "Eszkalálni kell, ha", false],
+    ["benign_explanations", "Lehetséges ártalmatlan magyarázatok", false],
+    ["mitre_techniques", "MITRE ATT&CK", false],
+    ["missing_information", "Hiányzó információ", false],
+  ];
+
+  function renderAnalysisFields(analysis) {
+    if (!analysis) return [];
+    const out = [];
+    if (analysis.potential_impact) {
+      out.push(field("Lehetséges hatás", escapeHtml(analysis.potential_impact), { fullWidth: true }));
+    }
+    for (const [key, label, numbered] of ANALYSIS_LISTS) {
+      const items = analysis[key];
+      if (!Array.isArray(items) || items.length === 0) continue;
+      const tag = numbered ? "ol" : "ul";
+      const lis = items.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+      out.push(field(label, `<${tag} class="analysis-list">${lis}</${tag}>`, { fullWidth: true }));
+    }
+    return out;
+  }
+
   function renderTiSection(a) {
     if (a.ioc_enrichment && a.ioc_enrichment.length > 0) {
       const entries = a.ioc_enrichment.map((e) => {
@@ -218,11 +247,16 @@
     const disp = dispositionInfo(a.ground_truth);
 
     const fields = [];
+    const analysis = a.llm_analysis || null;
+    if (analysis && analysis.summary) {
+      fields.push(field("Összefoglaló", escapeHtml(analysis.summary), { fullWidth: true }));
+    }
     if (a.review_reason && a.status === "needs_review") {
       fields.push(field("Felülvizsgálat oka", escapeHtml(a.review_reason), { fullWidth: true, cls: "review-reason" }));
     }
     fields.push(field("Azonosító", escapeHtml(a.display_id)));
     fields.push(field("Wazuh alert ID", escapeHtml(a.alert_id)));
+    fields.push(field("Host", escapeHtml(a.agent_name || "-")));
     fields.push(field("Forrás IP", escapeHtml(a.source_ip || "-")));
     fields.push(field("Beérkezett", fmtTime(a.received_at)));
     fields.push(field("Feldolgozási idő", `${Math.round(a.processing_time_ms)} ms`));
@@ -255,6 +289,7 @@
     if (a.llm_reasoning) {
       fields.push(field("LLM indoklás", escapeHtml(a.llm_reasoning), { fullWidth: true, mono: true }));
     }
+    fields.push(...renderAnalysisFields(analysis));
     if (a.error_detail) {
       fields.push(field("Hiba", escapeHtml(a.error_detail), { fullWidth: true, mono: true }));
     }

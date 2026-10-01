@@ -1,7 +1,7 @@
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import GroundTruth
@@ -45,6 +45,37 @@ async def get_alert_record_by_ref(session: AsyncSession, ref: str) -> AlertRecor
     if match:
         return await session.get(AlertRecord, int(match.group(1)))
     return await get_latest_alert_record(session, ref)
+
+
+async def find_related_alerts(
+    session: AsyncSession,
+    *,
+    agent_name: str | None,
+    source_ip: str | None,
+    around: datetime,
+    before: timedelta,
+    after: timedelta = timedelta(0),
+    exclude_id: int | None = None,
+    limit: int = 10,
+) -> list[AlertRecord]:
+    """Alerts from the same host (agent name) or the same source IP within
+    [around - before, around + after], newest first."""
+    conditions = []
+    if agent_name:
+        conditions.append(AlertRecord.agent_name == agent_name)
+    if source_ip:
+        conditions.append(AlertRecord.source_ip == source_ip)
+    if not conditions:
+        return []
+    stmt = select(AlertRecord).where(
+        or_(*conditions),
+        AlertRecord.received_at >= around - before,
+        AlertRecord.received_at <= around + after,
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(AlertRecord.id != exclude_id)
+    result = await session.execute(stmt.order_by(AlertRecord.received_at.desc()).limit(limit))
+    return list(result.scalars().all())
 
 
 async def save_alert_record(session: AsyncSession, record: AlertRecord) -> AlertRecord:
