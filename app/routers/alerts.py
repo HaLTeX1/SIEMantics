@@ -9,10 +9,9 @@ from app.config import settings
 from app.db import get_session
 from app.enrichment import enrich_iocs
 from app.enums import AlertStatus, GroundTruth
-from app.iris_client import iris_client
 from app.normalize import normalize_wazuh_alert
 from app.models import AlertRecord, User
-from app.pipeline import alert_from_record, alert_queue, related_alerts
+from app.pipeline import alert_from_record, alert_queue, process_record, send_to_iris
 from app.repository import (
     create_alert_record,
     get_alert_record_by_ref,
@@ -63,11 +62,14 @@ async def _with_assignees(session: AsyncSession, records: list[AlertRecord]) -> 
 @router.post("/alerts", status_code=status.HTTP_202_ACCEPTED)
 async def receive_alert(
     payload: WazuhAlertPayload,
+    wait: bool = False,
     x_webhook_token: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ):
     """Store the alert and queue it for triage (app/pipeline.py). Answers right
-    away, so Wazuh's integratord is never held up by the LLM or IRIS."""
+    away, so Wazuh's integratord is never held up by the LLM or IRIS.
+    `?wait=true` (test tools, Postman): triage in the request and answer with the
+    full result instead - 502 if triage or IRIS failed, like before the queue."""
     _verify_token(x_webhook_token)
 
     alert: NormalizedAlert = normalize_wazuh_alert(payload)
@@ -82,6 +84,9 @@ async def receive_alert(
         status=AlertStatus.QUEUED,
         processing_time_ms=0.0,
     )
+    if wait:
+        return await _process_now(session, record)
+
     alert_queue.enqueue(record.id)
     logger.info("alert %s queued as %s", alert.alert_id, record.display_id)
     return {
@@ -89,6 +94,24 @@ async def receive_alert(
         "id": record.display_id,
         "alert_id": alert.alert_id,
         "record_id": record.id,
+    }
+
+
+async def _process_now(session: AsyncSession, record: AlertRecord) -> dict:
+    outcome = await process_record(session, record)
+    if outcome.triage is None:
+        raise HTTPException(status_code=502, detail="triage failed unexpectedly")
+    if record.status == AlertStatus.ERROR:
+        raise HTTPException(status_code=502, detail="incident management backend unavailable")
+    return {
+        "status": record.status.value,
+        "id": record.display_id,
+        "alert_id": record.alert_id,
+        "record_id": record.id,
+        "review_reason": record.review_reason,
+        "triage": outcome.triage,
+        "case": outcome.case,
+        "correlated_with": outcome.correlated.display_id if outcome.correlated else None,
     }
 
 
@@ -173,18 +196,10 @@ async def escalate_alert(
     try:
         alert = alert_from_record(record)
         triage = _manual_triage(record, user)
-        related = await related_alerts(
-            session, alert, record.received_at, include_later=True, exclude_id=record.id
-        )
         enrichment = await enrich_iocs(triage.iocs)
         try:
-            case = await iris_client.create_case_from_alert(
-                alert,
-                triage,
-                enrichment,
-                display_id=record.display_id,
-                escalated_by=user.username,
-                related_alerts=related,
+            case, correlated = await send_to_iris(
+                session, record, alert, triage, enrichment, escalated_by=user.username
             )
         except Exception as exc:
             logger.exception("manual escalation of %s failed", record.display_id)
@@ -195,6 +210,7 @@ async def escalate_alert(
             record.auto_status = record.status
         record.status = AlertStatus.ESCALATED
         record.iris_case_id = case.case_id
+        record.correlated_with_id = correlated.id if correlated else None
         record.ioc_enrichment = enrichment or record.ioc_enrichment
         record.error_detail = None
         record.escalated_by_id = user.id

@@ -12,12 +12,14 @@ raw payload is all that is needed to process them."""
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.correlation import find_correlated_record
 from app.db import async_session
 from app.enrichment import enrich_iocs
 from app.enums import AlertStatus
@@ -27,7 +29,7 @@ from app.llm_engine import triage_alert
 from app.models import AlertRecord
 from app.normalize import normalize_wazuh_alert, related_log_excerpt
 from app.repository import find_related_alerts, save_alert_record
-from app.schemas import NormalizedAlert, RelatedAlert, WazuhAlertPayload
+from app.schemas import IrisCaseResult, NormalizedAlert, RelatedAlert, TriageResult, WazuhAlertPayload
 
 logger = logging.getLogger("siemantics.pipeline")
 
@@ -58,11 +60,10 @@ async def related_alerts(
     alert: NormalizedAlert,
     around: datetime,
     *,
-    include_later: bool = False,
     exclude_id: int | None = None,
 ) -> list[RelatedAlert]:
-    """Other alerts from the same host or source IP within the correlation window.
-    Live triage only sees the past; a later manual escalation also sees what came after."""
+    """Earlier alerts from the same host or source IP within the correlation window,
+    handed to the LLM as context."""
     if settings.correlation_window_hours <= 0 or settings.correlation_max_alerts <= 0:
         return []
     window = timedelta(hours=settings.correlation_window_hours)
@@ -75,7 +76,6 @@ async def related_alerts(
         source_ip=alert.source_ip,
         around=around,
         before=window,
-        after=window if include_later else timedelta(0),
         exclude_id=exclude_id,
         limit=settings.correlation_max_alerts,
     )
@@ -96,7 +96,47 @@ async def related_alerts(
     ]
 
 
-async def process_record(session: AsyncSession, record: AlertRecord) -> None:
+async def send_to_iris(
+    session: AsyncSession,
+    record: AlertRecord,
+    alert: NormalizedAlert,
+    triage: TriageResult,
+    enrichment: list[dict],
+    escalated_by: str | None = None,
+) -> tuple[IrisCaseResult, AlertRecord | None]:
+    """Open an IRIS case, or add the alert to the open case of a similar earlier
+    alert from the same source IP (app/correlation.py). Returns the case and the
+    record it was correlated with, if any."""
+    correlated = await find_correlated_record(session, record)
+    if correlated is not None:
+        case = await iris_client.add_alert_to_case(
+            correlated.iris_case_id,
+            alert,
+            triage,
+            enrichment,
+            display_id=record.display_id,
+            correlated_with=correlated.display_id,
+            escalated_by=escalated_by,
+            raw_payload=record.raw_payload,
+        )
+        if case is not None:
+            return case, correlated
+    case = await iris_client.create_case_from_alert(
+        alert, triage, enrichment, display_id=record.display_id, escalated_by=escalated_by, raw_payload=record.raw_payload
+    )
+    return case, None
+
+
+@dataclass
+class ProcessOutcome:
+    """What process_record did, for the synchronous (?wait=true) webhook answer."""
+
+    triage: TriageResult | None = None
+    case: IrisCaseResult | None = None
+    correlated: AlertRecord | None = None
+
+
+async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessOutcome:
     """Triage a QUEUED record and store the outcome on it. Never raises for a
     triage or IRIS failure - those end up as status ERROR on the record."""
     alert = alert_from_record(record)
@@ -112,7 +152,7 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> None:
         record.error_detail = f"triage failed: {exc}"
         record.processing_time_ms = _elapsed_ms(started)
         await save_alert_record(session, record)
-        return
+        return ProcessOutcome()
 
     record.llm_is_true_positive = triage.is_true_positive
     record.llm_confidence = triage.confidence
@@ -137,13 +177,11 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> None:
             alert_status.value,
             f" ({review_reason})" if review_reason else "",
         )
-        return
+        return ProcessOutcome(triage=triage)
 
     record.ioc_enrichment = await enrich_iocs(triage.iocs) or None
     try:
-        case = await iris_client.create_case_from_alert(
-            alert, triage, record.ioc_enrichment or [], display_id=record.display_id, related_alerts=related
-        )
+        case, correlated = await send_to_iris(session, record, alert, triage, record.ioc_enrichment or [])
     except Exception as exc:
         logger.exception("iris case creation failed for alert %s (%s)", alert.alert_id, record.display_id)
         # auto_status stays ESCALATED: the triage decision was right, only IRIS was unavailable
@@ -151,13 +189,21 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> None:
         record.error_detail = f"iris case creation failed: {exc}"
         record.processing_time_ms = _elapsed_ms(started)
         await save_alert_record(session, record)
-        return
+        return ProcessOutcome(triage=triage)
 
     record.status = AlertStatus.ESCALATED
     record.iris_case_id = case.case_id
+    record.correlated_with_id = correlated.id if correlated else None
     record.processing_time_ms = _elapsed_ms(started)
     await save_alert_record(session, record)
-    logger.info("alert %s (%s) escalated to IRIS case %s", alert.alert_id, record.display_id, case.case_id)
+    logger.info(
+        "alert %s (%s) escalated to IRIS case %s%s",
+        alert.alert_id,
+        record.display_id,
+        case.case_id,
+        f" (correlated with {correlated.display_id})" if correlated else "",
+    )
+    return ProcessOutcome(triage=triage, case=case, correlated=correlated)
 
 
 class AlertQueue:

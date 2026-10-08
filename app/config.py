@@ -26,35 +26,29 @@ class Settings(BaseSettings):
     iris_api_key: str
     iris_customer_id: int = 1
     iris_verify_ssl: bool = True
+    # Publikus URL, ha meg van adva, az IRIS eset visszalinkel a riasztasra.
+    siemantics_public_url: str = ""
+    # Korrelacios ablak orakban, 0 = kikapcsolva. Ezen belul az azonos forras IP-rol jovo hasonlo riasztas a meglevo
+    # IRIS esetbe kerul, es az azonos hostrol / forras IP-rol jott riasztasok az LLM ele kerulnek ("related alerts").
+    correlation_window_hours: int = Field(default=24, ge=0)
+    # Legfeljebb ennyi kapcsolodo riasztas kerul az LLM ele.
+    correlation_max_alerts: int = Field(default=10, ge=0)
 
     wazuh_webhook_token: str = ""
     # Háttérben párhuzamosan feldolgozott riasztások száma (app/pipeline.py). 1 = sorban,
     # ami kíméli az OpenRouter free rate limitet és a korreláció is a korábbi döntéseket látja.
     triage_workers: int = Field(default=1, ge=1)
 
-    # IoC enrichment (optional; skipped per-provider if its key is unset).
-    # Only runs for true-positive/escalated alerts, capped to a handful of
-    # unique IPs per alert to stay within free-tier rate limits.
     virustotal_api_key: str = ""
     abuseipdb_api_key: str = ""
     enrichment_max_iocs: int = 5
 
-    # Korreláció: ugyanarról a hostról / forrás IP-ről érkezett riasztások ennyi órán belül
-    # kerülnek az LLM elé és az IRIS ticketbe ("Related alerts").
-    correlation_window_hours: int = Field(default=24, ge=0)
-    correlation_max_alerts: int = Field(default=10, ge=0)
-
-    # Opcionális: a SIEMantics UI címe (pl. http://10.64.0.x:8000), hogy a ticketből linkelni lehessen a riasztásra
-    siemantics_base_url: str = ""
-
-    # Decision log / evaluation dataset storage
     database_url: str = "sqlite+aiosqlite:///./siemantics.db"
 
     # Felhasználókezelés: ha még nincs egyetlen felhasználó sem, induláskor ezzel jön létre az első admin.
     admin_username: str = "admin"
     admin_password: str = ""
     session_ttl_hours: int = 12
-    # HTTPS mögött (reverse proxy) true-ra állítandó, sima HTTP-s lab környezetben false.
     session_cookie_secure: bool = False
 
 

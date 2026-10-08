@@ -10,7 +10,7 @@ from app.schemas import TriageResult
 
 from conftest import WEBHOOK_HEADERS, process_alert, wazuh_alert
 
-DISPLAY_ID_RE = re.compile(r"^#ID-\d+$")
+DISPLAY_ID_RE = re.compile(r"^ID-\d+$")
 
 
 def post_alert(client, payload):
@@ -69,6 +69,28 @@ def test_triage_crash_marks_record_as_error(client, monkeypatch):
     record = post_alert(client, wazuh_alert(level=13))
     assert record["status"] == "error"
     assert "triage failed: boom" in record["error_detail"]
+
+
+def test_wait_mode_answers_with_the_full_result(client, iris):
+    """?wait=true (Postman, test script): triaged within the request, nothing is queued."""
+    url = "/api/v1/alerts?wait=true"
+    first = client.post(url, json=wazuh_alert(alert_id="w1", level=13), headers=WEBHOOK_HEADERS).json()
+    assert first["status"] == "escalated"
+    assert first["triage"]["engine"] == "mock"
+    assert first["case"]["case_id"] == 1001
+    assert first["correlated_with"] is None
+    # same rule + source IP -> added to the first alert's case
+    body = client.post(url, json=wazuh_alert(alert_id="w2", level=13), headers=WEBHOOK_HEADERS).json()
+    assert body["correlated_with"] == first["id"] and body["case"]["case_id"] == 1001
+
+    body = client.post(url, json=wazuh_alert(level=2), headers=WEBHOOK_HEADERS).json()
+    assert body["status"] == "suppressed" and body["case"] is None
+
+    iris.fail = True
+    res = client.post(url, json=wazuh_alert(alert_id="w3", level=13, data={"srcip": "198.51.100.99"}),
+                      headers=WEBHOOK_HEADERS)
+    assert res.status_code == 502
+    assert res.json()["detail"] == "incident management backend unavailable"
 
 
 def test_confident_benign_alert_is_suppressed(client, iris):

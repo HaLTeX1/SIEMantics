@@ -10,9 +10,7 @@ from app.config import settings
 
 logger = logging.getLogger("siemantics.db")
 
-# pool_recycle instead of pool_pre_ping: pre-ping is broken with aiomysql 0.3 on
-# SQLAlchemy 2.0.35 (ping() missing "reconnect"); recycling keeps connections
-# younger than MySQL's wait_timeout so they are not dropped server-side.
+
 engine = create_async_engine(settings.database_url, echo=False, pool_recycle=3600)
 async_session = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -22,8 +20,7 @@ class Base(DeclarativeBase):
 
 
 async def init_db(attempts: int = 30, delay: float = 2.0) -> None:
-    # The database container may still be starting (MariaDB refuses connections
-    # until it is initialized), so wait for it instead of crashing on boot.
+    # Megvarjuk mig elindul a database, ha pl. a docker-compose-ben a db service lassabban indulna el.
     for attempt in range(1, attempts + 1):
         try:
             await _init_db()

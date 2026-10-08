@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
-from conftest import WEBHOOK_HEADERS, process_alert, wazuh_alert
+from conftest import process_alert, wazuh_alert
 
 
 def _create_user(admin_client, username, role="analyst"):

@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.enums import AlertStatus, GroundTruth, UserRole
 
 
-# --- Raw Wazuh alert payloads as received from the webhook integration.
+# --- Wazuh webhook payloads ---
 
 class WazuhRule(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -40,7 +40,7 @@ class WazuhAlertPayload(BaseModel):
     location: Optional[str] = None
 
 
-# --- Normalized internal representation ---
+# --- Normalizalt alert a triage loghoz, a LLM-hez es az evaluation datasethez. A Wazuh alert payloadja alapjan keszul, de a triage logban mar csak a fontos mezok szerepelnek.
 
 class NormalizedAlert(BaseModel):
     alert_id: str
@@ -50,6 +50,10 @@ class NormalizedAlert(BaseModel):
     severity: int
     log_snippet: str
     received_at: datetime = Field(default_factory=datetime.utcnow)
+    llm_is_true_positive: Optional[bool] = None
+    llm_confidence: Optional[float] = None
+    llm_reasoning: Optional[str] = None
+    llm_iocs: Optional[list[str]] = None
 
     # Context for the analyst/LLM, taken from the full Wazuh alert
     timestamp: Optional[str] = None
@@ -103,9 +107,9 @@ class TriageResult(BaseModel):
     reasoning: str
     iocs: list[str] = Field(default_factory=list)
     recommended_severity: Optional[str] = None
-    # "manual": built from a stored record when an analyst escalates by hand
+    # manuualis escalalt riasztasoknal a ground_truth mezot az analyst allitja be, a system nem.
     engine: Literal["openrouter", "mock", "manual"]
-    # Concrete model that answered (None for the mock engine)
+    # Konkret LLM modell, ami a triage logot adta (pl. openrouter/free vagy openrouter/claude-v1). Ha a triage engine "manual", akkor ez None.
     model: Optional[str] = None
 
     # Structured ticket content (LLM only; empty for the mock engine)
@@ -181,7 +185,7 @@ class AlertRecordOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    # "#ID-<id>": unique, human-facing ID; the API also accepts it (as "ID-<id>") wherever it takes an alert reference
+    # Egyedi riasztás-azonosító "ID-<szám>" formátumban (a Wazuh alert_id nem egyedi)
     display_id: str
     alert_id: str
     received_at: datetime
@@ -204,11 +208,13 @@ class AlertRecordOut(BaseModel):
     ioc_enrichment: Optional[list[dict]] = None
     triage_model: Optional[str] = None
     review_reason: Optional[str] = None
-    # Automatic decision; differs from `status` when an analyst escalated by hand
+    # Automatikus döntés a riasztás státuszáról (ESCALATED, SUPPRESSED, NEEDS_REVIEW) - az analyst döntése nem számít bele a statisztikába.
     auto_status: Optional[AlertStatus] = None
     escalated_by: Optional[AssigneeOut] = None
     escalated_at: Optional[datetime] = None
-    # Owner of the IRIS case (only possible when iris_case_id is set)
+    # Annak a riasztasnak az ID-ja, akinek az IRIS esetebe ez is bekerult.
+    correlated_with: Optional[str] = None
+    # Az IRIS a riasztas tulajdonosa
     assignee: Optional[AssigneeOut] = None
     assigned_at: Optional[datetime] = None
 
@@ -217,14 +223,14 @@ class LabelRequest(BaseModel):
     ground_truth: GroundTruth
 
 
-# --- Aggregate evaluation metrics (thesis ch. 6.3) ---
+
+# --- Triage metrics ---
 
 class TriageMetrics(BaseModel):
     sample_size: int
     labeled_size: int
     error_count: int
     needs_review_count: int
-    # Labeled TP among NEEDS_REVIEW records: false negatives caught by the review queue
     needs_review_true_positive: int
     manually_escalated_count: int
 
@@ -276,7 +282,7 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    """Admin-side partial update; omitted fields are left unchanged."""
+    """Admin-oldali felhasználó update. A felhasználó saját profilját a /me endpointon keresztül tudja update-elni."""
 
     full_name: Optional[str] = Field(default=None, max_length=128)
     role: Optional[UserRole] = None

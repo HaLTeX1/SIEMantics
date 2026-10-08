@@ -1,9 +1,11 @@
-"""Richer alert context, structured triage output, correlation and the IRIS
-ticket layout."""
+"""Richer alert context, structured triage output and the related alerts the
+LLM sees. The IRIS case layout itself is tested in test_iris_report.py."""
 
 import json
 import re
 from datetime import datetime
+
+import pytest
 
 from app.enums import AlertStatus
 from app.guardrails import looks_like_prompt_injection
@@ -12,9 +14,8 @@ from app.mock_engine import mock_triage
 from app.normalize import EVENT_FIELDS_MAX_TOTAL_LEN, normalize_wazuh_alert
 from app import pipeline
 from app.schemas import RelatedAlert, TriageResult, WazuhAlertPayload
-from app.ticket import classify_ioc, render_case_name, render_case_note
 
-from conftest import WEBHOOK_HEADERS, process_alert, wazuh_alert
+from conftest import process_alert, wazuh_alert
 
 
 def _normalize(payload: dict):
@@ -119,88 +120,42 @@ def test_triage_result_tolerates_sloppy_llm_output():
     }
 
 
-# --- ticket rendering
+# --- related alerts handed to the LLM
 
-def _llm_triage(**extra) -> TriageResult:
-    return TriageResult(
-        is_true_positive=True, confidence=0.93, reasoning="ClamAV signature hit on a hidden path.",
-        engine="openrouter", model="vendor/model:free", recommended_severity="high",
-        iocs=["/tmp/.x/kworkerd", "45.137.21.9"],
-        summary="Mirai trojan found on lab-db01.",
-        immediate_actions=["Isolate lab-db01"], investigation_steps=["sha256sum /tmp/.x/kworkerd"],
-        escalation_criteria=["Outbound C2 traffic"], missing_information=["File hash"],
-        **extra,
-    )
+@pytest.fixture
+def seen_related(monkeypatch) -> list:
+    """Records the related alerts each triage call gets, then triages with the real (mock) engine."""
+    calls: list = []
+    real_triage = pipeline.triage_alert
 
+    async def spy(alert, related=None):
+        calls.append(related or [])
+        return await real_triage(alert, related)
 
-def test_case_note_has_all_sections():
-    alert = _normalize(CLAMAV)
-    related = [RelatedAlert(
-        display_id="#ID-7", received_at=datetime(2026, 10, 1, 14, 23), rule_description="a | b",
-        severity=12, status=AlertStatus.ESCALATED, agent_name="lab-db01", iris_case_id=41,
-    )]
-    note = render_case_note(alert, _llm_triage(), None, display_id="#ID-9", related=related,
-                            alert_url="http://soc/ui/alert.html?id=ID-9")
-
-    for heading in ("## Verdict", "## Alert details", "## Analysis", "## Immediate actions (L1)",
-                    "## Investigation steps (L2)", "## Escalate to incident response if",
-                    "## Missing information", "## Related alerts", "## Indicators of compromise",
-                    "## Event fields", "## Original log"):
-        assert heading in note, heading
-    assert note.startswith("**Mirai trojan found on lab-db01.**")
-    assert "T1204.002 Malicious File (Execution)" in note
-    assert "| #ID-7 |" in note and "a \\| b" in note  # pipe in a cell is escaped
-    assert "`/tmp/.x/kworkerd` (filename)" in note
-    assert "[open in SIEMantics](http://soc/ui/alert.html?id=ID-9)" in note
-    assert render_case_name(alert, "#ID-9") == "[SIEMantics #ID-9] ClamAV: Virus detected on lab-db01"
+    monkeypatch.setattr(pipeline, "triage_alert", spy)
+    return calls
 
 
-def test_case_note_neutralizes_untrusted_markdown():
-    log = "x ``` y\n![t](http://evil/pixel.png) <img src=x>"
-    alert = _normalize({**CLAMAV, "full_log": log})
-    note = render_case_note(alert, _llm_triage(potential_impact="![a](http://evil/x.png)"), None, display_id="#ID-1")
+def test_triage_sees_earlier_alerts_from_same_host(client, seen_related):
+    process_alert(client, wazuh_alert("cron-1", level=3, log="cron job ran",
+                                      agent={"name": "lab-db01", "ip": "10.64.0.86"}, data={}))
+    process_alert(client, wazuh_alert("other-1", level=3, agent={"name": "lab-web01", "ip": "10.64.0.21"},
+                                      data={"srcip": "203.0.113.9"}))
+    process_alert(client, wazuh_alert("mirai-1", level=10, log="Mirai FOUND",
+                                      agent={"name": "lab-db01", "ip": "10.64.0.86"}, data={}))
 
-    assert "````\n" + log + "\n````" in note  # fence longer than the backticks inside the log
-    assert "](http://evil/x.png)" not in note.replace("!\\[a](http://evil/x.png)", "")
-
-
-def test_mock_triage_note_says_manual_triage_needed():
-    note = render_case_note(_normalize(CLAMAV), mock_triage(_normalize(CLAMAV)), None, display_id="#ID-1")
-    assert "triage this alert manually" in note
-    assert "## Immediate actions" not in note
-    assert "None found." in note
-
-
-def test_classify_ioc():
-    assert classify_ioc("45.137.21.9") == "ip-any"
-    assert classify_ioc("2001:db8::1") == "ip-any"
-    assert classify_ioc("d41d8cd98f00b204e9800998ecf8427e") == "md5"
-    assert classify_ioc("DE96A6E69944335375DC1AC238336066889D9FFC7D73628EF4FE1B1B160AB32C") == "sha256"
-    assert classify_ioc("http://45.137.21.9/x.sh") == "url"
-    assert classify_ioc("evil.example.com") == "domain"
-    assert classify_ioc("C:\\Users\\Public\\pd64.exe") == "filename"
-    assert classify_ioc("penzugy@lab-company.hu") == "email"
-    assert classify_ioc("LAB\\kovacs.anna") == "other"
-
-
-# --- correlation through the API
-
-def _post(client, payload):
-    return process_alert(client, payload)
-
-
-def test_escalated_alert_gets_related_alerts_from_same_host(client, iris):
-    _post(client, wazuh_alert("cron-1", level=3, log="cron job ran", agent={"name": "lab-db01", "ip": "10.64.0.86"},
-                              data={}))
-    _post(client, wazuh_alert("other-1", level=3, agent={"name": "lab-web01", "ip": "10.64.0.21"},
-                              data={"srcip": "203.0.113.9"}))
-    _post(client, wazuh_alert("mirai-1", level=10, log="Mirai FOUND", agent={"name": "lab-db01", "ip": "10.64.0.86"},
-                              data={}))
-
-    related = iris.calls[-1]["related_alerts"]
+    related = seen_related[-1]
     assert [r.rule_description for r in related] == ["Test rule"]
     assert related[0].log_excerpt == "cron job ran"
     assert related[0].agent_name == "lab-db01"
+
+
+def test_wazuh_manager_alerts_are_not_related_by_agent_name(client, seen_related):
+    manager = {"id": "000", "name": "wazuh-manager"}
+    process_alert(client, wazuh_alert("fw-1", level=3, agent=manager, data={"srcip": "193.233.48.112"}))
+    process_alert(client, wazuh_alert("aws-1", level=10, agent=manager,
+                                      data={"aws": {"sourceIPAddress": "102.129.152.18"}}))
+    assert seen_related[-1] == []
 
 
 def test_llm_analysis_is_stored_and_reused_on_manual_escalation(client, iris, logged_in, monkeypatch):
@@ -211,22 +166,15 @@ def test_llm_analysis_is_stored_and_reused_on_manual_escalation(client, iris, lo
         )
     monkeypatch.setattr(pipeline, "triage_alert", fake_triage)
 
-    body = _post(client, wazuh_alert("odd-1", level=5))
+    body = process_alert(client, wazuh_alert("odd-1", level=5))
     assert body["status"] == "needs_review"
-    record = client.get(f"/api/v1/alerts/{body['display_id'].lstrip('#')}").json()
+    record = client.get(f"/api/v1/alerts/{body['display_id']}").json()
     assert record["llm_analysis"] == {"summary": "Odd login on web01.", "immediate_actions": ["Call the user"]}
     assert record["agent_name"] == "web01"
 
-    res = client.post(f"/api/v1/alerts/{body['display_id'].lstrip('#')}/escalate")
+    res = client.post(f"/api/v1/alerts/{body['display_id']}/escalate")
     assert res.status_code == 200, res.text
     triage = iris.calls[-1]["triage"]
     assert triage.engine == "manual"
     assert triage.summary == "Odd login on web01."
     assert triage.immediate_actions == ["Call the user"]
-
-
-def test_wazuh_manager_alerts_are_not_correlated_by_agent_name(client, iris):
-    manager = {"id": "000", "name": "wazuh-manager"}
-    _post(client, wazuh_alert("fw-1", level=3, agent=manager, data={"srcip": "193.233.48.112"}))
-    _post(client, wazuh_alert("aws-1", level=10, agent=manager, data={"aws": {"sourceIPAddress": "102.129.152.18"}}))
-    assert iris.calls[-1]["related_alerts"] == []

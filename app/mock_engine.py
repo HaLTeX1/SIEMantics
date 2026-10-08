@@ -19,7 +19,7 @@ _SUSPICIOUS_PATTERNS = [
 _SUSPICIOUS_RE = re.compile("|".join(_SUSPICIOUS_PATTERNS), re.IGNORECASE)
 
 
-def _severity_bucket(level: int) -> str:
+def severity_bucket(level: int) -> str:
     if level >= 12:
         return "critical"
     if level >= 9:
@@ -60,6 +60,6 @@ def mock_triage(alert: NormalizedAlert) -> TriageResult:
         confidence=round(confidence, 2),
         reasoning=reasoning,
         iocs=sorted(iocs),
-        recommended_severity=_severity_bucket(alert.severity),
+        recommended_severity=severity_bucket(alert.severity),
         engine="mock",
     )
