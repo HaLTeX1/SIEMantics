@@ -14,10 +14,12 @@
 # (see ALL_SCENARIOS at the bottom) to run just one, e.g.:
 #   ./scripts/test_requests.sh sqli_union
 #
-# NOTE: any scenario that triggers a true-positive verdict also attempts to
-# create a DFIR-IRIS case. If IRIS_BASE_URL isn't reachable, those requests
-# return 502 and the alert is persisted with status=error (that is correct,
-# expected system behavior with IRIS down - not a bug in this script).
+# NOTE: the webhook only queues an alert (HTTP 202, "status": "queued") and
+# triage runs in the background - the expected verdict in each label is the
+# record's final status: check it with the `list` scenario or on the dashboard.
+# A true-positive verdict also attempts to create a DFIR-IRIS case. If
+# IRIS_BASE_URL isn't reachable, the alert ends up with status=error (that is
+# correct, expected system behavior with IRIS down - not a bug in this script).
 
 set -euo pipefail
 

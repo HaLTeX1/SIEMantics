@@ -1,0 +1,17 @@
+<!--
+  SIEMantics integration - add inside <ossec_config> in /var/ossec/etc/ossec.conf
+  on the Wazuh manager, then: systemctl restart wazuh-manager
+
+  hook_url: the SIEMantics webhook, reachable from the manager
+  api_key:  the same value as WAZUH_WEBHOOK_TOKEN in SIEMantics' .env
+  level:    minimum rule level forwarded. Every forwarded alert gets an LLM
+            triage, so start around 5-7 and lower it once the volume is known.
+            Narrow further with <group>, <rule_id> or <event_location> if needed.
+-->
+<integration>
+  <name>custom-siemantics</name>
+  <hook_url>http://SIEMANTICS_HOST:8000/api/v1/alerts</hook_url>
+  <api_key>CHANGE_ME_WAZUH_WEBHOOK_TOKEN</api_key>
+  <level>5</level>
+  <alert_format>json</alert_format>
+</integration>

@@ -1,0 +1,2 @@
+# The Wazuh integration script runs on Linux: a CRLF shebang line would break it
+wazuh/custom-siemantics text eol=lf

@@ -8,7 +8,6 @@ from app.enums import AlertStatus, GroundTruth, UserRole
 
 
 class AlertRecord(Base):
-    """One row per processed alert - the evaluation dataset for chapter 6."""
 
     __tablename__ = "alert_records"
 

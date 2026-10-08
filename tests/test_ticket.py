@@ -10,11 +10,11 @@ from app.guardrails import looks_like_prompt_injection
 from app.llm_engine import build_user_prompt
 from app.mock_engine import mock_triage
 from app.normalize import EVENT_FIELDS_MAX_TOTAL_LEN, normalize_wazuh_alert
-from app.routers import alerts as alerts_router
+from app import pipeline
 from app.schemas import RelatedAlert, TriageResult, WazuhAlertPayload
 from app.ticket import classify_ioc, render_case_name, render_case_note
 
-from conftest import WEBHOOK_HEADERS, wazuh_alert
+from conftest import WEBHOOK_HEADERS, process_alert, wazuh_alert
 
 
 def _normalize(payload: dict):
@@ -186,9 +186,7 @@ def test_classify_ioc():
 # --- correlation through the API
 
 def _post(client, payload):
-    res = client.post("/api/v1/alerts", json=payload, headers=WEBHOOK_HEADERS)
-    assert res.status_code == 202, res.text
-    return res.json()
+    return process_alert(client, payload)
 
 
 def test_escalated_alert_gets_related_alerts_from_same_host(client, iris):
@@ -211,15 +209,15 @@ def test_llm_analysis_is_stored_and_reused_on_manual_escalation(client, iris, lo
             is_true_positive=False, confidence=0.4, reasoning="unsure", engine="openrouter", model="m:free",
             summary="Odd login on web01.", immediate_actions=["Call the user"],
         )
-    monkeypatch.setattr(alerts_router, "triage_alert", fake_triage)
+    monkeypatch.setattr(pipeline, "triage_alert", fake_triage)
 
     body = _post(client, wazuh_alert("odd-1", level=5))
     assert body["status"] == "needs_review"
-    record = client.get(f"/api/v1/alerts/{body['id'].lstrip('#')}").json()
+    record = client.get(f"/api/v1/alerts/{body['display_id'].lstrip('#')}").json()
     assert record["llm_analysis"] == {"summary": "Odd login on web01.", "immediate_actions": ["Call the user"]}
     assert record["agent_name"] == "web01"
 
-    res = client.post(f"/api/v1/alerts/{body['id'].lstrip('#')}/escalate")
+    res = client.post(f"/api/v1/alerts/{body['display_id'].lstrip('#')}/escalate")
     assert res.status_code == 200, res.text
     triage = iris.calls[-1]["triage"]
     assert triage.engine == "manual"

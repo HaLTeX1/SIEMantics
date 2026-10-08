@@ -1,6 +1,5 @@
 import logging
-import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,14 +9,12 @@ from app.config import settings
 from app.db import get_session
 from app.enrichment import enrich_iocs
 from app.enums import AlertStatus, GroundTruth
-from app.guardrails import decide_status
 from app.iris_client import iris_client
-from app.llm_engine import triage_alert
-from app.normalize import normalize_wazuh_alert, related_log_excerpt
+from app.normalize import normalize_wazuh_alert
 from app.models import AlertRecord, User
+from app.pipeline import alert_from_record, alert_queue, related_alerts
 from app.repository import (
     create_alert_record,
-    find_related_alerts,
     get_alert_record_by_ref,
     get_case_assignments,
     get_users_by_ids,
@@ -30,7 +27,6 @@ from app.schemas import (
     AssigneeOut,
     LabelRequest,
     NormalizedAlert,
-    RelatedAlert,
     TriageResult,
     WazuhAlertPayload,
 )
@@ -46,53 +42,6 @@ _escalations_in_progress: set[int] = set()
 def _verify_token(x_webhook_token: str | None) -> None:
     if settings.wazuh_webhook_token and x_webhook_token != settings.wazuh_webhook_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook token")
-
-
-def _elapsed_ms(started: float) -> float:
-    return (time.perf_counter() - started) * 1000
-
-
-async def _related_alerts(
-    session: AsyncSession,
-    alert: NormalizedAlert,
-    around: datetime,
-    *,
-    include_later: bool = False,
-    exclude_id: int | None = None,
-) -> list[RelatedAlert]:
-    """Other alerts from the same host or source IP within the correlation window.
-    Live triage only sees the past; a later manual escalation also sees what came after."""
-    if settings.correlation_window_hours <= 0 or settings.correlation_max_alerts <= 0:
-        return []
-    window = timedelta(hours=settings.correlation_window_hours)
-    # Agent 000 is the Wazuh manager: every firewall/cloud integration alert carries
-    # its name, so matching on it would link unrelated events - use the source IP only.
-    agent_name = alert.agent_name if alert.agent_id != "000" else None
-    records = await find_related_alerts(
-        session,
-        agent_name=agent_name,
-        source_ip=alert.source_ip,
-        around=around,
-        before=window,
-        after=window if include_later else timedelta(0),
-        exclude_id=exclude_id,
-        limit=settings.correlation_max_alerts,
-    )
-    return [
-        RelatedAlert(
-            display_id=r.display_id,
-            received_at=r.received_at,
-            rule_id=((r.raw_payload or {}).get("rule") or {}).get("id"),
-            rule_description=r.rule_description,
-            severity=r.severity,
-            status=r.status,
-            agent_name=r.agent_name,
-            source_ip=r.source_ip,
-            iris_case_id=r.iris_case_id,
-            log_excerpt=related_log_excerpt(r.raw_payload),
-        )
-        for r in records
-    ]
 
 
 async def _with_assignees(session: AsyncSession, records: list[AlertRecord]) -> list[AlertRecordOut]:
@@ -117,108 +66,29 @@ async def receive_alert(
     x_webhook_token: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ):
+    """Store the alert and queue it for triage (app/pipeline.py). Answers right
+    away, so Wazuh's integratord is never held up by the LLM or IRIS."""
     _verify_token(x_webhook_token)
 
     alert: NormalizedAlert = normalize_wazuh_alert(payload)
-    started = time.perf_counter()
-    related = await _related_alerts(session, alert, alert.received_at)
-    base_fields = dict(
+    record = await create_alert_record(
+        session,
         alert_id=alert.alert_id,
         source_ip=alert.source_ip,
         agent_name=alert.agent_name,
         rule_description=alert.rule_description,
         severity=alert.severity,
         raw_payload=payload.model_dump(mode="json"),
+        status=AlertStatus.QUEUED,
+        processing_time_ms=0.0,
     )
-
-    try:
-        triage = await triage_alert(alert, related)
-    except Exception as exc:
-        await create_alert_record(
-            session,
-            **base_fields,
-            status=AlertStatus.ERROR,
-            auto_status=AlertStatus.ERROR,
-            processing_time_ms=_elapsed_ms(started),
-            error_detail=f"triage failed: {exc}",
-        )
-        logger.exception("triage failed for alert %s", alert.alert_id)
-        raise HTTPException(status_code=502, detail="triage failed unexpectedly") from exc
-
-    triage_fields = dict(
-        llm_is_true_positive=triage.is_true_positive,
-        llm_confidence=triage.confidence,
-        llm_reasoning=triage.reasoning,
-        llm_iocs=triage.iocs,
-        triage_engine=triage.engine,
-        triage_model=triage.model,
-        llm_analysis=triage.analysis() or None,
-    )
-    alert_status, review_reason = decide_status(alert, triage)
-
-    if alert_status != AlertStatus.ESCALATED:
-        record = await create_alert_record(
-            session,
-            **base_fields,
-            **triage_fields,
-            status=alert_status,
-            auto_status=alert_status,
-            review_reason=review_reason,
-            processing_time_ms=_elapsed_ms(started),
-        )
-        logger.info(
-            "alert %s (%s) classified as false positive (confidence=%.2f) -> %s%s",
-            alert.alert_id,
-            record.display_id,
-            triage.confidence,
-            alert_status.value,
-            f" ({review_reason})" if review_reason else "",
-        )
-        return {
-            "status": alert_status.value,
-            "id": record.display_id,
-            "alert_id": alert.alert_id,
-            "record_id": record.id,
-            "review_reason": review_reason,
-            "triage": triage,
-        }
-
-    enrichment = await enrich_iocs(triage.iocs)
-
-    # Stored before the IRIS call so the case can carry our display ID
-    record = await create_alert_record(
-        session,
-        **base_fields,
-        **triage_fields,
-        status=AlertStatus.ESCALATED,
-        auto_status=AlertStatus.ESCALATED,
-        ioc_enrichment=enrichment or None,
-        processing_time_ms=_elapsed_ms(started),
-    )
-
-    try:
-        case = await iris_client.create_case_from_alert(
-            alert, triage, enrichment, display_id=record.display_id, related_alerts=related
-        )
-    except Exception as exc:
-        record.status = AlertStatus.ERROR
-        record.error_detail = f"iris case creation failed: {exc}"
-        record.processing_time_ms = _elapsed_ms(started)
-        await save_alert_record(session, record)
-        logger.exception("iris case creation failed for alert %s (%s)", alert.alert_id, record.display_id)
-        raise HTTPException(status_code=502, detail="incident management backend unavailable") from exc
-
-    record.iris_case_id = case.case_id
-    record.processing_time_ms = _elapsed_ms(started)
-    await save_alert_record(session, record)
-    logger.info("alert %s (%s) escalated to IRIS case %s", alert.alert_id, record.display_id, case.case_id)
+    alert_queue.enqueue(record.id)
+    logger.info("alert %s queued as %s", alert.alert_id, record.display_id)
     return {
-        "status": "escalated",
+        "status": AlertStatus.QUEUED.value,
         "id": record.display_id,
         "alert_id": alert.alert_id,
         "record_id": record.id,
-        "triage": triage,
-        "case": case,
     }
 
 
@@ -248,23 +118,6 @@ async def label_alert(alert_ref: str, body: LabelRequest, session: AsyncSession 
     if record is None:
         raise HTTPException(status_code=404, detail="alert not found")
     return (await _with_assignees(session, [record]))[0]
-
-
-def _alert_from_record(record: AlertRecord) -> NormalizedAlert:
-    if record.raw_payload:
-        alert = normalize_wazuh_alert(WazuhAlertPayload.model_validate(record.raw_payload))
-        alert.received_at = record.received_at
-        return alert
-    # Records stored before raw_payload existed
-    return NormalizedAlert(
-        alert_id=record.alert_id,
-        source_ip=record.source_ip,
-        agent_name=record.agent_name,
-        rule_description=record.rule_description,
-        severity=record.severity,
-        log_snippet="(original log not stored for this record)",
-        received_at=record.received_at,
-    )
 
 
 def _manual_triage(record: AlertRecord, user: User) -> TriageResult:
@@ -311,14 +164,16 @@ async def escalate_alert(
         raise HTTPException(status_code=404, detail="alert not found")
     if record.iris_case_id is not None or record.status == AlertStatus.ESCALATED:
         raise HTTPException(status_code=409, detail="alert already escalated")
+    if record.status == AlertStatus.QUEUED:
+        raise HTTPException(status_code=409, detail="alert is still waiting for automatic triage")
     if record.id in _escalations_in_progress:
         raise HTTPException(status_code=409, detail="escalation already in progress")
 
     _escalations_in_progress.add(record.id)
     try:
-        alert = _alert_from_record(record)
+        alert = alert_from_record(record)
         triage = _manual_triage(record, user)
-        related = await _related_alerts(
+        related = await related_alerts(
             session, alert, record.received_at, include_later=True, exclude_id=record.id
         )
         enrichment = await enrich_iocs(triage.iocs)

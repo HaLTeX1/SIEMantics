@@ -168,6 +168,7 @@
     if (status === "escalated") return { label: "Escalated", cls: "good" };
     if (status === "error") return { label: "Error", cls: "critical" };
     if (status === "needs_review") return { label: "Needs review", cls: "warning" };
+    if (status === "queued") return { label: "Queued", cls: "muted" };
     return { label: "Suppressed", cls: "muted" };
   }
 

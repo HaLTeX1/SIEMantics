@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
-from conftest import WEBHOOK_HEADERS, wazuh_alert
+from conftest import WEBHOOK_HEADERS, process_alert, wazuh_alert
 
 
 def _create_user(admin_client, username, role="analyst"):
@@ -22,8 +22,7 @@ def _login(username, password="analyst-pass") -> TestClient:
 
 
 def _escalated_case(client) -> int:
-    body = client.post("/api/v1/alerts", json=wazuh_alert(level=13), headers=WEBHOOK_HEADERS).json()
-    return body["case"]["case_id"]
+    return process_alert(client, wazuh_alert(level=13))["iris_case_id"]
 
 
 def test_wrong_password_is_rejected(client):

@@ -1,0 +1,97 @@
+#!/var/ossec/framework/python/bin/python3
+"""Wazuh integratord -> SIEMantics webhook.
+
+Installed on the Wazuh manager as /var/ossec/integrations/custom-siemantics
+(owner root:wazuh, mode 750) and enabled with an <integration> block in
+ossec.conf (see wazuh/ossec-integration.xml). integratord runs it once per
+matching alert with:
+
+    argv[1]  path of a file holding the alert as JSON (<alert_format>json</alert_format>)
+    argv[2]  <api_key>  -> sent as the X-Webhook-Token header (= WAZUH_WEBHOOK_TOKEN)
+    argv[3]  <hook_url> -> e.g. http://siemantics-host:8000/api/v1/alerts
+    "debug" anywhere after them turns on verbose logging
+
+Standard library only, so it runs on the Wazuh framework Python as-is.
+Log: /var/ossec/logs/integrations.log
+"""
+
+import json
+import ssl
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime
+
+LOG_FILE = "/var/ossec/logs/integrations.log"
+TIMEOUT_SECONDS = 15
+# SIEMantics answers as soon as the alert is stored (triage runs in the background),
+# so a retry is only needed for a short outage, e.g. while the container restarts.
+ATTEMPTS = 3
+RETRY_DELAY_SECONDS = 5
+# Only for an HTTPS hook_url with a self-signed certificate in an isolated lab network.
+VERIFY_TLS = True
+
+debug_enabled = False
+
+
+def log(message: str, *, debug: bool = False) -> None:
+    if debug and not debug_enabled:
+        return
+    line = f"{datetime.now():%a %b %d %H:%M:%S %Z %Y} custom-siemantics: {message}"
+    try:
+        with open(LOG_FILE, "a") as f:
+            f.write(line + "\n")
+    except OSError:
+        print(line, file=sys.stderr)
+
+
+def send(alert: dict, token: str, hook_url: str) -> bool:
+    body = json.dumps(alert).encode("utf-8")
+    context = None if VERIFY_TLS else ssl._create_unverified_context()
+    for attempt in range(1, ATTEMPTS + 1):
+        request = urllib.request.Request(
+            hook_url,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/json", "X-Webhook-Token": token},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=TIMEOUT_SECONDS, context=context) as response:
+                log(f"alert {alert.get('id')} sent: HTTP {response.status} {response.read(300)!r}", debug=True)
+                return True
+        except urllib.error.HTTPError as exc:
+            detail = exc.read(300)
+            # 4xx (bad token, invalid payload) will not get better by retrying
+            if exc.code < 500:
+                log(f"alert {alert.get('id')} rejected: HTTP {exc.code} {detail!r}")
+                return False
+            log(f"alert {alert.get('id')} attempt {attempt}/{ATTEMPTS}: HTTP {exc.code} {detail!r}")
+        except (urllib.error.URLError, OSError) as exc:
+            log(f"alert {alert.get('id')} attempt {attempt}/{ATTEMPTS}: {exc}")
+        if attempt < ATTEMPTS:
+            time.sleep(RETRY_DELAY_SECONDS)
+    log(f"alert {alert.get('id')} could not be delivered to {hook_url}")
+    return False
+
+
+def main(args: list[str]) -> int:
+    global debug_enabled
+    if len(args) < 4:
+        log(f"wrong arguments: {' '.join(args[1:])} (expected: alert_file api_key hook_url [debug])")
+        return 2
+    alert_file, token, hook_url = args[1], args[2], args[3]
+    debug_enabled = "debug" in args[4:]
+
+    try:
+        with open(alert_file) as f:
+            alert = json.load(f)
+    except (OSError, ValueError) as exc:
+        log(f"cannot read alert file {alert_file}: {exc}")
+        return 1
+
+    return 0 if send(alert, token, hook_url) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

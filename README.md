@@ -5,13 +5,19 @@ Saját fejlesztésű SOAR keretrendszer: Wazuh riasztásokat fogad webhookon, no
 ## Adatfolyam
 
 ```
-Wazuh --webhook--> POST /api/v1/alerts --normalize--> LLM triázs --true positive--> DFIR-IRIS eset
-                                                             |                              |
-                                                        false positive              LLM elemzés + IoC-k
-                                                             |                        note-ként az esetben
-                                                             v
-                                                     döntésnapló (MariaDB)  <---- minden ág ide ír
+Wazuh integratord --custom-siemantics--> POST /api/v1/alerts --> rekord (queued) + sor --> 202 azonnal
+                                                                        |
+                                                              háttér worker (pipeline)
+                                                                        v
+                                     normalize --> LLM triázs --true positive--> DFIR-IRIS eset
+                                                        |                              |
+                                                   false positive              LLM elemzés + IoC-k
+                                                        |                        note-ként az esetben
+                                                        v
+                                                döntésnapló (MariaDB)  <---- minden ág ide ír
 ```
+
+A webhook csak eltárolja a riasztást (`queued` státusszal) és sorba teszi; a triázs, az enrichment és az IRIS eset a háttérben fut (lásd [Wazuh bekötése](#wazuh-bekötése)).
 
 ## Projektstruktúra
 
@@ -32,6 +38,7 @@ app/
 ├── db.py              # SQLAlchemy async engine/session, induláskori sémafrissítés (új oszlopok, ENUM értékek)
 ├── models.py           # ORM táblák: AlertRecord (döntésnapló), User, UserSession, CaseAssignment
 ├── metrics.py           # konfúziós mátrix + feldolgozási idő statisztikák
+├── pipeline.py          # háttérsor + worker: triázs -> guardrail -> enrichment -> IRIS a webhook után
 └── routers/
     ├── alerts.py        # POST/GET /alerts, PATCH /alerts/{ref}/label, POST /alerts/{ref}/escalate
     ├── metrics.py         # GET /metrics
@@ -39,6 +46,9 @@ app/
     ├── cases.py           # IRIS case-ek felhasználóhoz rendelése
     └── users.py           # admin: felhasználók listázása/létrehozása/módosítása
 tests/                   # pytest tesztek (lásd Tesztek)
+wazuh/
+├── custom-siemantics        # Wazuh integrációs szkript (a managerre kell telepíteni)
+└── ossec-integration.xml    # <integration> blokk az ossec.conf-hoz
 ```
 
 ## Előfeltételek
@@ -70,6 +80,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 |---|---|
 | `OPENROUTER_API_KEY` | OpenRouter API kulcs a triázshoz — **opcionális**, lásd lent. Ingyenesen igényelhető: https://openrouter.ai/keys |
 | `OPENROUTER_MODEL` | alapértelmezett: `openrouter/free` — ez az OpenRouter ["Free Models Router"](https://openrouter.ai/docs/cookbook/get-started/free-models-router-playground) meta-modellje, ami mindig egy aktuálisan elérhető ingyenes modellre routol, így nem törik el, ha OpenRouter megszüntet/átáraz egy konkrét `:free` modellt (ez korábban már előfordult). Kizárólag `openrouter/free` vagy `:free` végződésű modell adható meg — az `app/llm_engine.py` ezt induláskor ellenőrzi, és nem-free modell esetén nem hív OpenRoutert (mock motorra esik vissza), így véletlenül sem keletkezhet költség |
+| `OPENROUTER_TIMEOUT_SECONDS` | alapértelmezett: `60` — egy OpenRouter hívás maximális ideje (1 újrapróbálkozással); lejárat után a mock motor dönt. Enélkül az OpenAI kliens 600 mp-es alapértéke él, ami egy lassú ingyenes modellnél percekre feltartaná a sort |
 | `LLM_MOCK_SEVERITY_THRESHOLD` | mock motor küszöbe (Wazuh severity level), alapértelmezett: `7` |
 | `REVIEW_CONFIDENCE_THRESHOLD` | alapértelmezett: `0.7` (0–1) — ha a triázs false positive-ot mond, de a confidence ez alatt van, a riasztás `needs_review` státuszt kap `suppressed` helyett (lásd [Bizonytalan döntések](#bizonytalan-döntések-needs_review)) |
 | `REVIEW_SEVERITY_FLOOR` | alapértelmezett: `12` — prompt injection védőháló: ennél a Wazuh szintnél (vagy felette) az LLM false positive ítélete nem nyomhatja el a riasztást, `needs_review` lesz belőle |
@@ -83,7 +94,8 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `CORRELATION_MAX_ALERTS` | alapértelmezett: `10` — legfeljebb ennyi kapcsolódó riasztás riasztásonként |
 | `SIEMANTICS_BASE_URL` | opcionális — a SIEMantics UI címe (pl. `http://10.64.0.x:8000`); ha meg van adva, az IRIS note linkel a riasztás részletoldalára |
 | `ENRICHMENT_MAX_IOCS` | alapértelmezett: `5` — hány egyedi IP-t enrichel maximum riasztásonként (free-tier rate limitek védelme) |
-| `WAZUH_WEBHOOK_TOKEN` | megosztott titok a webhook hívások hitelesítéséhez (`X-Webhook-Token` header) |
+| `WAZUH_WEBHOOK_TOKEN` | megosztott titok a webhook hívások hitelesítéséhez (`X-Webhook-Token` header); ugyanez kerül a Wazuh `<integration>` blokk `<api_key>`-ébe. **Üresen hagyva bárki küldhet riasztást** — induláskor ilyenkor figyelmeztetés kerül a logba |
+| `TRIAGE_WORKERS` | alapértelmezett: `1` — hány riasztást dolgoz fel párhuzamosan a háttér worker. `1` = sorban: kíméli az OpenRouter free rate limitet, és a korreláció a korábbi riasztások döntéseit is látja |
 | `DATABASE_URL` | döntésnapló DB elérési útja, alapértelmezett: `sqlite+aiosqlite:///./siemantics.db` (sima venv-es futtatáshoz). Docker-rel külső MySQL/MariaDB kell, pl. `mysql+aiomysql://siemantics:JELSZO@db-host:3306/siemantics` — a jelszó speciális karaktereit URL-kódolni kell (`@` → `%40`) |
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | az első admin felhasználó — csak akkor jön létre induláskor, ha a `users` tábla üres. Később módosítva **nem** írja át a meglévő admin jelszavát |
 | `SESSION_TTL_HOURS` | bejelentkezés érvényessége órában, alapértelmezett: `12` |
@@ -195,7 +207,7 @@ A dashboard és az olvasó/címkéző API végpontok (`GET /alerts`, `GET /alert
 A `/` a `/ui/`-ra irányít (bejelentkezés nélkül a `/ui/login.html`-re dob), ami egy önálló, statikus HTML/CSS/JS oldal (`app/static/index.html`, build lépés nélkül, a FastAPI szolgálja ki `StaticFiles`-szal). Splunk Enterprise Security Analyst Queue nézete ihlette:
 
 - **Timeline** — riasztások száma időbucketenként (óránként vagy naponta, a szűrt időtartománytól függően), hover tooltippel.
-- **Szűrők** — szabadszavas keresés (`#ID`/rule/Wazuh alert ID/forrás IP), státusz (escalated/needs review/suppressed/error), disposition (confirmed TP/FP/undetermined), időtartomány.
+- **Szűrők** — szabadszavas keresés (`#ID`/rule/Wazuh alert ID/forrás IP), státusz (escalated/needs review/suppressed/error/queued), disposition (confirmed TP/FP/undetermined), időtartomány.
 - **Tábla** — minden riasztás egyedi `#ID`-ja, severity, entity (forrás IP), triázs motor (openrouter/mock), confidence, státusz és disposition badge-ekkel, időbélyeggel.
 - **Felelős** — escalated riasztásoknál (van IRIS case) a case felelőse; szűrhető, és a részletpanelen hozzárendelhető (lásd [Felhasználókezelés](#felhasználókezelés)).
 - **Riasztás részletei** — egy sorra kattintva (vagy a ▸ gombbal) a sor alatt kinyílik egy panel a teljes LLM indoklással, a döntést hozó modellel, kinyert IoC-kkel (VirusTotal/AbuseIPDB enrichmenttel, ha van), hibaüzenettel (ha volt) és a DFIR-IRIS eset linkjével. `needs_review` riasztásnál kiemelve látszik a felülvizsgálat oka, nem eszkalált riasztásnál pedig az „Eszkalálás IRIS esetté” gomb (lásd [Kézi eszkaláció](#kézi-eszkaláció)). A ⧉ gombbal ugyanez a részletnézet önálló (popup) ablakban is megnyitható (`app/static/alert.html`, a `GET /api/v1/alerts/{ref}` végpontot hívja).
@@ -207,7 +219,7 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 
 | Metódus | Útvonal | Leírás |
 |---|---|---|
-| `POST` | `/api/v1/alerts` | Wazuh riasztás fogadása, triázs, esetleges IRIS eset nyitás; a válaszban az egyedi `id` (`#ID-42`) |
+| `POST` | `/api/v1/alerts` | Wazuh riasztás fogadása: eltárolja `queued` státusszal és sorba teszi, a triázs és az esetleges IRIS eset a háttérben fut; azonnal `202`-t ad, a válaszban az egyedi `id` (`#ID-42`) |
 | `GET` | `/api/v1/alerts` | eltárolt riasztás-rekordok listázása (`limit`, `offset`) |
 | `GET` | `/api/v1/alerts/{ref}` | egy riasztás-rekord teljes részlete; `ref` = `ID-42` vagy Wazuh `alert_id` (legutóbbi) |
 | `PATCH` | `/api/v1/alerts/{ref}/label` | ground truth címkézés (`true_positive` / `false_positive`) |
@@ -223,7 +235,7 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `GET` | `/api/v1/users` | **admin:** felhasználók listája |
 | `POST` | `/api/v1/users` | **admin:** új felhasználó (`username`, `full_name`, `password`, `role`) |
 | `PATCH` | `/api/v1/users/{id}` | **admin:** `full_name`, `role`, `is_active`, `password` módosítása |
-| `GET` | `/healthz` | health check |
+| `GET` | `/healthz` | health check; `queued_alerts` = a feldolgozásra váró riasztások száma |
 
 ### Tesztek (pytest)
 
@@ -262,9 +274,9 @@ Ugyanezek a forgatókönyvek `postman/SIEMantics.postman_collection.json` néven
 2. A collection **Variables** fülén állítsd be: `base_url` (pl. `http://10.64.0.127:8000`), `webhook_token` (ha van beállítva `WAZUH_WEBHOOK_TOKEN` a szerveren; ha nincs, hagyd üresen), valamint `ui_username` / `ui_password` — a „4. Alert management” mappa első requestje ezzel jelentkezik be, a session cookie-t a Postman cookie jar viszi tovább.
 3. Futtasd mappánként, vagy a **Run collection** gombbal az egészet — a "4. Alert management" mappa a korábbi mappákban létrehozott alert ID-kat címkézi, ezért sorrendben érdemes futtatni.
 
-A true-positive kimenetelű requestek `pm.test`-je mindkét kimenetelt elfogadja (202 escalated / 502 IRIS unreachable), mivel IRIS nélkül is helyesen kell viselkedniük — lásd a bash scriptnél leírt megjegyzést.
+A webhook csak sorba teszi a riasztást, ezért a riasztás-requestek `pm.test`-je azt ellenőrzi, hogy a riasztás bekerült (`202`, `status: queued`, `#ID`); a várt ítélet a request nevében szerepel, a tényleges eredmény a „4. Alert management / List alerts” requesttel vagy a dashboardon látszik.
 
-Megjegyzés: a true-positive kimenetelű forgatókönyvek IRIS eset létrehozását is megkísérlik — ha nincs elérhető IRIS instancia, ezek 502-t adnak vissza és `status=error`-ral perzisztálódnak (ez helyes, elvárt viselkedés IRIS nélkül, nem script-hiba).
+Megjegyzés: a true-positive kimenetelű forgatókönyvek IRIS eset létrehozását is megkísérlik — ha nincs elérhető IRIS instancia, ezek `status=error`-ral perzisztálódnak (ez helyes, elvárt viselkedés IRIS nélkül, nem script-hiba).
 
 ### Teszt riasztás küldése
 
@@ -316,10 +328,52 @@ GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES
 
 A konténer NAT-on keresztül éri el a DB-t, ezért a MySQL a **docker host** IP-jét látja, nem a konténerét — a usert ahhoz kell engedélyezni.
 
+## Wazuh bekötése
+
+A Wazuh manager `integratord` szolgáltatása minden szűrőnek megfelelő riasztásnál lefuttatja a `wazuh/custom-siemantics` szkriptet, ami a riasztás JSON-ját `X-Webhook-Token` headerrel a SIEMantics webhookra küldi. A szkript csak a standard libraryt használja, így a Wazuh saját Pythonjával (`/var/ossec/framework/python/bin/python3`) módosítás nélkül fut.
+
+**1. SIEMantics oldalon** állíts be egy erős tokent a `.env`-ben, majd indítsd újra az appot:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"   # -> WAZUH_WEBHOOK_TOKEN=...
+```
+
+**2. A Wazuh manageren** telepítsd a szkriptet:
+
+```bash
+sudo cp wazuh/custom-siemantics /var/ossec/integrations/custom-siemantics
+sudo chown root:wazuh /var/ossec/integrations/custom-siemantics
+sudo chmod 750 /var/ossec/integrations/custom-siemantics
+```
+
+**3.** Másold a `wazuh/ossec-integration.xml` `<integration>` blokkját a `/var/ossec/etc/ossec.conf` `<ossec_config>` szakaszába. A `hook_url` a SIEMantics címe (pl. `http://10.64.0.x:8000/api/v1/alerts`), az `api_key` a `WAZUH_WEBHOOK_TOKEN` értéke. A `<level>` szabja meg, milyen szinttől továbbítódik egy riasztás: mivel mindegyik LLM-triázson megy át, érdemes 5–7 körül kezdeni, és csak a forgalom ismeretében lejjebb venni (szűkíteni `<group>`-pal, `<rule_id>`-vel is lehet). Ezután:
+
+```bash
+sudo systemctl restart wazuh-manager
+```
+
+**4. Ellenőrzés:**
+
+```bash
+# a manageren: eléri-e a SIEMantics-ot
+curl -s http://10.64.0.x:8000/healthz
+# a szkript naplója: hibák mindig; a sikeres küldések csak debug módban
+# (integrator.debug=1 a /var/ossec/etc/local_internal_options.conf-ban)
+sudo tail -f /var/ossec/logs/integrations.log
+# integratord indulása / hibái
+sudo grep -i integratord /var/ossec/logs/ossec.log | tail
+```
+
+A beérkezett riasztások először `Queued` státusszal jelennek meg a dashboardon, majd a triázs után kapják meg a végleges státuszt.
+
+**Hálózat:** a SIEMantics sima HTTP-n figyel (8000). Ha a manager és a SIEMantics között nem zárt lab hálózat van, tegyél elé TLS-t terminaló reverse proxyt, és a `hook_url` legyen `https://...` (a szkript ellenőrzi a tanúsítványt; önaláírt certnél a szkript elején a `VERIFY_TLS` kapcsolható ki).
+
+**Háttérfeldolgozás (`app/pipeline.py`):** a webhook a riasztást `queued` státusszal eltárolja, sorba teszi és azonnal `202`-vel válaszol — így egy lassú ingyenes LLM vagy egy elérhetetlen IRIS nem tartja fel az `integratord`-ot, és egy riasztási hullám sem hívja egyszerre az OpenRoutert. A sort `TRIAGE_WORKERS` darab worker dolgozza fel. Ha az app feldolgozás közben leáll, induláskor a még `queued` rekordokat újra sorba teszi (az eltárolt eredeti payloadból). A `queued` riasztás kézzel nem eszkalálható (`409`), és a metrikákba sem számít bele, amíg el nem készül a döntés. A szkript hálózati hiba vagy `5xx` esetén kétszer újrapróbálkozik (5 mp szünettel), `4xx`-nél (pl. rossz token) nem.
+
 ## Kiértékelési munkafolyamat (szakdolgozat 6. fejezet)
 
 1. Teszt/labor riasztásokat küldesz a webhookra (valós vagy szimulált támadási forgatókönyvekből).
-2. Minden riasztásnál eltárolódik: az egyedi `#ID`, az eredeti Wazuh payload, az LLM döntése, indoklása, a döntést hozó modell, kinyert IoC-k, az automatikus döntés (`auto_status`), feldolgozási idő (`processing_time_ms`).
+2. Minden riasztásnál eltárolódik: az egyedi `#ID`, az eredeti Wazuh payload, az LLM döntése, indoklása, a döntést hozó modell, kinyert IoC-k, az automatikus döntés (`auto_status`), feldolgozási idő (`processing_time_ms` — a háttér worker tényleges feldolgozási ideje a korrelációtól az IRIS esetig, a sorban várakozás nélkül).
 3. Utólag, a labor eredmények ismeretében felcímkézed, hogy az adott riasztás valóban true positive vagy false positive volt — akár a `/ui/` dashboardon (sorok kijelölése + bulk label gombok), akár közvetlenül `PATCH /alerts/{id}/label`-lel.
 4. `GET /api/v1/metrics` visszaadja a konfúziós mátrixot (TP/FP/TN/FN), accuracy/precision/recall/F1-et, hamis pozitív arányt, a review sor számait (`needs_review_count`, `needs_review_true_positive`, `manually_escalated_count`), valamint az átlag/medián/p95 feldolgozási időt — ezek kerülnek a 6.3 fejezet táblázataiba/ábráiba.
 
@@ -390,6 +444,8 @@ cat ~/.ssh/siemantics_deploy
 
 - Nincs még labor/teszt log-generátor a 6.1 fejezethez (támadási szenáriók automatikus generálása).
 - A bemeneti séma jelenleg Wazuh-specifikus; több SIEM forrás támogatásához a normalizációs réteget bővíteni kell.
+- A feldolgozási sor az app processzében él (`asyncio.Queue`), ezért egyszerre csak egy SIEMantics példány futhat ugyanazzal az adatbázissal; leálláskor a sorban maradt riasztások `queued` státusszal megmaradnak, és a következő induláskor dolgozódnak fel.
+- Ha az integrációs szkript akkor próbálkozik újra, amikor a SIEMantics a riasztást már eltárolta (pl. csak a válasz veszett el), ugyanaz a riasztás kétszer kerül be — nincs `alert_id`-alapú deduplikáció.
 - A case-felelős csak a SIEMantics-ban él, nincs szinkronizálva a DFIR-IRIS case owner mezőjével.
 - A bejelentkezésnek nincs rate limitingje / fiókzárolása sikertelen próbálkozások után.
 - Az 5.4 fejezetben tárgyalt biztonságos kódolási szempontok (rate limiting, retry/backoff LLM és IRIS hívásokhoz, bővebb audit log) még nincsenek teljeskörűen implementálva.

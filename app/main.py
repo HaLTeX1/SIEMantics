@@ -7,10 +7,13 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.auth import ensure_initial_admin
+from app.config import settings
 from app.db import init_db
+from app.pipeline import alert_queue
 from app.routers import alerts, auth, cases, metrics, users
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("siemantics")
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -19,7 +22,16 @@ STATIC_DIR = Path(__file__).parent / "static"
 async def lifespan(app: FastAPI):
     await init_db()
     await ensure_initial_admin()
-    yield
+    if not settings.wazuh_webhook_token:
+        logger.warning(
+            "WAZUH_WEBHOOK_TOKEN is not set: POST /api/v1/alerts accepts alerts from anyone - "
+            "set it (and the same value as <api_key> in the Wazuh integration) before connecting Wazuh"
+        )
+    await alert_queue.start(settings.triage_workers)
+    try:
+        yield
+    finally:
+        await alert_queue.stop()
 
 
 app = FastAPI(title="SIEMantics", version="0.1.0", lifespan=lifespan)
@@ -38,4 +50,4 @@ async def root():
 
 @app.get("/healthz")
 async def healthz():
-    return {"status": "ok"}
+    return {"status": "ok", "queued_alerts": alert_queue.size()}

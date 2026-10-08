@@ -7,6 +7,8 @@ class AlertStatus(str, enum.Enum):
     ERROR = "error"
     # FP verdict below REVIEW_CONFIDENCE_THRESHOLD: not escalated, but not silently dropped either
     NEEDS_REVIEW = "needs_review"
+    # Received from the webhook, waiting for the background triage worker (app/pipeline.py)
+    QUEUED = "queued"
 
 
 class GroundTruth(str, enum.Enum):

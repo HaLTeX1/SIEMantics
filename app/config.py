@@ -10,6 +10,9 @@ class Settings(BaseSettings):
 
     # Ez egy mock, azaz ha elérhetetlen az OR akkor erre fog visszaesni és csak a detection adatok alapján elemez.
     llm_mock_severity_threshold: int = 7
+    # Egy OpenRouter hívás max. ideje (mp); lejárat után a mock motor dönt. Az OpenAI kliens
+    # alapértéke 600 mp lenne, ami egy lassú ingyenes modellnél percekre feltartaná a sort.
+    openrouter_timeout_seconds: float = Field(default=60.0, gt=0)
 
     # Ha a triázs false positive-ot mond, de a confidence ez alatt van, a riasztás nem
     # SUPPRESSED, hanem NEEDS_REVIEW lesz (analystnak kell ránéznie, IRIS eset nem nyílik).
@@ -25,6 +28,9 @@ class Settings(BaseSettings):
     iris_verify_ssl: bool = True
 
     wazuh_webhook_token: str = ""
+    # Háttérben párhuzamosan feldolgozott riasztások száma (app/pipeline.py). 1 = sorban,
+    # ami kíméli az OpenRouter free rate limitet és a korreláció is a korábbi döntéseket látja.
+    triage_workers: int = Field(default=1, ge=1)
 
     # IoC enrichment (optional; skipped per-provider if its key is unset).
     # Only runs for true-positive/escalated alerts, capped to a handful of

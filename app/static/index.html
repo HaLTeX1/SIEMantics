@@ -380,6 +380,7 @@
         <option value="needs_review">Needs review</option>
         <option value="suppressed">Suppressed</option>
         <option value="error">Error</option>
+        <option value="queued">Queued</option>
       </select>
       <select id="dispositionFilter">
         <option value="">Minden disposition</option>
@@ -500,6 +501,7 @@
     if (status === "escalated") return { label: "Escalated", cls: "good" };
     if (status === "error") return { label: "Error", cls: "critical" };
     if (status === "needs_review") return { label: "Needs review", cls: "warning" };
+    if (status === "queued") return { label: "Queued", cls: "muted" };
     return { label: "Suppressed", cls: "muted" };
   }
 

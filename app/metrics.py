@@ -21,6 +21,8 @@ def _automatic_status(record: AlertRecord) -> AlertStatus:
 
 
 def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
+    # Not triaged yet: no decision to evaluate and no processing time
+    records = [r for r in records if r.status != AlertStatus.QUEUED]
     tp = fp = tn = fn = 0
     review_true_positive = 0
 

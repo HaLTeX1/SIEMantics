@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "c9335f53-1139-4cdf-9a87-bd9fcc478129",
     "name": "SIEMantics - Test Scenarios",
-    "description": "Manual/automated test scenarios for the SIEMantics SOAR API. Mirrors scripts/test_requests.sh: covers the mock-engine severity threshold, all 9 suspicious-pattern regexes, IoC extraction, edge cases, labeling and metrics.\n\nRun order matters: folders 1-3 create the alert records that folder 4 labels. Use Collection Runner to execute the whole collection top to bottom, or run folder by folder.\n\nSet the `base_url` and `webhook_token` collection variables (Variables tab) to match your deployment. If WAZUH_WEBHOOK_TOKEN isn't set server-side, `webhook_token` can be left empty.\n\nFolders 4-5 need a logged-in dashboard user: set `ui_username` / `ui_password` - the Login request at the start of folder 4 stores the session cookie in Postman's cookie jar.\n\nFolder 6 holds realistic alerts in the full Wazuh format from several sources (Linux, web, FIM, vulnerability detector, ClamAV, Suricata, Windows/Sysmon, FortiGate, AWS, Office 365). It is independent of folders 1-5; the expected ground truth is in each request name (-> TP / -> FP).",
+    "description": "Manual/automated test scenarios for the SIEMantics SOAR API. Mirrors scripts/test_requests.sh: covers the mock-engine severity threshold, all 9 suspicious-pattern regexes, IoC extraction, edge cases, labeling and metrics.\n\nThe webhook only queues an alert (HTTP 202, status `queued`); triage, enrichment and the IRIS case run in the background, so the alert requests only check that the alert was accepted. The expected verdict is in each request name - check the actual outcome with \"4. Alert management / List alerts\" or on the dashboard.\n\nRun order matters: folders 1-3 create the alert records that folder 4 labels. Use Collection Runner to execute the whole collection top to bottom, or run folder by folder.\n\nSet the `base_url` and `webhook_token` collection variables (Variables tab) to match your deployment. If WAZUH_WEBHOOK_TOKEN isn't set server-side, `webhook_token` can be left empty.\n\nFolders 4-5 need a logged-in dashboard user: set `ui_username` / `ui_password` - the Login request at the start of folder 4 stores the session cookie in Postman's cookie jar.\n\nFolder 6 holds realistic alerts in the full Wazuh format from several sources (Linux, web, FIM, vulnerability detector, ClamAV, Suricata, Windows/Sysmon, FortiGate, AWS, Office 365). It is independent of folders 1-5; the expected ground truth is in each request name (-> TP / -> FP).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -113,14 +113,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (suppressed)', () => {",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
                   "  pm.response.to.have.status(202);",
-                  "});",
-                  "pm.test('classified as false positive via mock engine', () => {",
-                  "  const json = pm.response.json();",
-                  "  pm.expect(json.status).to.eql('suppressed');",
-                  "  pm.expect(json.triage.is_true_positive).to.eql(false);",
-                  "  pm.expect(json.triage.engine).to.eql('mock');",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
                   "pm.test('has a unique #ID-<n> display id', () => {",
                   "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
@@ -174,14 +169,12 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (needs_review)', () => {",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
                   "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "pm.test('low-confidence false positive via mock engine -> needs_review', () => {",
-                  "  const json = pm.response.json();",
-                  "  pm.expect(json.status).to.eql('needs_review');",
-                  "  pm.expect(json.triage.is_true_positive).to.eql(false);",
-                  "  pm.expect(json.triage.engine).to.eql('mock');",
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
                   "});"
                 ]
               }
@@ -232,22 +225,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -297,22 +281,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -368,22 +343,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -433,22 +399,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -498,22 +455,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -563,22 +511,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -628,22 +567,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -693,22 +623,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -758,22 +679,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -823,22 +735,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -888,22 +791,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -958,28 +852,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (escalated) or 502 (IRIS unreachable)', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('classified as true positive via mock engine', () => {",
-                  "    const json = pm.response.json();",
-                  "    pm.expect(json.status).to.eql('escalated');",
-                  "    pm.expect(json.triage.is_true_positive).to.eql(true);",
-                  "    pm.expect(json.triage.engine).to.eql('mock');",
-                  "  });",
-                  "} else {",
-                  "  pm.test('IRIS unavailable as expected (not a bug)', () => {",
-                  "    pm.expect(pm.response.json().detail).to.include('incident management backend unavailable');",
-                  "  });",
-                  "}",
-                  "if (pm.response.code === 202) {",
-                  "  pm.test('all 4 IPs extracted as IoCs', () => {",
-                  "    const iocs = pm.response.json().triage.iocs;",
-                  "    pm.expect(iocs).to.have.members(['198.51.100.99','198.51.100.200','198.51.100.201','198.51.100.202']);",
-                  "  });",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -1029,17 +908,12 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (suppressed)', () => {",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
                   "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "pm.test('classified as false positive via mock engine', () => {",
-                  "  const json = pm.response.json();",
-                  "  pm.expect(json.status).to.eql('suppressed');",
-                  "  pm.expect(json.triage.is_true_positive).to.eql(false);",
-                  "  pm.expect(json.triage.engine).to.eql('mock');",
-                  "});",
-                  "pm.test('rule description defaulted', () => {",
-                  "  pm.expect(pm.response.json().triage.reasoning).to.include('severity=1');",
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
                   "});"
                 ]
               }
@@ -1090,14 +964,12 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202 (suppressed)', () => {",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
                   "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "pm.test('classified as false positive via mock engine', () => {",
-                  "  const json = pm.response.json();",
-                  "  pm.expect(json.status).to.eql('suppressed');",
-                  "  pm.expect(json.triage.is_true_positive).to.eql(false);",
-                  "  pm.expect(json.triage.engine).to.eql('mock');",
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
                   "});"
                 ]
               }
@@ -1148,11 +1020,12 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202', () => pm.response.to.have.status(202));",
-                  "pm.test('routed to human review as possible prompt injection', () => {",
-                  "  const json = pm.response.json();",
-                  "  pm.expect(json.status).to.eql('needs_review');",
-                  "  pm.expect(json.review_reason).to.include('prompt injection');",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
+                  "});",
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
                   "});"
                 ]
               }
@@ -1632,23 +1505,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -1698,23 +1561,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -1764,23 +1617,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -1830,23 +1673,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -1896,23 +1729,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -1962,23 +1785,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2028,23 +1841,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2094,23 +1897,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2160,23 +1953,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2226,23 +2009,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2292,23 +2065,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2358,23 +2121,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2424,23 +2177,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2490,23 +2233,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2556,23 +2289,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2622,23 +2345,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2688,23 +2401,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2754,23 +2457,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }
@@ -2820,23 +2513,13 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test('status is 202, or 502 if IRIS is unreachable for an escalated alert', () => {",
-                  "  pm.expect([202, 502]).to.include(pm.response.code);",
+                  "pm.test('accepted and queued for background triage (202)', () => {",
+                  "  pm.response.to.have.status(202);",
+                  "  pm.expect(pm.response.json().status).to.eql('queued');",
                   "});",
-                  "",
-                  "if (pm.response.code === 202) {",
-                  "  const json = pm.response.json();",
-                  "  pm.test('alert stored with a valid status and triage result', () => {",
-                  "    pm.expect(['escalated', 'suppressed', 'needs_review']).to.include(json.status);",
-                  "    pm.expect(json.id).to.match(/^#/);",
-                  "    pm.expect(json.triage).to.have.property('is_true_positive');",
-                  "    pm.expect(json.triage.confidence).to.be.within(0, 1);",
-                  "  });",
-                  "  const expected = pm.info.requestName.endsWith('-> TP') ? 'escalated' : 'suppressed';",
-                  "  // Informational only: the verdict depends on the triage engine (LLM vs mock),",
-                  "  // so it is logged instead of asserted. Compare with the expected ground truth.",
-                  "  console.log(`${pm.info.requestName}: got ${json.status} (${json.triage.engine}), expected ~${expected}`);",
-                  "}"
+                  "pm.test('has a unique #ID-<n> display id', () => {",
+                  "  pm.expect(pm.response.json().id).to.match(/^#ID-\\d+$/);",
+                  "});"
                 ]
               }
             }

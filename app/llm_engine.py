@@ -24,6 +24,8 @@ _client = (
     AsyncOpenAI(
         api_key=settings.openrouter_api_key,
         base_url=OPENROUTER_BASE_URL,
+        timeout=settings.openrouter_timeout_seconds,
+        max_retries=1,
         default_headers={
             "HTTP-Referer": "https://github.com/siemantics",
             "X-Title": "SIEMantics",
