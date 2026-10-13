@@ -66,8 +66,11 @@ class IrisClient:
             verify=settings.iris_verify_ssl,
         )
 
+    def case_url(self, case_id: int) -> str:
+        return f"{self._base_url}/case?cid={case_id}"
+
     def _result(self, case_id: int) -> IrisCaseResult:
-        return IrisCaseResult(case_id=case_id, case_url=f"{self._base_url}/case?cid={case_id}")
+        return IrisCaseResult(case_id=case_id, case_url=self.case_url(case_id))
 
     async def create_case_from_alert(
         self,
@@ -127,6 +130,32 @@ class IrisClient:
             await self._add_alert_content(client, case_id, ctx, existing_iocs, existing_assets)
             await self._best_effort("severity/tags", self._update_case_meta(client, case_id, ctx, case), case_id)
             return self._result(case_id)
+
+    async def is_open(self, case_id: int) -> bool:
+        async with self._client() as client:
+            case = await self._get_case(client, case_id)
+            return case is not None and not case.get("close_date")
+
+    async def add_case_notes(self, case_id: int, group_label: str, notes: list[tuple[str, str]]) -> None:
+        # Uj "SIEMantics <label>" note-csoport a megadott note-okkal.
+        async with self._client() as client:
+            group_id = await self._create_note_group(client, case_id, group_label)
+            for title, content in notes:
+                await self._add_note(client, case_id, group_id, title, content)
+
+    async def add_case_tags(self, case_id: int, tags: list[str]) -> None:
+        async with self._client() as client:
+            case = await self._get_case(client, case_id)
+            name = _CASE_NUMBER_PREFIX.sub("", (case or {}).get("case_name") or "")
+            if not name:
+                raise RuntimeError(f"IRIS case {case_id} not readable")
+            old = [t for t in str(case.get("case_tags") or "").split(",") if t]
+            payload = {"case_name": name, "case_tags": ",".join(dict.fromkeys(old + tags))}
+            await self._post(client, f"/manage/cases/update/{case_id}", json=payload)
+
+    async def close_case(self, case_id: int) -> None:
+        async with self._client() as client:
+            await self._post(client, f"/manage/cases/close/{case_id}")
 
     async def _add_alert_content(
         self,

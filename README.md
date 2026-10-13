@@ -196,6 +196,25 @@ A `needs_review`, `suppressed` vagy `error` (IRIS eset nélküli) riasztásokat 
 - az automatikus döntés az `auto_status`-ban megmarad (lásd Metrikák fent),
 - egy már eszkalált riasztás újra-eszkalálása `409`-et ad; ha az IRIS nem elérhető, `502`, és a rekord változatlan marad.
 
+## Case műveletek: false positive és összevonás
+
+**Case lezárása false positive-ként** — a dashboard részletpanelén („Case lezárása false positive-ként”, opcionális indoklással) vagy `POST /api/v1/cases/{iris_case_id}/false-positive` (`{"reason": "..."}`):
+
+- az IRIS eset kap egy „Closed as false positive” note-ot (ki, mikor, miért, mely riasztások), egy `false-positive` taget, és **lezárul** (az IRIS-ben nincs alapértelmezett false-positive osztályozás, ezért tag + note jelzi),
+- az eset **minden** riasztása `false_positive` címkét kap, így a metrikákban is megjelenik (pl. egy automatikusan eszkalált riasztás hamis pozitívként számít),
+- ha az eset az IRIS-ben már le volt zárva, csak a címkézés történik meg (`iris_closed: false`); IRIS hibánál `502`, és a címkék nem változnak.
+
+**Riasztások összevonása egy esetbe** — pl. egy flood vagy egy művelet szétszórt riasztásaihoz: sorok kijelölése a dashboardon + „Összevonás egy esetbe”, vagy `POST /api/v1/cases/merge` (`{"alert_refs": ["ID-41", "ID-42", ...]}`):
+
+- a kijelölt riasztások **meglévő eseteinek minden riasztása** is átkerül (egy esetet nem vágunk ketté),
+- a cél a legkorábbi riasztás **nyitott** esete; ha egyiknek sincs nyitott esete, a legkorábbi riasztásból nyílik egy (kézi eszkalációként, de True Positive címke nélkül — az összevonás nem ítélet),
+- a céleset egyetlen „Merged alerts” note-ot kap táblázattal (azonosító, idő, szabály, host, forrás, előző státusz és eset, log-kivonat) és egy `merged` taget — egy 50 riasztásos floodnál sem kerül riasztásonként 5 note az esetbe,
+- a régi esetek egy „Merged into #X” note-tal lezárulnak (ha ez nem sikerül, a válasz `close_failed` listája mutatja),
+- az átkerült riasztások `correlated_with` mezője a cél riasztásra mutat; az eset nélküliek `escalated` státuszt kapnak, az automatikus döntés az `auto_status`-ban marad (a metrikák nem változnak), címke nem kerül rájuk,
+- `queued` riasztás nem vonható össze (`409`), ahogy a már egy esetben lévők sem; IRIS hibánál `502`, és a rekordok változatlanok.
+
+Mindkét művelet bármely bejelentkezett felhasználónak elérhető, és egyszerre csak egy fut (dupla kattintás ellen).
+
 ## IoC enrichment (VirusTotal / AbuseIPDB)
 
 Escalated (true-positive) riasztásoknál a rendszer automatikusan enricheli az IP-típusú IoC-ket, ha be van állítva a megfelelő API kulcs (mindkettő független és opcionális — csak az fut le, amihez van kulcs). Az eredmény:
@@ -256,6 +275,8 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `POST` | `/api/v1/auth/logout` | kijelentkezés, a munkamenet törlése |
 | `GET` | `/api/v1/auth/me` | a bejelentkezett felhasználó adatai |
 | `POST` | `/api/v1/auth/password` | saját jelszó módosítása (`current_password`, `new_password`); a többi eszközön kijelentkeztet |
+| `POST` | `/api/v1/cases/merge` | riasztások (és meglévő eseteik) összevonása egy IRIS esetbe (`alert_refs`), lásd [Case műveletek](#case-műveletek-false-positive-és-összevonás) |
+| `POST` | `/api/v1/cases/{iris_case_id}/false-positive` | IRIS eset lezárása false positive-ként, minden riasztása FP címkét kap (`reason` opcionális) |
 | `GET` | `/api/v1/cases/assignees` | aktív felhasználók, akikhez case rendelhető |
 | `PUT` | `/api/v1/cases/{iris_case_id}/assignee` | case felelősének beállítása/törlése (`user_id` vagy `null`) — analyst csak magához vehet felelős nélküli case-t, vagy leadhatja a sajátját |
 | `GET` | `/api/v1/users` | **admin:** felhasználók listája |

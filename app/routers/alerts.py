@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,18 +6,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.config import settings
 from app.db import get_session
-from app.enrichment import enrich_iocs
-from app.enums import AlertStatus, GroundTruth
+from app.enums import AlertStatus
 from app.normalize import normalize_wazuh_alert
 from app.models import AlertRecord, User
-from app.pipeline import alert_from_record, alert_queue, process_record, send_to_iris
+from app.pipeline import alert_queue, manual_escalate, process_record
 from app.repository import (
     create_alert_record,
     get_alert_record_by_ref,
     get_case_assignments,
     get_users_by_ids,
     list_alert_records,
-    save_alert_record,
     set_ground_truth,
 )
 from app.schemas import (
@@ -26,7 +23,6 @@ from app.schemas import (
     AssigneeOut,
     LabelRequest,
     NormalizedAlert,
-    TriageResult,
     WazuhAlertPayload,
 )
 
@@ -143,35 +139,6 @@ async def label_alert(alert_ref: str, body: LabelRequest, session: AsyncSession 
     return (await _with_assignees(session, [record]))[0]
 
 
-def _manual_triage(record: AlertRecord, user: User) -> TriageResult:
-    if record.triage_engine:
-        verdict = "true positive" if record.llm_is_true_positive else "false positive"
-        original = (
-            f"Original triage ({record.triage_engine}, model {record.triage_model or '-'}): "
-            f"{verdict}, confidence {record.llm_confidence}."
-        )
-    else:
-        original = "No automatic triage result (triage failed)."
-    parts = [
-        f"Manually escalated by {user.username} (automatic decision: {record.status.value}).",
-        original,
-    ]
-    if record.review_reason:
-        parts.append(f"Review reason: {record.review_reason}.")
-    if record.llm_reasoning:
-        parts.append(f"\nOriginal reasoning:\n{record.llm_reasoning}")
-    return TriageResult(
-        is_true_positive=True,
-        confidence=record.llm_confidence or 0.0,
-        reasoning="\n".join(parts),
-        iocs=record.llm_iocs or [],
-        engine="manual",
-        model=record.triage_model,
-        # Keep the original structured analysis (summary, actions, ...) for the ticket
-        **(record.llm_analysis or {}),
-    )
-
-
 @router.post("/alerts/{alert_ref}/escalate", response_model=AlertRecordOut)
 async def escalate_alert(
     alert_ref: str,
@@ -194,33 +161,11 @@ async def escalate_alert(
 
     _escalations_in_progress.add(record.id)
     try:
-        alert = alert_from_record(record)
-        triage = _manual_triage(record, user)
-        enrichment = await enrich_iocs(triage.iocs)
-        try:
-            case, correlated = await send_to_iris(
-                session, record, alert, triage, enrichment, escalated_by=user.username
-            )
-        except Exception as exc:
-            logger.exception("manual escalation of %s failed", record.display_id)
-            raise HTTPException(status_code=502, detail="incident management backend unavailable") from exc
-
-        now = datetime.utcnow()
-        if record.auto_status is None:
-            record.auto_status = record.status
-        record.status = AlertStatus.ESCALATED
-        record.iris_case_id = case.case_id
-        record.correlated_with_id = correlated.id if correlated else None
-        record.ioc_enrichment = enrichment or record.ioc_enrichment
-        record.error_detail = None
-        record.escalated_by_id = user.id
-        record.escalated_at = now
-        # Escalating is the analyst's verdict that this needs incident response
-        record.ground_truth = GroundTruth.TRUE_POSITIVE
-        record.labeled_at = now
-        await save_alert_record(session, record)
+        await manual_escalate(session, record, user)
+    except Exception as exc:
+        logger.exception("manual escalation of %s failed", record.display_id)
+        raise HTTPException(status_code=502, detail="incident management backend unavailable") from exc
     finally:
         _escalations_in_progress.discard(record.id)
 
-    logger.info("%s manually escalated by %s to IRIS case %s", record.display_id, user.username, case.case_id)
     return (await _with_assignees(session, [record]))[0]

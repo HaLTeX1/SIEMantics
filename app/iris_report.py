@@ -654,3 +654,73 @@ def timeline_raw(ctx: CaseContext) -> str:
 def timeline_source(ctx: CaseContext) -> str:
     location = ctx.raw.get("location")
     return f"Wazuh{f' ({location})' if location else ''} via SIEMantics"[:255]
+
+
+# --- Analyst actions: merge, false positive ---
+
+@dataclass
+class MergedAlert:
+    # Osszevonassal esetbe kerult riasztas.
+
+    display_id: str
+    received_at: datetime
+    rule_description: str
+    severity: int
+    agent_name: str | None
+    source_ip: str | None
+    status: str
+    previous_case_id: int | None
+    log_excerpt: str = ""
+
+
+def _grid(headers: list[str], rows: list[list[str]]) -> str:
+    lines = ["| " + " | ".join(headers) + " |", "|" + " --- |" * len(headers)]
+    lines += ["| " + " | ".join(row) + " |" for row in rows]
+    return "\n".join(lines)
+
+
+def merge_note(target_display_id: str, merged: list[MergedAlert], merged_by: str, closed_cases: list[int]) -> str:
+    # Egy note az egesz osszevonasrol, nem riasztasonkent.
+    rows = [
+        [
+            f"**{m.display_id}**",
+            _code(m.received_at.isoformat(timespec="seconds") + "Z"),
+            _code(m.rule_description),
+            str(m.severity),
+            _code(m.agent_name or "-"),
+            _code(m.source_ip or "-"),
+            m.status,
+            f"#{m.previous_case_id}" if m.previous_case_id else "-",
+            _code(m.log_excerpt or "-"),
+        ]
+        for m in sorted(merged, key=lambda m: m.received_at)
+    ]
+    parts = [
+        f"**{len(merged)} alert(s) merged into this case by {merged_by}** "
+        f"(case opened for {target_display_id}).",
+        _grid(["SIEMantics ID", "Received (UTC)", "Rule", "Level", "Host", "Source", "Status before", "Previous case",
+               "Log excerpt"], rows),
+    ]
+    if closed_cases:
+        parts.append("Closed as merged into this case: " + ", ".join(f"#{c}" for c in closed_cases) + ".")
+    parts.append("> Merged alerts keep their own triage in SIEMantics; their details are in the SIEMantics records.")
+    return "\n\n".join(parts)
+
+
+def merged_away_note(target_case_id: int, merged_by: str) -> str:
+    return (f"**Merged into case #{target_case_id} by {merged_by}.** This case is closed; "
+            f"continue the investigation in #{target_case_id}.")
+
+
+def false_positive_note(closed_by: str, reason: str | None, display_ids: list[str]) -> str:
+    parts = [
+        f"**Closed as FALSE POSITIVE by {closed_by}.**",
+        f"Reason: {_text(reason)}" if reason else "Reason: not given.",
+        "Alerts labeled false positive in SIEMantics: " + ", ".join(sorted(display_ids, key=_id_order)) + ".",
+    ]
+    return "\n\n".join(parts)
+
+
+def _id_order(display_id: str) -> int:
+    digits = re.sub(r"\D", "", display_id)
+    return int(digits) if digits else 0

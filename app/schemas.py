@@ -223,6 +223,32 @@ class LabelRequest(BaseModel):
     ground_truth: GroundTruth
 
 
+class MergeRequest(BaseModel):
+    # Riasztas hivatkozasok (ID-42 / Wazuh alert_id); a meglevo eseteik minden riasztasa is atkerul.
+    alert_refs: list[str] = Field(min_length=2, max_length=500)
+
+
+class MergeResult(BaseModel):
+    iris_case_id: int
+    case_url: Optional[str] = None
+    target: str
+    merged: list[str]
+    closed_cases: list[int] = Field(default_factory=list)
+    # Regi esetek, amiket az IRIS nem engedett lezarni (best effort)
+    close_failed: list[int] = Field(default_factory=list)
+
+
+class FalsePositiveRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, max_length=2000)
+
+
+class FalsePositiveResult(BaseModel):
+    iris_case_id: int
+    labeled: list[str]
+    # False, ha az eset mar le volt zarva az IRIS-ben (csak a cimkezes tortent meg)
+    iris_closed: bool
+
+
 
 # --- Triage metrics ---
 

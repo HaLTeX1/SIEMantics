@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
+from app.case_actions import CaseActionError, close_as_false_positive, merge_alerts
 from app.db import get_session
 from app.enums import UserRole
 from app.models import User
@@ -13,7 +14,16 @@ from app.repository import (
     list_active_users,
     set_case_assignee,
 )
-from app.schemas import AssigneeOut, CaseAssignmentOut, CaseAssignRequest
+from app.iris_client import iris_client
+from app.schemas import (
+    AssigneeOut,
+    CaseAssignmentOut,
+    CaseAssignRequest,
+    FalsePositiveRequest,
+    FalsePositiveResult,
+    MergeRequest,
+    MergeResult,
+)
 
 router = APIRouter(prefix="/api/v1/cases", tags=["cases"])
 
@@ -62,3 +72,40 @@ async def assign_case(
         assigned_by=user,
         assigned_at=assignment.assigned_at,
     )
+
+
+@router.post("/merge", response_model=MergeResult)
+async def merge_cases(
+    body: MergeRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    # Kijelolt riasztasok (es eseteik) egy IRIS esetbe, a tobbi eset lezarva.
+    try:
+        outcome = await merge_alerts(session, body.alert_refs, user)
+    except CaseActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    case_id = outcome.target.iris_case_id
+    return MergeResult(
+        iris_case_id=case_id,
+        case_url=iris_client.case_url(case_id),
+        target=outcome.target.display_id,
+        merged=[r.display_id for r in outcome.merged],
+        closed_cases=outcome.closed_cases,
+        close_failed=outcome.close_failed,
+    )
+
+
+@router.post("/{iris_case_id}/false-positive", response_model=FalsePositiveResult)
+async def mark_case_false_positive(
+    iris_case_id: int,
+    body: FalsePositiveRequest | None = None,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    # Az eset FP-kent lezarva az IRIS-ben, minden riasztasa FP cimket kap.
+    try:
+        records, closed = await close_as_false_positive(session, iris_case_id, user, body.reason if body else None)
+    except CaseActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return FalsePositiveResult(iris_case_id=iris_case_id, labeled=[r.display_id for r in records], iris_closed=closed)

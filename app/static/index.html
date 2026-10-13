@@ -354,6 +354,9 @@
   .escalate-control { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
   .escalate-control .hint { color: var(--text-muted); font-size: 12px; }
   .escalate-control .escalate-error { color: var(--critical); font-size: 12px; }
+  .action-message { margin: 0 0 12px; font-size: 13px; color: var(--text-secondary); }
+  .action-message.error { color: var(--critical); }
+  .action-message:empty { display: none; }
 </style>
 </head>
 <body>
@@ -410,8 +413,10 @@
       <span class="count"><span id="selectedCount">0</span> kiválasztva</span>
       <button class="btn primary" id="labelTpBtn" type="button">Label: True Positive</button>
       <button class="btn outline-serious" id="labelFpBtn" type="button">Label: False Positive</button>
+      <button class="btn" id="mergeBtn" type="button">Összevonás egy esetbe</button>
       <button class="btn ghost" id="clearSelectionBtn" type="button">Kijelölés törlése</button>
     </div>
+    <div id="actionMessage" class="action-message" role="status"></div>
 
     <div class="card" style="padding:0; overflow-x:auto;">
       <table>
@@ -469,6 +474,8 @@
   const assignErrors = new Map();
   const escalateErrors = new Map();
   const escalating = new Set();
+  const fpErrors = new Map();
+  const closingFp = new Set();
   const ESCALATABLE = new Set(["needs_review", "suppressed", "error"]);
 
   SIEM.api(API_CONFIG).then((r) => r.ok ? r.json() : null).then((cfg) => {
@@ -601,6 +608,84 @@
     await fetchAlerts();
   }
 
+  function falsePositiveControl(a) {
+    const caseId = a.iris_case_id;
+    const busy = closingFp.has(caseId);
+    const err = fpErrors.get(caseId);
+    return `<div class="escalate-control">
+      <button type="button" class="btn outline-serious fp-case-btn" data-case="${escapeHtml(caseId)}" ${busy ? "disabled" : ""}>
+        ${busy ? "Lezárás..." : "Case lezárása false positive-ként"}
+      </button>
+      <span class="hint">Az IRIS eset lezárul, és minden riasztása False Positive címkét kap.</span>
+      ${err ? `<span class="escalate-error">${escapeHtml(err)}</span>` : ""}
+    </div>`;
+  }
+
+  async function errorDetail(res) {
+    let detail = `HTTP ${res.status}`;
+    try { detail = (await res.json()).detail || detail; } catch (_) { /* not JSON */ }
+    return typeof detail === "string" ? detail : JSON.stringify(detail);
+  }
+
+  async function closeCaseAsFalsePositive(caseId) {
+    const reason = window.prompt(`Case #${caseId} lezárása false positive-ként. Az IRIS eset lezárul, és minden riasztása False Positive címkét kap.\n\nIndoklás (opcionális):`, "");
+    if (reason === null) return;
+    fpErrors.delete(caseId);
+    closingFp.add(caseId);
+    renderTable();
+    try {
+      const res = await SIEM.api(`/api/v1/cases/${encodeURIComponent(caseId)}/false-positive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: reason.trim() || null }),
+      });
+      if (!res.ok) throw new Error(await errorDetail(res));
+      const body = await res.json();
+      setActionMessage(`Case #${caseId} lezárva false positive-ként (${body.labeled.length} riasztás címkézve)` +
+        (body.iris_closed ? "." : "; az IRIS eset már le volt zárva."));
+    } catch (err) {
+      fpErrors.set(caseId, "Sikertelen lezárás: " + err.message);
+    }
+    closingFp.delete(caseId);
+    await fetchAlerts();
+  }
+
+  function setActionMessage(text, isError) {
+    const box = el("actionMessage");
+    box.textContent = text || "";
+    box.classList.toggle("error", !!isError);
+  }
+
+  async function mergeSelected() {
+    const ids = Array.from(selected);
+    if (ids.length < 2) {
+      setActionMessage("Az összevonáshoz legalább két riasztást jelölj ki.", true);
+      return;
+    }
+    if (!window.confirm(`${ids.length} riasztás összevonása egy IRIS esetbe. A kijelölt riasztások meglévő eseteinek többi riasztása is átkerül, a régi esetek lezárulnak. Folytatod?`)) return;
+    const btn = el("mergeBtn");
+    btn.disabled = true;
+    setActionMessage("Összevonás...");
+    try {
+      const res = await SIEM.api("/api/v1/cases/merge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alert_refs: ids.map(refOf) }),
+      });
+      if (!res.ok) throw new Error(await errorDetail(res));
+      const body = await res.json();
+      let msg = `${body.merged.length} riasztás összevonva az IRIS #${body.iris_case_id} esetbe (${body.target}).`;
+      if (body.closed_cases.length) msg += ` Lezárt esetek: ${body.closed_cases.map((c) => "#" + c).join(", ")}.`;
+      if (body.close_failed.length) msg += ` Nem sikerült lezárni: ${body.close_failed.map((c) => "#" + c).join(", ")}.`;
+      setActionMessage(msg, body.close_failed.length > 0);
+      selected.clear();
+    } catch (err) {
+      setActionMessage("Sikertelen összevonás: " + err.message, true);
+    }
+    btn.disabled = false;
+    await fetchAlerts();
+  }
+
   function detailField(label, valueHtml, opts) {
     opts = opts || {};
     const cls = "value" + (opts.mono ? " reasoning" : "") + (opts.cls ? " " + opts.cls : "");
@@ -672,9 +757,10 @@
       fields.push(detailField("DFIR-IRIS eset", link));
       if (a.correlated_with) {
         fields.push(detailField("Korrelálva",
-          `<a class="alert-ref" href="${escapeHtml(DETAIL_PAGE(a.correlated_with))}" target="_blank" rel="noopener">${escapeHtml(a.correlated_with)}</a> esetébe került (azonos forrás IP, hasonló riasztás)`));
+          `<a class="alert-ref" href="${escapeHtml(DETAIL_PAGE(a.correlated_with))}" target="_blank" rel="noopener">${escapeHtml(a.correlated_with)}</a> esetébe került`));
       }
       fields.push(detailField("Felelős", assignControl(a)));
+      fields.push(detailField("Case művelet", falsePositiveControl(a), { fullWidth: true }));
     }
 
     const tiField = renderTiSection(a);
@@ -859,6 +945,10 @@
       btn.addEventListener("click", () => escalateAlert(btn.dataset.id));
     });
 
+    tableBody.querySelectorAll(".fp-case-btn").forEach((btn) => {
+      btn.addEventListener("click", () => closeCaseAsFalsePositive(Number(btn.dataset.case)));
+    });
+
     tableBody.querySelectorAll("tr.data-row").forEach((row) => {
       row.addEventListener("click", () => toggleExpanded(row.dataset.id));
     });
@@ -904,6 +994,7 @@
 
   el("labelTpBtn").addEventListener("click", () => labelSelected("true_positive"));
   el("labelFpBtn").addEventListener("click", () => labelSelected("false_positive"));
+  el("mergeBtn").addEventListener("click", mergeSelected);
   el("clearSelectionBtn").addEventListener("click", () => {
     selected.clear();
     renderTable();

@@ -1,13 +1,5 @@
-"""Background alert processing.
-
-The webhook only stores the alert (status QUEUED) and puts its record ID on an
-in-process queue, so Wazuh gets an answer immediately. Worker tasks then run
-triage -> guardrails -> enrichment -> IRIS case per alert. A slow free LLM or an
-unreachable IRIS therefore never blocks Wazuh's integratord, and an alert burst
-is worked off at the pace set by TRIAGE_WORKERS instead of hammering OpenRouter.
-
-QUEUED records left over from a restart are re-queued on startup - the stored
-raw payload is all that is needed to process them."""
+# Hatter feldolgozas: a webhook csak sorba allit, a workerek triazsolnak.
+# Ujrainditaskor a QUEUED rekordok ujra sorba kerulnek.
 
 import asyncio
 import logging
@@ -22,11 +14,11 @@ from app.config import settings
 from app.correlation import find_correlated_record
 from app.db import async_session
 from app.enrichment import enrich_iocs
-from app.enums import AlertStatus
+from app.enums import AlertStatus, GroundTruth
 from app.guardrails import decide_status
 from app.iris_client import iris_client
 from app.llm_engine import triage_alert
-from app.models import AlertRecord
+from app.models import AlertRecord, User
 from app.normalize import normalize_wazuh_alert, related_log_excerpt
 from app.repository import find_related_alerts, save_alert_record
 from app.schemas import IrisCaseResult, NormalizedAlert, RelatedAlert, TriageResult, WazuhAlertPayload
@@ -62,8 +54,7 @@ async def related_alerts(
     *,
     exclude_id: int | None = None,
 ) -> list[RelatedAlert]:
-    """Earlier alerts from the same host or source IP within the correlation window,
-    handed to the LLM as context."""
+    # Korabbi riasztasok ugyanarrol a hostrol / IP-rol, kontextus az LLM-nek.
     if settings.correlation_window_hours <= 0 or settings.correlation_max_alerts <= 0:
         return []
     window = timedelta(hours=settings.correlation_window_hours)
@@ -104,9 +95,7 @@ async def send_to_iris(
     enrichment: list[dict],
     escalated_by: str | None = None,
 ) -> tuple[IrisCaseResult, AlertRecord | None]:
-    """Open an IRIS case, or add the alert to the open case of a similar earlier
-    alert from the same source IP (app/correlation.py). Returns the case and the
-    record it was correlated with, if any."""
+    # Uj IRIS eset, vagy a korrelalt korabbi riasztas esete.
     correlated = await find_correlated_record(session, record)
     if correlated is not None:
         case = await iris_client.add_alert_to_case(
@@ -127,9 +116,66 @@ async def send_to_iris(
     return case, None
 
 
+def manual_triage(record: AlertRecord, username: str) -> TriageResult:
+    if record.triage_engine:
+        verdict = "true positive" if record.llm_is_true_positive else "false positive"
+        original = (
+            f"Original triage ({record.triage_engine}, model {record.triage_model or '-'}): "
+            f"{verdict}, confidence {record.llm_confidence}."
+        )
+    else:
+        original = "No automatic triage result (triage failed)."
+    parts = [
+        f"Manually escalated by {username} (automatic decision: {record.status.value}).",
+        original,
+    ]
+    if record.review_reason:
+        parts.append(f"Review reason: {record.review_reason}.")
+    if record.llm_reasoning:
+        parts.append(f"\nOriginal reasoning:\n{record.llm_reasoning}")
+    return TriageResult(
+        is_true_positive=True,
+        confidence=record.llm_confidence or 0.0,
+        reasoning="\n".join(parts),
+        iocs=record.llm_iocs or [],
+        engine="manual",
+        model=record.triage_model,
+        # Keep the original structured analysis (summary, actions, ...) for the ticket
+        **(record.llm_analysis or {}),
+    )
+
+
+async def manual_escalate(
+    session: AsyncSession, record: AlertRecord, user: User, *, label_true_positive: bool = True
+) -> IrisCaseResult:
+    # Kezi eszkalacio; IRIS hibanal kivetel, a rekord csak siker eseten valtozik.
+    alert = alert_from_record(record)
+    triage = manual_triage(record, user.username)
+    enrichment = await enrich_iocs(triage.iocs)
+    case, correlated = await send_to_iris(session, record, alert, triage, enrichment, escalated_by=user.username)
+
+    now = datetime.utcnow()
+    if record.auto_status is None:
+        record.auto_status = record.status
+    record.status = AlertStatus.ESCALATED
+    record.iris_case_id = case.case_id
+    record.correlated_with_id = correlated.id if correlated else None
+    record.ioc_enrichment = enrichment or record.ioc_enrichment
+    record.error_detail = None
+    record.escalated_by_id = user.id
+    record.escalated_at = now
+    if label_true_positive:
+        # Az eszkalacio az analyst TP iteleteje.
+        record.ground_truth = GroundTruth.TRUE_POSITIVE
+        record.labeled_at = now
+    await save_alert_record(session, record)
+    logger.info("%s manually escalated by %s to IRIS case %s", record.display_id, user.username, case.case_id)
+    return case
+
+
 @dataclass
 class ProcessOutcome:
-    """What process_record did, for the synchronous (?wait=true) webhook answer."""
+    # A feldolgozas eredmenye a ?wait=true valaszhoz.
 
     triage: TriageResult | None = None
     case: IrisCaseResult | None = None
@@ -137,8 +183,7 @@ class ProcessOutcome:
 
 
 async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessOutcome:
-    """Triage a QUEUED record and store the outcome on it. Never raises for a
-    triage or IRIS failure - those end up as status ERROR on the record."""
+    # QUEUED rekord triazsa; triazs/IRIS hibat ERROR statuszkent tarol, nem dob.
     alert = alert_from_record(record)
     started = time.perf_counter()
     related = await related_alerts(session, alert, record.received_at, exclude_id=record.id)
@@ -243,7 +288,7 @@ class AlertQueue:
         return self._queue.qsize() if self._queue else 0
 
     async def join(self) -> None:
-        """Wait until every queued alert is processed (used by the tests)."""
+        # Megvarja a sor kiuruleset (tesztekhez).
         if self._queue is not None:
             await self._queue.join()
 

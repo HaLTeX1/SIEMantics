@@ -48,6 +48,10 @@ class FakeIris:
         self.added: list[dict] = []
         self.closed: set[int] = set()
         self.fail = False
+        # Eset-muveletek: (case_id, label, note-ok), tagek, lezaras.
+        self.notes: list[tuple[int, str, list]] = []
+        self.tags: dict[int, list[str]] = {}
+        self.fail_notes = False
 
     async def create_case_from_alert(self, alert: NormalizedAlert, triage, enrichment=None, **kwargs):
         if self.fail:
@@ -64,12 +68,32 @@ class FakeIris:
         self.added.append({"case_id": case_id, "alert": alert, "triage": triage, **kwargs})
         return IrisCaseResult(case_id=case_id, case_url=f"https://iris.invalid/case?cid={case_id}")
 
+    async def is_open(self, case_id: int) -> bool:
+        if self.fail:
+            raise RuntimeError("iris down")
+        return case_id not in self.closed
+
+    async def add_case_notes(self, case_id: int, group_label: str, notes: list) -> None:
+        if self.fail or self.fail_notes:
+            raise RuntimeError("iris down")
+        self.notes.append((case_id, group_label, notes))
+
+    async def add_case_tags(self, case_id: int, tags: list[str]) -> None:
+        self.tags.setdefault(case_id, []).extend(tags)
+
+    async def close_case(self, case_id: int) -> None:
+        if self.fail:
+            raise RuntimeError("iris down")
+        self.closed.add(case_id)
+
 
 @pytest.fixture
 def iris(monkeypatch) -> FakeIris:
     fake = FakeIris()
     monkeypatch.setattr(iris_client, "create_case_from_alert", fake.create_case_from_alert)
     monkeypatch.setattr(iris_client, "add_alert_to_case", fake.add_alert_to_case)
+    for name in ("is_open", "add_case_notes", "add_case_tags", "close_case"):
+        monkeypatch.setattr(iris_client, name, getattr(fake, name))
     return fake
 
 

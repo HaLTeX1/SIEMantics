@@ -78,6 +78,15 @@ async def find_related_alerts(
     return list(result.scalars().all())
 
 
+async def get_records_in_cases(session: AsyncSession, iris_case_ids: set[int]) -> list[AlertRecord]:
+    if not iris_case_ids:
+        return []
+    result = await session.execute(
+        select(AlertRecord).where(AlertRecord.iris_case_id.in_(iris_case_ids)).order_by(AlertRecord.received_at)
+    )
+    return list(result.scalars().all())
+
+
 async def save_alert_record(session: AsyncSession, record: AlertRecord) -> AlertRecord:
     await session.commit()
     await session.refresh(record)
