@@ -18,13 +18,19 @@ def _automatic_status(record: AlertRecord) -> AlertStatus:
     return record.auto_status or record.status
 
 
+def _decided(record: AlertRecord) -> bool:
+    # Volt triazs dontes; a triazs nelkuli vagy sikertelen rekord nem predikcio.
+    return _automatic_status(record) != AlertStatus.ERROR
+
+
 def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
     # Meg nincs triazsolva: nincs mit kiertekelni.
     records = [r for r in records if r.status != AlertStatus.QUEUED]
+    decided = [r for r in records if _decided(r)]
     tp = fp = tn = fn = 0
     review_true_positive = 0
 
-    for record in records:
+    for record in decided:
         if record.ground_truth is None:
             continue
         # NEEDS_REVIEW negativ predikcio; a TP-k kozuluk a review sor altal elkapott FN-ek.
@@ -44,10 +50,10 @@ def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
             fn += 1
 
     labeled_total = tp + fp + tn + fn
-    processing_times = [r.processing_time_ms for r in records if r.status != AlertStatus.ERROR]
-    error_count = sum(1 for r in records if r.status == AlertStatus.ERROR)
-    needs_review_count = sum(1 for r in records if _automatic_status(r) == AlertStatus.NEEDS_REVIEW)
-    manually_escalated_count = sum(1 for r in records if r.escalated_by_id is not None)
+    processing_times = [r.processing_time_ms for r in decided if r.status != AlertStatus.ERROR]
+    error_count = sum(1 for r in records if r.status == AlertStatus.ERROR or not _decided(r))
+    needs_review_count = sum(1 for r in decided if _automatic_status(r) == AlertStatus.NEEDS_REVIEW)
+    manually_escalated_count = sum(1 for r in decided if r.escalated_by_id is not None)
 
     return TriageMetrics(
         sample_size=len(records),

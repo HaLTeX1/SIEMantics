@@ -56,6 +56,17 @@ def test_records_without_auto_status_fall_back_to_status():
     assert m.true_positive == 1
 
 
+def test_untriaged_records_are_not_predictions():
+    # Pl. a hurok riasztasai: triazs nelkul, kesobb osszevonva (escalated) es FP-re cimkezve.
+    m = compute_metrics([
+        _rec(AlertStatus.ESCALATED, FP, auto_status=AlertStatus.ERROR, escalated_by_id=1, ms=0.0),
+        _rec(AlertStatus.SUPPRESSED, FP, ms=20.0),
+    ])
+    assert m.true_negative == 1 and m.labeled_size == 1
+    assert m.error_count == 1 and m.manually_escalated_count == 0
+    assert m.median_processing_time_ms == 20.0
+
+
 def test_error_records_are_excluded_from_processing_time():
     m = compute_metrics([_rec(AlertStatus.ERROR, ms=9999.0), _rec(AlertStatus.SUPPRESSED, ms=10.0)])
     assert m.error_count == 1

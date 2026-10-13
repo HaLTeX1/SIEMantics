@@ -139,7 +139,7 @@ A küszöb csak a false positive ágra vonatkozik: egy alacsony confidence-ű tr
 
 A mock motor FP-confidence-e `max(0.9 - severity/20, 0.5)`, így az alapértelmezett 0.7-es küszöbbel az 5–6-os severity-jű, gyanús minta nélküli riasztások kerülnek `needs_review`-ba, a ≤4-esek `suppressed`-be.
 
-**Metrikák:** a konfúziós mátrix a rendszer **automatikus** döntéséből (`auto_status`) számol, nem az aktuális státuszból — így egy analyst kézi eszkalációja nem számít a rendszer helyes predikciójának. A `needs_review` negatív predikciónak számít (a rendszer magától nem eszkalálta), így a precision/recall a teljesen automatikus működést méri. Mellette a `GET /metrics` visszaadja:
+**Metrikák:** a konfúziós mátrix a rendszer **automatikus** döntéséből (`auto_status`) számol, nem az aktuális státuszból — így egy analyst kézi eszkalációja nem számít a rendszer helyes predikciójának. A `needs_review` negatív predikciónak számít (a rendszer magától nem eszkalálta), így a precision/recall a teljesen automatikus működést méri. Triázs-döntés nélküli rekord (sikertelen triázs, vagy fel sem dolgozott riasztás — `auto_status = error`) nem predikció: kimarad a konfúziós mátrixból, a feldolgozási időből és a kézi eszkalációk számából, csak az `error_count`-ban szerepel (akkor is, ha utólag összevonták vagy felcímkézték). Mellette a `GET /metrics` visszaadja:
 
 - `needs_review_count` — hány riasztás került a review sorba,
 - `needs_review_true_positive` — ezek közül hány bizonyult valódinak: a hamis negatívok, amiket a review sor „elkapott”,
