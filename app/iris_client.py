@@ -1,4 +1,5 @@
 import logging
+import re
 
 import httpx
 
@@ -36,6 +37,9 @@ _ANALYSIS_TO_BE_DONE = 2
 
 # IRIS alap severity nevek.
 _IRIS_SEVERITY = {"low": "Low", "medium": "Medium", "high": "High", "critical": "Critical"}
+
+# Az IRIS az eset nevet "#<id> - " elotaggal adja vissza es menteskor maga teszi ele.
+_CASE_NUMBER_PREFIX = re.compile(r"^#\d+ - ")
 
 # IRIS alap asset tipusok OS szerint.
 _IRIS_ASSET_TYPE = {"windows": "Windows - Computer", "linux": "Linux - Server"}
@@ -273,27 +277,31 @@ class IrisClient:
         if self._severity_ids is None:
             self._severity_ids = await self._lookup(client, "/manage/severities/list", "severity_name", "severity_id")
         tags = case_tags(ctx)
+        # Az IRIS (2.3.7) case_name nelkul elutasitja az update-et, ezert mindig kuldjuk.
         payload: dict = {}
 
         if existing is None:
+            payload["case_name"] = case_name(ctx)
             payload["case_tags"] = ",".join(tags)
             raise_severity = True
         else:
             # Meglevo esetnel a tageket bovitjuk, a severity-t csak emeljuk.
+            name = _CASE_NUMBER_PREFIX.sub("", existing.get("case_name") or "")
+            if not name:
+                logger.warning("IRIS case %s has no name, severity/tags not updated", case_id)
+                return
             if existing.get("case_tags") is not None:
                 old = [t for t in str(existing["case_tags"]).split(",") if t]
                 payload["case_tags"] = ",".join(dict.fromkeys(old + tags))
             names = {v: k for k, v in self._severity_ids.items()}
             current = names.get(existing.get("severity_id"))
             raise_severity = severity_rank(_IRIS_SEVERITY[ctx.severity]) > severity_rank(current)
-            if raise_severity and existing.get("case_name"):
-                payload["case_name"] = raise_case_name(existing["case_name"], ctx)
+            payload["case_name"] = raise_case_name(name, ctx) if raise_severity else name
 
         severity_id = self._severity_ids.get(_IRIS_SEVERITY[ctx.severity])
         if raise_severity and severity_id is not None:
             payload["severity_id"] = severity_id
-        if payload:
-            await self._post(client, f"/manage/cases/update/{case_id}", json=payload)
+        await self._post(client, f"/manage/cases/update/{case_id}", json=payload)
 
     @staticmethod
     async def _best_effort(what: str, coro, case_id: int):

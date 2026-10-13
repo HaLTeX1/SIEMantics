@@ -84,7 +84,8 @@ def main(args: list[str]) -> int:
     debug_enabled = "debug" in args[4:]
 
     try:
-        with open(alert_file) as f:
+        # Logs (e.g. Windows events) can carry non-UTF-8 bytes; one bad byte must not drop the alert
+        with open(alert_file, encoding="utf-8", errors="replace") as f:
             alert = json.load(f)
     except (OSError, ValueError) as exc:
         log(f"cannot read alert file {alert_file}: {exc}")

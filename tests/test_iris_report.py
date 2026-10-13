@@ -164,6 +164,8 @@ class FakeIris:
         self.failing: set[str] = set()
         # Utvonal szerinti egyedi valasz adatok.
         self.responses: dict[str, object] = {}
+        # Hivasok, amiket a hamis IRIS elutasitott (pl. case_name nelkuli update).
+        self.rejected: list[str] = []
 
     def by_path(self) -> dict[str, list]:
         out: dict[str, list] = {}
@@ -188,9 +190,14 @@ def fake_iris(monkeypatch) -> FakeIris:
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
-        fake.calls.append((path, json.loads(request.content) if request.content else None))
+        body = json.loads(request.content) if request.content else None
+        fake.calls.append((path, body))
         if path in fake.failing:
             return httpx.Response(400, json={"message": "rejected"})
+        # Like IRIS 2.3.7: a case update without case_name fails ("Error updating case")
+        if path.startswith("/manage/cases/update/") and not (body or {}).get("case_name"):
+            fake.rejected.append(path)
+            return httpx.Response(400, json={"status": "error", "message": "Error updating case - check server logs"})
         if path in fake.responses:
             return httpx.Response(200, json={"data": fake.responses[path]})
         if path in lookups:
@@ -220,8 +227,12 @@ def test_iris_client_sends_full_case(fake_iris):
     assert len(calls["/case/notes/add"]) == 5
     ioc = calls["/case/ioc/add"][0]
     assert ioc["ioc_type_id"] == 76 and "ID-42" in ioc["ioc_tags"]
-    assert calls["/manage/cases/update/7"][0]["severity_id"] == 5
-    assert "T1110" in calls["/manage/cases/update/7"][0]["case_tags"]
+    meta = calls["/manage/cases/update/7"][0]
+    assert meta["severity_id"] == 5
+    assert "T1110" in meta["case_tags"]
+    # IRIS rejects an update without case_name, so it is always sent
+    assert meta["case_name"] == calls["/manage/cases/add"][0]["case_name"]
+    assert fake_iris.rejected == []
 
     event = calls["/case/timeline/events/add"][0]
     assert event["event_date"] == "2026-10-01T14:20:01.512" and event["event_tz"] == "+00:00"
@@ -289,13 +300,23 @@ def test_correlated_alert_extends_existing_case(fake_iris):
     # Medium esetet a high riasztas megemeli.
     assert meta["severity_id"] == 5
     assert meta["case_name"] == "[SIEMantics ID-42] [P2/HIGH] sshd brute force @ lab-web01"
+    assert fake_iris.rejected == []
 
 
 def test_correlation_never_lowers_case_severity(fake_iris):
     _open_case(fake_iris, severity_id=6, case_name="[SIEMantics ID-42] [P1/CRITICAL] x")
     _add_to_case()
     meta = fake_iris.by_path()["/manage/cases/update/7"][0]
-    assert "severity_id" not in meta and "case_name" not in meta
+    assert "severity_id" not in meta
+    # The name is sent unchanged (IRIS needs it), without the "#7 - " prefix IRIS adds itself
+    assert meta["case_name"] == "[SIEMantics ID-42] [P1/CRITICAL] x"
+    assert fake_iris.rejected == []
+
+
+def test_iris_name_prefix_is_not_sent_back(fake_iris):
+    _open_case(fake_iris, severity_id=6, case_name="#7 - [SIEMantics ID-42] [P1/CRITICAL] x")
+    _add_to_case()
+    assert fake_iris.by_path()["/manage/cases/update/7"][0]["case_name"] == "[SIEMantics ID-42] [P1/CRITICAL] x"
 
 
 def test_closed_case_is_not_extended(fake_iris):
