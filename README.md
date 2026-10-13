@@ -407,6 +407,8 @@ sudo grep -i integratord /var/ossec/logs/ossec.log | tail
 
 A beérkezett riasztások először `Queued` státusszal jelennek meg a dashboardon, majd a triázs után kapják meg a végleges státuszt.
 
+**Suricata visszacsatolás:** ha a hálózatot Suricata figyeli, a sima HTTP-n kiszolgált dashboard/API válaszait is vizsgálja. Egy riasztás szövege (pl. `uid=0(root)` a `GPL ATTACK_RESPONSE` tesztből) a dashboard minden frissítésekor újra illeszkedik a szignatúrára, és új riasztást hoz létre — végtelen hurok. A `wazuh/zz_siemantics_rules.xml` Wazuh szabály ezt elnyomja (telepítés a fájl fejlécében); a tartós megoldás a HTTPS (lásd lent).
+
 **Hálózat:** a SIEMantics sima HTTP-n figyel (8000). Ha a manager és a SIEMantics között nem zárt lab hálózat van, tegyél elé TLS-t terminaló reverse proxyt, és a `hook_url` legyen `https://...` (a szkript ellenőrzi a tanúsítványt; önaláírt certnél a szkript elején a `VERIFY_TLS` kapcsolható ki).
 
 **Háttérfeldolgozás (`app/pipeline.py`):** a webhook a riasztást `queued` státusszal eltárolja, sorba teszi és azonnal `202`-vel válaszol — így egy lassú ingyenes LLM vagy egy elérhetetlen IRIS nem tartja fel az `integratord`-ot, és egy riasztási hullám sem hívja egyszerre az OpenRoutert. A sort `TRIAGE_WORKERS` darab worker dolgozza fel. Ha az app feldolgozás közben leáll, induláskor a még `queued` rekordokat újra sorba teszi (az eltárolt eredeti payloadból). A `queued` riasztás kézzel nem eszkalálható (`409`), és a metrikákba sem számít bele, amíg el nem készül a döntés. A szkript hálózati hiba vagy `5xx` esetén kétszer újrapróbálkozik (5 mp szünettel), `4xx`-nél (pl. rossz token) nem.

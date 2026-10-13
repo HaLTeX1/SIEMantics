@@ -1,0 +1,19 @@
+<!--
+  Install on the Wazuh manager as /var/ossec/etc/rules/zz_siemantics_rules.xml (owner wazuh:wazuh,
+  mode 660), then restart wazuh-manager. The "zz_" name makes it load after suricata_rules.xml,
+  which defines rule 110575 - a rule in local_rules.xml would load too early and be ignored.
+
+  Why: the SIEMantics dashboard/API is served over plain HTTP, so Suricata inspects its responses.
+  An alert whose text contains e.g. "uid=0(root)" (the GPL ATTACK_RESPONSE test) is shown on the
+  dashboard, the response matches the signature again, and every dashboard refresh creates a new
+  alert - a feedback loop. Adjust the IP/port to where SIEMantics runs. Serving the UI over HTTPS
+  removes the cause.
+-->
+<group name="suricata,siemantics,">
+  <rule id="110599" level="0">
+    <if_sid>110575</if_sid>
+    <field name="src_ip">^10\.64\.0\.127$</field>
+    <field name="src_port">^8000$</field>
+    <description>Suricata: attack-response signature on SIEMantics own HTTP response (feedback loop, suppressed)</description>
+  </rule>
+</group>
