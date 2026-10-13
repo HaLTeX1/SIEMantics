@@ -85,6 +85,24 @@ async def get_records_in_cases(session: AsyncSession, iris_case_ids: set[int]) -
     return list(result.scalars().all())
 
 
+async def get_group_members(session: AsyncSession, group_ids: set[int]) -> list[AlertRecord]:
+    if not group_ids:
+        return []
+    result = await session.execute(
+        select(AlertRecord).where(AlertRecord.group_id.in_(group_ids)).order_by(AlertRecord.received_at)
+    )
+    return list(result.scalars().all())
+
+
+async def count_group_members(session: AsyncSession, group_ids: set[int]) -> dict[int, int]:
+    if not group_ids:
+        return {}
+    result = await session.execute(
+        select(AlertRecord.group_id, func.count()).where(AlertRecord.group_id.in_(group_ids)).group_by(AlertRecord.group_id)
+    )
+    return dict(result.all())
+
+
 async def save_alert_record(session: AsyncSession, record: AlertRecord) -> AlertRecord:
     await session.commit()
     await session.refresh(record)

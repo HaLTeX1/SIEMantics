@@ -60,15 +60,19 @@ def test_merge_flood_alerts_without_case(logged_in, iris):
     assert record["ground_truth"] is None
 
 
-def test_merge_without_any_case_opens_one_for_the_earliest(logged_in, iris):
+def test_merge_without_open_case_only_groups(logged_in, iris):
+    # Pl. tobb FP: nincs nyitott IRIS eset, igy csak SIEMantics csoport lesz.
     a = process_alert(logged_in, alert("n1", level=6, host="x1", srcip="203.0.113.1"))
-    b = process_alert(logged_in, alert("n2", level=6, host="x2", srcip="203.0.113.2"))
+    b = process_alert(logged_in, alert("n2", level=2, host="x2", srcip="203.0.113.2"))
     body = logged_in.post(MERGE, json={"alert_refs": [a["display_id"], b["display_id"]]}).json()
 
-    assert body["target"] == a["display_id"] and body["merged"] == [b["display_id"]]
-    target = get(logged_in, a["display_id"])
-    assert target["iris_case_id"] == body["iris_case_id"] and target["ground_truth"] is None
-    assert iris.calls[-1]["escalated_by"] == "admin"
+    assert body["iris_case_id"] is None and body["case_url"] is None
+    assert body["group"] == a["display_id"] and body["merged"] == [b["display_id"]]
+    assert iris.calls == [] and iris.notes == []
+    record = get(logged_in, b["display_id"])
+    # Nem eszkalalodik, a statusz es a cimke valtozatlan.
+    assert record["status"] == "suppressed" and record["iris_case_id"] is None and record["ground_truth"] is None
+    assert record["group"] == a["display_id"] and record["group_size"] == 2
 
 
 def test_merge_moves_every_alert_of_a_selected_case(logged_in, iris):
@@ -80,8 +84,10 @@ def test_merge_moves_every_alert_of_a_selected_case(logged_in, iris):
 
     # Csak a masik eset egy riasztasa es az elso eset egyik riasztasa van kijelolve.
     body = logged_in.post(MERGE, json={"alert_refs": [other["display_id"], first_b["display_id"]]}).json()
-    assert body["iris_case_id"] == first["iris_case_id"]
-    assert body["merged"] == [other["display_id"]]
+    assert body["iris_case_id"] == first["iris_case_id"] and body["group"] == first["display_id"]
+    # Az elso eset fo riasztasa is a csoportba kerul.
+    assert sorted(body["merged"]) == sorted([first_b["display_id"], other["display_id"]])
+    assert get(logged_in, first["display_id"])["group_size"] == 3
 
 
 def test_merge_skips_a_closed_earliest_case(logged_in, iris):
@@ -104,6 +110,8 @@ def test_merge_rejects_bad_selections(logged_in, iris, monkeypatch):
 
     b = process_alert(logged_in, alert("r2", host="h1", srcip="198.51.100.1", rule_id="101"))
     assert b["iris_case_id"] == a["iris_case_id"]
+    # Egy esetben, de meg nem csoportban: osszevonhato; masodszorra mar nem.
+    assert logged_in.post(MERGE, json={"alert_refs": [a["display_id"], b["display_id"]]}).status_code == 200
     assert logged_in.post(MERGE, json={"alert_refs": [a["display_id"], b["display_id"]]}).status_code == 409
 
     monkeypatch.setattr(pipeline.alert_queue, "enqueue", lambda record_id: None)
@@ -161,3 +169,58 @@ def test_false_positive_errors(logged_in, iris):
 def test_case_actions_require_login(client):
     assert client.post(MERGE, json={"alert_refs": ["ID-1", "ID-2"]}).status_code == 401
     assert client.post("/api/v1/cases/1/false-positive").status_code == 401
+    assert client.post("/api/v1/cases/groups/ID-1/false-positive").status_code == 401
+
+
+# --- SIEMantics csoportok
+
+def test_merging_groups_unites_them(logged_in, iris):
+    a, b, c, d = (process_alert(logged_in, alert(f"g{i}", level=2, host=f"x{i}", srcip=f"203.0.113.{i}"))
+                  for i in range(1, 5))
+    logged_in.post(MERGE, json={"alert_refs": [a["display_id"], b["display_id"]]})
+    logged_in.post(MERGE, json={"alert_refs": [c["display_id"], d["display_id"]]})
+    # Egy-egy tag kijelolese a ket csoportbol: a teljes csoportok egyesulnek.
+    body = logged_in.post(MERGE, json={"alert_refs": [b["display_id"], d["display_id"]]}).json()
+    assert body["group"] == a["display_id"]
+    # A b mar az a csoportjaban volt, csak a masik csoport kerul at.
+    assert sorted(body["merged"]) == sorted([c["display_id"], d["display_id"]])
+    assert {get(logged_in, x["display_id"])["group"] for x in (a, b, c, d)} == {a["display_id"]}
+
+
+def test_group_with_open_case_also_merges_in_iris(logged_in, iris):
+    fp = process_alert(logged_in, alert("m1", level=2, host="x1", srcip="203.0.113.1"))
+    case_alert = process_alert(logged_in, alert("m2", host="h1", srcip="198.51.100.1"))
+    body = logged_in.post(MERGE, json={"alert_refs": [fp["display_id"], case_alert["display_id"]]}).json()
+    # A cel a nyitott eset riasztasa, a korabbi FP is bekerul az esetbe.
+    assert body["iris_case_id"] == case_alert["iris_case_id"] and body["group"] == case_alert["display_id"]
+    assert get(logged_in, fp["display_id"])["iris_case_id"] == case_alert["iris_case_id"]
+
+
+def test_group_false_positive_labels_all_and_closes_open_cases(logged_in, iris):
+    fp1 = process_alert(logged_in, alert("v1", level=2, host="x1", srcip="203.0.113.1"))
+    fp2 = process_alert(logged_in, alert("v2", level=6, host="x2", srcip="203.0.113.2"))
+    logged_in.post(MERGE, json={"alert_refs": [fp1["display_id"], fp2["display_id"]]})
+
+    res = logged_in.post(f"/api/v1/cases/groups/{fp2['display_id']}/false-positive", json={"reason": "zaj"})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["group"] == fp1["display_id"] and body["closed_cases"] == []
+    assert sorted(body["labeled"]) == sorted([fp1["display_id"], fp2["display_id"]])
+    assert get(logged_in, fp2["display_id"])["ground_truth"] == "false_positive"
+    assert iris.notes == []
+
+
+def test_group_false_positive_closes_the_groups_iris_case(logged_in, iris):
+    a = process_alert(logged_in, alert("k1", host="h1", srcip="198.51.100.1"))
+    b = process_alert(logged_in, alert("k2", level=2, host="x2", srcip="203.0.113.2"))
+    logged_in.post(MERGE, json={"alert_refs": [a["display_id"], b["display_id"]]})
+    body = logged_in.post(f"/api/v1/cases/groups/{a['display_id']}/false-positive").json()
+    assert body["closed_cases"] == [a["iris_case_id"]] and a["iris_case_id"] in iris.closed
+    assert "false-positive" in iris.tags[a["iris_case_id"]]
+
+
+def test_group_false_positive_for_alert_without_group(logged_in, iris):
+    a = process_alert(logged_in, alert("s1", level=2))
+    body = logged_in.post(f"/api/v1/cases/groups/{a['display_id']}/false-positive").json()
+    assert body["labeled"] == [a["display_id"]]
+    assert logged_in.post("/api/v1/cases/groups/ID-99999/false-positive").status_code == 404

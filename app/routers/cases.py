@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
-from app.case_actions import CaseActionError, close_as_false_positive, merge_alerts
+from app.case_actions import CaseActionError, close_as_false_positive, close_group_as_false_positive, merge_alerts
 from app.db import get_session
 from app.enums import UserRole
 from app.models import User
@@ -21,6 +21,7 @@ from app.schemas import (
     CaseAssignRequest,
     FalsePositiveRequest,
     FalsePositiveResult,
+    GroupFalsePositiveResult,
     MergeRequest,
     MergeResult,
 )
@@ -80,16 +81,17 @@ async def merge_cases(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    # Kijelolt riasztasok (es eseteik) egy IRIS esetbe, a tobbi eset lezarva.
+    # Kijelolt riasztasok egy SIEMantics csoportba; nyitott IRIS eset eseten az is osszevonva.
     try:
         outcome = await merge_alerts(session, body.alert_refs, user)
     except CaseActionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
-    case_id = outcome.target.iris_case_id
+    case_id = outcome.iris_case_id
     return MergeResult(
         iris_case_id=case_id,
-        case_url=iris_client.case_url(case_id),
+        case_url=iris_client.case_url(case_id) if case_id else None,
         target=outcome.target.display_id,
+        group=outcome.target.display_id,
         merged=[r.display_id for r in outcome.merged],
         closed_cases=outcome.closed_cases,
         close_failed=outcome.close_failed,
@@ -109,3 +111,20 @@ async def mark_case_false_positive(
     except CaseActionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     return FalsePositiveResult(iris_case_id=iris_case_id, labeled=[r.display_id for r in records], iris_closed=closed)
+
+
+@router.post("/groups/{alert_ref}/false-positive", response_model=GroupFalsePositiveResult)
+async def mark_group_false_positive(
+    alert_ref: str,
+    body: FalsePositiveRequest | None = None,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    # A riasztas csoportjanak minden tagja FP, a nyitott IRIS eseteik FP-kent lezarva.
+    try:
+        group, records, closed = await close_group_as_false_positive(
+            session, alert_ref, user, body.reason if body else None
+        )
+    except CaseActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return GroupFalsePositiveResult(group=group, labeled=[r.display_id for r in records], closed_cases=closed)

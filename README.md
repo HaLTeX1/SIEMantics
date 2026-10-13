@@ -204,14 +204,19 @@ A `needs_review`, `suppressed` vagy `error` (IRIS eset nélküli) riasztásokat 
 - az eset **minden** riasztása `false_positive` címkét kap, így a metrikákban is megjelenik (pl. egy automatikusan eszkalált riasztás hamis pozitívként számít),
 - ha az eset az IRIS-ben már le volt zárva, csak a címkézés történik meg (`iris_closed: false`); IRIS hibánál `502`, és a címkék nem változnak.
 
-**Riasztások összevonása egy esetbe** — pl. egy flood vagy egy művelet szétszórt riasztásaihoz: sorok kijelölése a dashboardon + „Összevonás egy esetbe”, vagy `POST /api/v1/cases/merge` (`{"alert_refs": ["ID-41", "ID-42", ...]}`):
+**Riasztások összevonása** — pl. egy flood, egy művelet szétszórt riasztásai vagy több false positive: sorok kijelölése a dashboardon + „Összevonás”, vagy `POST /api/v1/cases/merge` (`{"alert_refs": ["ID-41", "ID-42", ...]}`):
 
-- a kijelölt riasztások **meglévő eseteinek minden riasztása** is átkerül (egy esetet nem vágunk ketté),
-- a cél a legkorábbi riasztás **nyitott** esete; ha egyiknek sincs nyitott esete, a legkorábbi riasztásból nyílik egy (kézi eszkalációként, de True Positive címke nélkül — az összevonás nem ítélet),
+- az összevonás mindig egy **SIEMantics csoportot** hoz létre (`group`, `group_size` a riasztás-rekordokon; a fő riasztás a legkorábbi, illetve a nyitott IRIS eset riasztása); ha a kijelöltek már csoportban vannak, a csoportok egyesülnek,
+- a kijelölt riasztások **meglévő IRIS eseteinek és csoportjainak minden riasztása** is bekerül (egy esetet vagy csoportot nem vágunk ketté),
+- **IRIS művelet csak akkor történik, ha valamelyik tagnak van nyitott IRIS esete** — a cél a legkorábbi nyitott eset; ha nincs ilyen (pl. csak FP-k vagy lezárt esetek), csak a csoport jön létre, új IRIS eset nem nyílik, a státuszok és címkék nem változnak,
 - a céleset egyetlen „Merged alerts” note-ot kap táblázattal (azonosító, idő, szabály, host, forrás, előző státusz és eset, log-kivonat) és egy `merged` taget — egy 50 riasztásos floodnál sem kerül riasztásonként 5 note az esetbe,
 - a régi esetek egy „Merged into #X” note-tal lezárulnak (ha ez nem sikerül, a válasz `close_failed` listája mutatja),
 - az átkerült riasztások `correlated_with` mezője a cél riasztásra mutat; az eset nélküliek `escalated` státuszt kapnak, az automatikus döntés az `auto_status`-ban marad (a metrikák nem változnak), címke nem kerül rájuk,
-- `queued` riasztás nem vonható össze (`409`), ahogy a már egy esetben lévők sem; IRIS hibánál `502`, és a rekordok változatlanok.
+- `queued` riasztás nem vonható össze (`409`), ahogy a már egy csoportban lévők sem; IRIS hibánál `502`, és a rekordok változatlanok.
+
+**Csoport megjelölése false positive-ként** — a dashboard részletpanelén („Csoport megjelölése false positive-ként”) vagy `POST /api/v1/cases/groups/{ref}/false-positive` (`ref` a csoport bármely riasztása): a csoport minden riasztása (és a tagok IRIS eseteinek többi riasztása) `false_positive` címkét kap, a tagok **nyitott** IRIS esetei false positive-ként lezárulnak (note + tag). Csoport nélküli riasztásnál csak az az egy riasztás címkéződik.
+
+**Dashboard:** a csoportok alapból összecsukva, egy sorként jelennek meg („Csoport · N riasztás”), a „Csoportok összecsukása” kapcsolóval kibonthatók. Összecsukott nézetben egy csoport sorának kijelölése a teljes csoportra vonatkozik (címkézés, összevonás); a részletpanel listázza a csoport tagjait.
 
 Mindkét művelet bármely bejelentkezett felhasználónak elérhető, és egyszerre csak egy fut (dupla kattintás ellen).
 
@@ -275,7 +280,8 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `POST` | `/api/v1/auth/logout` | kijelentkezés, a munkamenet törlése |
 | `GET` | `/api/v1/auth/me` | a bejelentkezett felhasználó adatai |
 | `POST` | `/api/v1/auth/password` | saját jelszó módosítása (`current_password`, `new_password`); a többi eszközön kijelentkeztet |
-| `POST` | `/api/v1/cases/merge` | riasztások (és meglévő eseteik) összevonása egy IRIS esetbe (`alert_refs`), lásd [Case műveletek](#case-műveletek-false-positive-és-összevonás) |
+| `POST` | `/api/v1/cases/merge` | riasztások összevonása egy SIEMantics csoportba, nyitott IRIS eset esetén az IRIS-ben is (`alert_refs`), lásd [Case műveletek](#case-műveletek-false-positive-és-összevonás) |
+| `POST` | `/api/v1/cases/groups/{ref}/false-positive` | a riasztás csoportjának megjelölése false positive-ként, a nyitott IRIS esetek lezárása |
 | `POST` | `/api/v1/cases/{iris_case_id}/false-positive` | IRIS eset lezárása false positive-ként, minden riasztása FP címkét kap (`reason` opcionális) |
 | `GET` | `/api/v1/cases/assignees` | aktív felhasználók, akikhez case rendelhető |
 | `PUT` | `/api/v1/cases/{iris_case_id}/assignee` | case felelősének beállítása/törlése (`user_id` vagy `null`) — analyst csak magához vehet felelős nélküli case-t, vagy leadhatja a sajátját |

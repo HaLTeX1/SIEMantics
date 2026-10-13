@@ -54,6 +54,8 @@ class AlertRecord(Base):
     llm_analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # A korabbi riasztas ID-ja, akinek az IRIS esetebe ez a riasztas bekerult.
     correlated_with_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # SIEMantics csoport: a csoport elso (fo) riasztasanak ID-ja, a fo riasztasnal a sajatja.
+    group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     @property
     def display_id(self) -> str:
@@ -63,6 +65,10 @@ class AlertRecord(Base):
     @property
     def correlated_with(self) -> str | None:
         return f"ID-{self.correlated_with_id}" if self.correlated_with_id else None
+
+    @property
+    def group(self) -> str | None:
+        return f"ID-{self.group_id}" if self.group_id else None
 
 
 class User(Base):

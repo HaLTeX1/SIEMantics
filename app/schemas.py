@@ -214,6 +214,9 @@ class AlertRecordOut(BaseModel):
     escalated_at: Optional[datetime] = None
     # Annak a riasztasnak az ID-ja, akinek az IRIS esetebe ez is bekerult.
     correlated_with: Optional[str] = None
+    # SIEMantics csoport fo riasztasa es a csoport merete
+    group: Optional[str] = None
+    group_size: Optional[int] = None
     # Az IRIS eset felelose.
     assignee: Optional[AssigneeOut] = None
     assigned_at: Optional[datetime] = None
@@ -229,9 +232,11 @@ class MergeRequest(BaseModel):
 
 
 class MergeResult(BaseModel):
-    iris_case_id: int
+    # None, ha egyik tagnak sincs nyitott IRIS esete: ekkor csak SIEMantics csoport lesz.
+    iris_case_id: Optional[int] = None
     case_url: Optional[str] = None
     target: str
+    group: str
     merged: list[str]
     closed_cases: list[int] = Field(default_factory=list)
     # Regi esetek, amiket az IRIS nem engedett lezarni (best effort)
@@ -240,6 +245,12 @@ class MergeResult(BaseModel):
 
 class FalsePositiveRequest(BaseModel):
     reason: Optional[str] = Field(default=None, max_length=2000)
+
+
+class GroupFalsePositiveResult(BaseModel):
+    group: Optional[str] = None
+    labeled: list[str]
+    closed_cases: list[int] = Field(default_factory=list)
 
 
 class FalsePositiveResult(BaseModel):

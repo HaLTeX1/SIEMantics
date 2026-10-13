@@ -10,8 +10,7 @@ from app.iris_client import iris_client
 from app.iris_report import MergedAlert, false_positive_note, merge_note, merged_away_note
 from app.models import AlertRecord, User
 from app.normalize import related_log_excerpt
-from app.pipeline import manual_escalate
-from app.repository import get_alert_record_by_ref, get_records_in_cases
+from app.repository import get_alert_record_by_ref, get_group_members, get_records_in_cases
 
 logger = logging.getLogger("siemantics.cases")
 
@@ -30,8 +29,23 @@ class CaseActionError(Exception):
 class MergeOutcome:
     target: AlertRecord
     merged: list[AlertRecord]
+    # None, ha nem volt nyitott IRIS eset: csak SIEMantics csoport.
+    iris_case_id: int | None = None
     closed_cases: list[int] = field(default_factory=list)
     close_failed: list[int] = field(default_factory=list)
+
+
+async def _expand(session: AsyncSession, selected: list[AlertRecord]) -> list[AlertRecord]:
+    # A kijelolt riasztasok IRIS eseteinek es csoportjainak minden tagja is bekerul.
+    members = {r.id: r for r in selected}
+    while True:
+        cases = {r.iris_case_id for r in members.values() if r.iris_case_id}
+        groups = {r.group_id for r in members.values() if r.group_id}
+        found = await get_records_in_cases(session, cases) + await get_group_members(session, groups)
+        new = [r for r in found if r.id not in members]
+        if not new:
+            return sorted(members.values(), key=lambda r: r.received_at)
+        members.update((r.id, r) for r in new)
 
 
 async def _resolve(session: AsyncSession, refs: list[str]) -> list[AlertRecord]:
@@ -80,60 +94,71 @@ async def merge_alerts(session: AsyncSession, refs: list[str], user: User) -> Me
         if queued:
             raise CaseActionError(409, f"alerts still waiting for triage: {', '.join(queued)}")
 
-        # A kijelolt riasztasok meglevo eseteinek minden riasztasa is atkerul.
-        members = {r.id: r for r in selected}
-        for record in await get_records_in_cases(session, {r.iris_case_id for r in selected if r.iris_case_id}):
-            members.setdefault(record.id, record)
-        members_list = sorted(members.values(), key=lambda r: r.received_at)
-
+        members_list = await _expand(session, selected)
         try:
             target_case = await _first_open_case(members_list)
-            if target_case is None:
-                # Egyiknek sincs nyitott esete: a legkorabbibol nyitunk egyet, TP cimke nelkul.
-                await manual_escalate(session, members_list[0], user, label_true_positive=False)
-                target_case = members_list[0].iris_case_id
         except Exception as exc:
-            logger.exception("merge: target case could not be prepared")
+            logger.exception("merge: IRIS cases could not be checked")
             raise CaseActionError(502, "incident management backend unavailable") from exc
 
-        target = next(r for r in members_list if r.iris_case_id == target_case)
-        moved = [r for r in members_list if r.iris_case_id != target_case]
-        if not moved:
-            raise CaseActionError(409, "the selected alerts are already in one case")
+        # Nyitott eset nelkul (pl. csak FP-k) nincs IRIS muvelet, csak csoport.
+        if target_case is None:
+            target, moved = members_list[0], []
+        else:
+            target = next(r for r in members_list if r.iris_case_id == target_case)
+            moved = [r for r in members_list if r.iris_case_id != target_case]
+        regrouped = [r for r in members_list if r.group_id != target.id]
+        if not moved and not regrouped:
+            raise CaseActionError(409, "the selected alerts are already merged")
 
-        rows = [_merged_row(r, r.status.value) for r in moved]
-        old_cases = sorted({r.iris_case_id for r in moved if r.iris_case_id is not None})
-        label = f"merge {datetime.utcnow():%Y-%m-%d %H:%M} ({user.username})"
-        try:
-            await iris_client.add_case_notes(
-                target_case, label, [("Merged alerts", merge_note(target.display_id, rows, user.username, old_cases))]
-            )
-        except Exception as exc:
-            logger.exception("merge into IRIS case %s failed", target_case)
-            raise CaseActionError(502, "incident management backend unavailable") from exc
-
-        outcome = MergeOutcome(target=target, merged=moved)
-        await _best_effort(iris_client.add_case_tags(target_case, ["merged"]), f"tagging case {target_case}")
-        for case_id in old_cases:
-            if await _close_merged(case_id, target_case, user.username):
-                outcome.closed_cases.append(case_id)
-            else:
-                outcome.close_failed.append(case_id)
-
-        now = datetime.utcnow()
-        for record in moved:
-            record.iris_case_id = target_case
-            record.correlated_with_id = target.id
-            if record.status != AlertStatus.ESCALATED:
-                # Az automatikus dontes megmarad a metrikakhoz.
-                if record.auto_status is None:
-                    record.auto_status = record.status
-                record.status = AlertStatus.ESCALATED
-                record.escalated_by_id = user.id
-                record.escalated_at = now
+        outcome = MergeOutcome(
+            target=target,
+            merged=[r for r in members_list if r is not target and (r in moved or r in regrouped)],
+            iris_case_id=target_case,
+        )
+        if moved:
+            await _merge_into_case(target_case, target, moved, user, outcome)
+        for record in members_list:
+            record.group_id = target.id
         await session.commit()
-        logger.info("%s merged %d alert(s) into IRIS case %s", user.username, len(moved), target_case)
+        logger.info("%s merged %d alert(s) into group %s (IRIS case %s)",
+                    user.username, len(outcome.merged), target.display_id, target_case)
         return outcome
+
+
+async def _merge_into_case(
+    target_case: int, target: AlertRecord, moved: list[AlertRecord], user: User, outcome: MergeOutcome
+) -> None:
+    # IRIS oldal: note a celesetbe, a regi esetek lezarva; a rekordok a celesetbe kerulnek.
+    rows = [_merged_row(r, r.status.value) for r in moved]
+    old_cases = sorted({r.iris_case_id for r in moved if r.iris_case_id is not None})
+    label = f"merge {datetime.utcnow():%Y-%m-%d %H:%M} ({user.username})"
+    try:
+        await iris_client.add_case_notes(
+            target_case, label, [("Merged alerts", merge_note(target.display_id, rows, user.username, old_cases))]
+        )
+    except Exception as exc:
+        logger.exception("merge into IRIS case %s failed", target_case)
+        raise CaseActionError(502, "incident management backend unavailable") from exc
+
+    await _best_effort(iris_client.add_case_tags(target_case, ["merged"]), f"tagging case {target_case}")
+    for case_id in old_cases:
+        if await _close_merged(case_id, target_case, user.username):
+            outcome.closed_cases.append(case_id)
+        else:
+            outcome.close_failed.append(case_id)
+
+    now = datetime.utcnow()
+    for record in moved:
+        record.iris_case_id = target_case
+        record.correlated_with_id = target.id
+        if record.status != AlertStatus.ESCALATED:
+            # Az automatikus dontes megmarad a metrikakhoz.
+            if record.auto_status is None:
+                record.auto_status = record.status
+            record.status = AlertStatus.ESCALATED
+            record.escalated_by_id = user.id
+            record.escalated_at = now
 
 
 async def _close_merged(case_id: int, target_case: int, username: str) -> bool:
@@ -156,6 +181,25 @@ async def _best_effort(coro, what: str) -> None:
         logger.warning("%s failed", what, exc_info=True)
 
 
+async def _close_case_fp(case_id: int, username: str, reason: str | None, display_ids: list[str]) -> bool:
+    # Nyitott esetnel note + tag + lezaras; True, ha nyitott volt.
+    if not await iris_client.is_open(case_id):
+        return False
+    note = false_positive_note(username, reason, display_ids)
+    await iris_client.add_case_notes(case_id, f"false positive ({username})", [("Closed as false positive", note)])
+    await _best_effort(iris_client.add_case_tags(case_id, ["false-positive"]), f"tagging case {case_id}")
+    await iris_client.close_case(case_id)
+    return True
+
+
+def _label_false_positive(records: list[AlertRecord]) -> None:
+    # FP cimke, igy a metrikakba is bekerul.
+    now = datetime.utcnow()
+    for record in records:
+        record.ground_truth = GroundTruth.FALSE_POSITIVE
+        record.labeled_at = now
+
+
 async def close_as_false_positive(
     session: AsyncSession, case_id: int, user: User, reason: str | None
 ) -> tuple[list[AlertRecord], bool]:
@@ -163,24 +207,46 @@ async def close_as_false_positive(
         records = await get_records_in_cases(session, {case_id})
         if not records:
             raise CaseActionError(404, "case not found")
-
         try:
-            was_open = await iris_client.is_open(case_id)
-            if was_open:
-                note = false_positive_note(user.username, reason, [r.display_id for r in records])
-                await iris_client.add_case_notes(case_id, f"false positive ({user.username})",
-                                                 [("Closed as false positive", note)])
-                await _best_effort(iris_client.add_case_tags(case_id, ["false-positive"]), f"tagging case {case_id}")
-                await iris_client.close_case(case_id)
+            was_open = await _close_case_fp(case_id, user.username, reason, [r.display_id for r in records])
         except Exception as exc:
             logger.exception("closing IRIS case %s as false positive failed", case_id)
             raise CaseActionError(502, "incident management backend unavailable") from exc
 
-        # Az eset minden riasztasa FP cimket kap, igy a metrikakba is bekerul.
-        now = datetime.utcnow()
-        for record in records:
-            record.ground_truth = GroundTruth.FALSE_POSITIVE
-            record.labeled_at = now
+        _label_false_positive(records)
         await session.commit()
         logger.info("%s closed IRIS case %s as false positive (%d alert(s))", user.username, case_id, len(records))
         return records, was_open
+
+
+async def close_group_as_false_positive(
+    session: AsyncSession, ref: str, user: User, reason: str | None
+) -> tuple[str, list[AlertRecord], list[int]]:
+    async with _lock:
+        record = await get_alert_record_by_ref(session, ref)
+        if record is None:
+            raise CaseActionError(404, "alert not found")
+        members = await get_group_members(session, {record.group_id}) if record.group_id else [record]
+        # A tagok IRIS eseteinek tobbi riasztasa is FP lesz, ahogy az eset FP lezarasanal.
+        case_ids = sorted({r.iris_case_id for r in members if r.iris_case_id})
+        records = {r.id: r for r in members}
+        for other in await get_records_in_cases(session, set(case_ids)):
+            records.setdefault(other.id, other)
+
+        closed: list[int] = []
+        try:
+            for case_id in case_ids:
+                ids = [r.display_id for r in records.values() if r.iris_case_id == case_id]
+                if await _close_case_fp(case_id, user.username, reason, ids):
+                    closed.append(case_id)
+        except Exception as exc:
+            logger.exception("closing IRIS cases of group %s as false positive failed", record.group or record.display_id)
+            raise CaseActionError(502, "incident management backend unavailable") from exc
+
+        labeled = sorted(records.values(), key=lambda r: r.received_at)
+        _label_false_positive(labeled)
+        await session.commit()
+        group = record.group or record.display_id
+        logger.info("%s labeled group %s as false positive (%d alert(s), closed cases %s)",
+                    user.username, group, len(labeled), closed)
+        return group, labeled, closed

@@ -11,6 +11,7 @@ from app.normalize import normalize_wazuh_alert
 from app.models import AlertRecord, User
 from app.pipeline import alert_queue, manual_escalate, process_record
 from app.repository import (
+    count_group_members,
     create_alert_record,
     get_alert_record_by_ref,
     get_case_assignments,
@@ -42,6 +43,7 @@ def _verify_token(x_webhook_token: str | None) -> None:
 async def _with_assignees(session: AsyncSession, records: list[AlertRecord]) -> list[AlertRecordOut]:
     assignments = await get_case_assignments(session, [r.iris_case_id for r in records if r.iris_case_id is not None])
     escalators = await get_users_by_ids(session, [r.escalated_by_id for r in records if r.escalated_by_id is not None])
+    group_sizes = await count_group_members(session, {r.group_id for r in records if r.group_id})
     out = []
     for record in records:
         item = AlertRecordOut.model_validate(record)
@@ -51,6 +53,7 @@ async def _with_assignees(session: AsyncSession, records: list[AlertRecord]) -> 
             item.assigned_at = assignment.assigned_at
         if record.escalated_by_id in escalators:
             item.escalated_by = AssigneeOut.model_validate(escalators[record.escalated_by_id])
+        item.group_size = group_sizes.get(record.group_id)
         out.append(item)
     return out
 
