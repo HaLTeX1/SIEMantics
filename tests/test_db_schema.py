@@ -11,7 +11,7 @@ NEW_COLUMNS = {
 
 def test_missing_nullable_columns_are_added_to_existing_table():
     engine = create_engine("sqlite://")
-    # alert_records as it looked before the new columns existed
+    # Az alert_records az uj oszlopok elotti allapotban.
     old_table = Table(
         "alert_records",
         MetaData(),
@@ -25,10 +25,10 @@ def test_missing_nullable_columns_are_added_to_existing_table():
         ))
 
         _add_missing_columns(conn)
-        _add_missing_columns(conn)  # idempotent
+        _add_missing_columns(conn)  # idempotens
 
         columns = {c["name"] for c in inspect(conn).get_columns("alert_records")}
         assert NEW_COLUMNS <= columns
-        # existing rows survive, new columns are NULL
+        # A meglevo sorok megmaradnak, az uj oszlopok NULL-ok.
         row = conn.execute(text("SELECT alert_id, auto_status FROM alert_records")).one()
         assert tuple(row) == ("old", None)

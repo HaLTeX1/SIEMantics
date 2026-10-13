@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.enums import AlertStatus, GroundTruth, UserRole
 
 
-# --- Wazuh webhook payloads ---
+# --- Wazuh webhook payload ---
 
 class WazuhRule(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -27,7 +27,7 @@ class WazuhAgent(BaseModel):
 
 
 class WazuhAlertPayload(BaseModel):
-    """Raw shape of a Wazuh alert as forwarded by the webhook integration."""
+    # A webhook integracio altal tovabbitott Wazuh riasztas.
 
     model_config = ConfigDict(extra="allow")
 
@@ -40,7 +40,7 @@ class WazuhAlertPayload(BaseModel):
     location: Optional[str] = None
 
 
-# --- Normalizalt alert a triage loghoz, a LLM-hez es az evaluation datasethez. A Wazuh alert payloadja alapjan keszul, de a triage logban mar csak a fontos mezok szerepelnek.
+# --- Normalizalt riasztas (triazs, LLM, kiertekeles) ---
 
 class NormalizedAlert(BaseModel):
     alert_id: str
@@ -55,7 +55,7 @@ class NormalizedAlert(BaseModel):
     llm_reasoning: Optional[str] = None
     llm_iocs: Optional[list[str]] = None
 
-    # Context for the analyst/LLM, taken from the full Wazuh alert
+    # Kontextus az analystnak / LLM-nek a teljes Wazuh riasztasbol.
     timestamp: Optional[str] = None
     rule_id: Optional[str] = None
     rule_groups: list[str] = Field(default_factory=list)
@@ -66,16 +66,16 @@ class NormalizedAlert(BaseModel):
     agent_ip: Optional[str] = None
     location: Optional[str] = None
     decoder: Optional[str] = None
-    # Flattened, size-capped event fields ("data.win.eventdata.commandLine" -> value)
+    # Kilapitott, meretkorlatos esemenymezok (data.win.eventdata.commandLine -> ertek).
     event_fields: dict[str, str] = Field(default_factory=dict)
 
     def searchable_text(self) -> str:
-        """Log plus event field values (not keys) - what the pattern/injection checks scan."""
+        # Log es esemenymezo ertekek, ezeket nezik a minta- es injection ellenorzesek.
         return "\n".join([self.log_snippet, *self.event_fields.values()])
 
 
 class RelatedAlert(BaseModel):
-    """Another alert from the same host or source IP, for correlation."""
+    # Kapcsolodo riasztas ugyanarrol a hostrol vagy IP-rol.
 
     display_id: str
     received_at: datetime
@@ -89,7 +89,7 @@ class RelatedAlert(BaseModel):
     log_excerpt: str = ""
 
 
-# --- LLM triage output ---
+# --- LLM triazs eredmeny ---
 
 _LIST_MAX_ITEMS = 12
 _ITEM_MAX_LEN = 600
@@ -107,12 +107,12 @@ class TriageResult(BaseModel):
     reasoning: str
     iocs: list[str] = Field(default_factory=list)
     recommended_severity: Optional[str] = None
-    # manuualis escalalt riasztasoknal a ground_truth mezot az analyst allitja be, a system nem.
+    # manual: tarolt rekordbol epul, kezi eszkalacional.
     engine: Literal["openrouter", "mock", "manual"]
-    # Konkret LLM modell, ami a triage logot adta (pl. openrouter/free vagy openrouter/claude-v1). Ha a triage engine "manual", akkor ez None.
+    # A valaszolo konkret modell (mock motornal None).
     model: Optional[str] = None
 
-    # Structured ticket content (LLM only; empty for the mock engine)
+    # Strukturalt ticket tartalom (csak LLM, mock motornal ures).
     summary: Optional[str] = None
     potential_impact: Optional[str] = None
     benign_explanations: list[str] = Field(default_factory=list)
@@ -129,7 +129,7 @@ class TriageResult(BaseModel):
     )
     @classmethod
     def _coerce_list(cls, value):
-        # Free models do not always follow the schema: accept a bare string or null
+        # A free modellek nem mindig kovetik a semat: string vagy null is jo.
         if value is None:
             return []
         if isinstance(value, str):
@@ -154,7 +154,7 @@ class TriageResult(BaseModel):
         return _clip(value, _TEXT_MAX_LEN) if isinstance(value, str) else value
 
     def analysis(self) -> dict:
-        """The non-empty structured ticket fields, as stored in AlertRecord.llm_analysis."""
+        # A nem ures strukturalt mezok, ahogy az llm_analysis-ben tarolodnak.
         return {k: v for k, v in self.model_dump(include=set(ANALYSIS_FIELDS)).items() if v}
 
 
@@ -164,14 +164,14 @@ ANALYSIS_FIELDS = (
 )
 
 
-# --- IRIS response ---
+# --- IRIS valasz ---
 
 class IrisCaseResult(BaseModel):
     case_id: int
     case_url: str
 
 
-# --- Decision log / evaluation dataset ---
+# --- Dontesnaplo / kiertekelesi adathalmaz ---
 
 class AssigneeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -185,7 +185,7 @@ class AlertRecordOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    # Egyedi riasztás-azonosító "ID-<szám>" formátumban (a Wazuh alert_id nem egyedi)
+    # Egyedi riasztas azonosito ID-<szam> formaban (a Wazuh alert_id nem egyedi).
     display_id: str
     alert_id: str
     received_at: datetime
@@ -208,13 +208,13 @@ class AlertRecordOut(BaseModel):
     ioc_enrichment: Optional[list[dict]] = None
     triage_model: Optional[str] = None
     review_reason: Optional[str] = None
-    # Automatikus döntés a riasztás státuszáról (ESCALATED, SUPPRESSED, NEEDS_REVIEW) - az analyst döntése nem számít bele a statisztikába.
+    # Automatikus dontes; kezi eszkalacional elterhet a status-tol.
     auto_status: Optional[AlertStatus] = None
     escalated_by: Optional[AssigneeOut] = None
     escalated_at: Optional[datetime] = None
     # Annak a riasztasnak az ID-ja, akinek az IRIS esetebe ez is bekerult.
     correlated_with: Optional[str] = None
-    # Az IRIS a riasztas tulajdonosa
+    # Az IRIS eset felelose.
     assignee: Optional[AssigneeOut] = None
     assigned_at: Optional[datetime] = None
 
@@ -250,7 +250,7 @@ class FalsePositiveResult(BaseModel):
 
 
 
-# --- Triage metrics ---
+# --- Triazs metrikak ---
 
 class TriageMetrics(BaseModel):
     sample_size: int
@@ -276,7 +276,7 @@ class TriageMetrics(BaseModel):
     p95_processing_time_ms: Optional[float] = None
 
 
-# --- Users / auth ---
+# --- Felhasznalok / auth ---
 
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -308,7 +308,7 @@ class UserCreate(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    """Admin-oldali felhasználó update. A felhasználó saját profilját a /me endpointon keresztül tudja update-elni."""
+    # Admin oldali reszleges modositas; a kihagyott mezok valtozatlanok.
 
     full_name: Optional[str] = Field(default=None, max_length=128)
     role: Optional[UserRole] = None
@@ -316,10 +316,10 @@ class UserUpdate(BaseModel):
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)
 
 
-# --- Case assignment ---
+# --- Eset felelos ---
 
 class CaseAssignRequest(BaseModel):
-    """`user_id: null` removes the current assignee."""
+    # user_id: null torli a felelost.
 
     user_id: Optional[int] = None
 

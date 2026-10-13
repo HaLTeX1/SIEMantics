@@ -5,13 +5,12 @@ from app.schemas import NormalizedAlert, WazuhAlertPayload
 
 LOG_SNIPPET_MAX_LEN = 1000
 
-# Event fields handed to the LLM / shown in the ticket: per-value and total caps
-# keep the prompt small even for huge events (e.g. a full Windows event).
+# Az LLM-nek atadott esemenymezok korlatai, hogy a prompt kicsi maradjon.
 EVENT_FIELD_MAX_LEN = 500
 EVENT_FIELDS_MAX_COUNT = 60
 EVENT_FIELDS_MAX_TOTAL_LEN = 4000
 
-# Where integrations other than plain syslog put the source address, in order of preference
+# Forras IP helye a nem syslog integracioknal, preferencia sorrendben.
 _SOURCE_IP_FIELDS = (
     ("srcip",),
     ("src_ip",),
@@ -21,7 +20,7 @@ _SOURCE_IP_FIELDS = (
     ("gcp", "protoPayload", "requestMetadata", "callerIp"),
 )
 
-# Top-level Wazuh alert fields (besides `data`) that carry event details
+# Felso szintu Wazuh mezok (a data mellett), amik esemenyadatot hordoznak.
 _EXTRA_EVENT_SECTIONS = ("syscheck", "previous_output")
 
 
@@ -130,7 +129,7 @@ def normalize_wazuh_alert(payload: WazuhAlertPayload) -> NormalizedAlert:
 
 
 def related_log_excerpt(raw_payload: dict | None, limit: int = 300) -> str:
-    """Short log line of a stored alert, for the related-alerts context."""
+    # Rovid log kivonat egy tarolt riasztasbol a kapcsolodo riasztasokhoz.
     if not raw_payload:
         return ""
     log = raw_payload.get("full_log") or json.dumps(raw_payload.get("data") or {}, ensure_ascii=False)

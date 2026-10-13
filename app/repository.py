@@ -39,8 +39,7 @@ _DISPLAY_ID_RE = re.compile(r"#?ID-(\d+)", re.IGNORECASE)
 
 
 async def get_alert_record_by_ref(session: AsyncSession, ref: str) -> AlertRecord | None:
-    """`ref` is either our unique display ID ("ID-42" / "#ID-42") or a Wazuh
-    alert_id - the latter is not unique, so it resolves to the latest record."""
+    # ID-42 / #ID-42, vagy Wazuh alert_id (nem egyedi, ezert a legutobbi).
     match = _DISPLAY_ID_RE.fullmatch(ref.strip())
     if match:
         return await session.get(AlertRecord, int(match.group(1)))
@@ -58,8 +57,7 @@ async def find_related_alerts(
     exclude_id: int | None = None,
     limit: int = 10,
 ) -> list[AlertRecord]:
-    """Alerts from the same host (agent name) or the same source IP within
-    [around - before, around + after], newest first."""
+    # Riasztasok ugyanarrol a hostrol vagy IP-rol az idoablakban, legujabb elol.
     conditions = []
     if agent_name:
         conditions.append(AlertRecord.agent_name == agent_name)
@@ -104,7 +102,7 @@ async def set_ground_truth(session: AsyncSession, ref: str, ground_truth: Ground
     return record
 
 
-# --- Users / sessions ---
+# --- Felhasznalok / munkamenetek ---
 
 async def count_users(session: AsyncSession) -> int:
     return await session.scalar(select(func.count()).select_from(User))
@@ -148,7 +146,7 @@ async def save_user(session: AsyncSession, user: User) -> User:
 async def create_user_session(session: AsyncSession, user: User, token_hash: str, expires_at: datetime) -> None:
     user.last_login_at = datetime.utcnow()
     session.add(UserSession(user_id=user.id, token_hash=token_hash, expires_at=expires_at))
-    # Töröljük a lejárt session-öket, hogy ne halmozzanak fel a DB-ben.
+    # Lejart munkamenetek torlese, hogy ne gyuljenek fel.
     await session.execute(delete(UserSession).where(UserSession.expires_at < datetime.utcnow()))
     await session.commit()
 
@@ -179,7 +177,7 @@ async def delete_sessions_for_user(session: AsyncSession, user_id: int, keep_tok
     await session.commit()
 
 
-# --- Case assignments (DFIR-IRIS) ---
+# --- Eset felelosok (DFIR-IRIS) ---
 
 async def case_exists(session: AsyncSession, iris_case_id: int) -> bool:
     result = await session.execute(select(AlertRecord.id).where(AlertRecord.iris_case_id == iris_case_id).limit(1))
@@ -199,7 +197,7 @@ async def get_case_assignment(session: AsyncSession, iris_case_id: int) -> CaseA
 async def get_case_assignments(
     session: AsyncSession, iris_case_ids: list[int]
 ) -> dict[int, tuple[CaseAssignment, User]]:
-    """iris_case_id -> (assignment, assignee) for the given cases that have an assignee."""
+    # iris_case_id -> (hozzarendeles, felelos) a felelossel rendelkezo esetekre.
     if not iris_case_ids:
         return {}
     result = await session.execute(

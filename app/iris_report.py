@@ -1,4 +1,4 @@
-"""Az IRIS eset tartalma (nev, osszefoglalo, note-ok) L2 es Lead Analystok szamara, HTTP nelkul."""
+# Az IRIS eset tartalma (nev, osszefoglalo, note-ok), HTTP nelkul.
 
 import json
 import re
@@ -235,7 +235,7 @@ class CaseContext:
         return next((e for e in self.enrichment if e.get("ioc") == ioc), None)
 
 
-# --- Case ---
+# --- Eset ---
 
 def case_name(ctx: CaseContext) -> str:
     host = f" @ {ctx.alert.agent_name}" if ctx.alert.agent_name else ""
@@ -351,7 +351,7 @@ def case_description(ctx: CaseContext) -> str:
     return "\n\n".join(parts)
 
 
-# --- Notes ---
+# --- Note-ok ---
 
 def _triage_note(ctx: CaseContext) -> str:
     t = ctx.triage
@@ -550,7 +550,7 @@ def case_notes(ctx: CaseContext) -> list[tuple[str, str]]:
     ]
 
 
-# --- IOCs / assets ---
+# --- IoC-k / assetek ---
 
 def ioc_description(ctx: CaseContext, ioc: str) -> str:
     roles = []
@@ -656,7 +656,7 @@ def timeline_source(ctx: CaseContext) -> str:
     return f"Wazuh{f' ({location})' if location else ''} via SIEMantics"[:255]
 
 
-# --- Analyst actions: merge, false positive ---
+# --- Analyst muveletek: osszevonas, false positive ---
 
 @dataclass
 class MergedAlert:

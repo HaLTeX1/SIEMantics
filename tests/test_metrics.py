@@ -19,7 +19,7 @@ def test_confusion_matrix_basic():
         _rec(AlertStatus.ESCALATED, FP),
         _rec(AlertStatus.SUPPRESSED, FP),
         _rec(AlertStatus.SUPPRESSED, TP),
-        _rec(AlertStatus.SUPPRESSED),  # unlabeled
+        _rec(AlertStatus.SUPPRESSED),  # cimkezetlen
     ])
     assert (m.true_positive, m.false_positive, m.true_negative, m.false_negative) == (1, 1, 1, 1)
     assert m.sample_size == 5
@@ -41,7 +41,7 @@ def test_needs_review_is_a_negative_prediction_and_its_tps_are_counted():
 
 
 def test_manual_escalation_does_not_count_as_automatic_true_positive():
-    # status changed to ESCALATED by an analyst; auto_status keeps the system's decision
+    # Analyst ESCALATED-re allitotta, az auto_status a rendszer dontese.
     m = compute_metrics([
         _rec(AlertStatus.ESCALATED, TP, auto_status=AlertStatus.NEEDS_REVIEW, escalated_by_id=1),
     ])

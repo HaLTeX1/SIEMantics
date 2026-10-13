@@ -30,7 +30,7 @@ logger = logging.getLogger("siemantics.alerts")
 
 router = APIRouter(prefix="/api/v1", tags=["alerts"])
 
-# Record IDs with a manual escalation in flight - guards against a double click opening two IRIS cases
+# Folyamatban levo kezi eszkalaciok, dupla kattintas ellen.
 _escalations_in_progress: set[int] = set()
 
 
@@ -62,10 +62,7 @@ async def receive_alert(
     x_webhook_token: str | None = Header(default=None),
     session: AsyncSession = Depends(get_session),
 ):
-    """Store the alert and queue it for triage (app/pipeline.py). Answers right
-    away, so Wazuh's integratord is never held up by the LLM or IRIS.
-    `?wait=true` (test tools, Postman): triage in the request and answer with the
-    full result instead - 502 if triage or IRIS failed, like before the queue."""
+    # Eltarolja es sorba allitja a riasztast; ?wait=true eseten azonnal triazsol (teszteleshez).
     _verify_token(x_webhook_token)
 
     alert: NormalizedAlert = normalize_wazuh_alert(payload)
@@ -118,7 +115,7 @@ async def list_alerts(limit: int = 100, offset: int = 0, session: AsyncSession =
 
 @router.get("/alerts/{alert_ref}", response_model=AlertRecordOut, dependencies=[Depends(get_current_user)])
 async def get_alert(alert_ref: str, session: AsyncSession = Depends(get_session)):
-    """`alert_ref`: our display ID ("ID-42") or a Wazuh alert_id (-> latest record)."""
+    # alert_ref: ID-42, vagy Wazuh alert_id (a legutobbi rekord).
     record = await get_alert_record_by_ref(session, alert_ref)
     if record is None:
         raise HTTPException(status_code=404, detail="alert not found")
@@ -127,7 +124,7 @@ async def get_alert(alert_ref: str, session: AsyncSession = Depends(get_session)
 
 @router.get("/config", dependencies=[Depends(get_current_user)])
 async def get_public_config():
-    """Non-secret config the frontend needs (e.g. to link out to the IRIS case)."""
+    # Nem titkos beallitasok a frontendnek (pl. IRIS link).
     return {"iris_base_url": settings.iris_base_url.rstrip("/")}
 
 
@@ -145,9 +142,7 @@ async def escalate_alert(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Analyst override: open an IRIS case for an alert the automatic triage did
-    not escalate (needs_review / suppressed / error). The automatic decision is
-    kept in auto_status, so the evaluation metrics are not affected."""
+    # Kezi eszkalacio IRIS esette; az automatikus dontes az auto_status-ban marad.
 
     record = await get_alert_record_by_ref(session, alert_ref)
     if record is None:

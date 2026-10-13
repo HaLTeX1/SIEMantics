@@ -194,7 +194,7 @@ def fake_iris(monkeypatch) -> FakeIris:
         fake.calls.append((path, body))
         if path in fake.failing:
             return httpx.Response(400, json={"message": "rejected"})
-        # Like IRIS 2.3.7: a case update without case_name fails ("Error updating case")
+        # Mint az IRIS 2.3.7: case_name nelkuli update hibat ad.
         if path.startswith("/manage/cases/update/") and not (body or {}).get("case_name"):
             fake.rejected.append(path)
             return httpx.Response(400, json={"status": "error", "message": "Error updating case - check server logs"})
@@ -230,7 +230,7 @@ def test_iris_client_sends_full_case(fake_iris):
     meta = calls["/manage/cases/update/7"][0]
     assert meta["severity_id"] == 5
     assert "T1110" in meta["case_tags"]
-    # IRIS rejects an update without case_name, so it is always sent
+    # Az IRIS case_name nelkul elutasitja az update-et, ezert mindig megy.
     assert meta["case_name"] == calls["/manage/cases/add"][0]["case_name"]
     assert fake_iris.rejected == []
 
@@ -308,7 +308,7 @@ def test_correlation_never_lowers_case_severity(fake_iris):
     _add_to_case()
     meta = fake_iris.by_path()["/manage/cases/update/7"][0]
     assert "severity_id" not in meta
-    # The name is sent unchanged (IRIS needs it), without the "#7 - " prefix IRIS adds itself
+    # A nev valtozatlanul megy, a #7 - elotag nelkul (azt az IRIS teszi ele).
     assert meta["case_name"] == "[SIEMantics ID-42] [P1/CRITICAL] x"
     assert fake_iris.rejected == []
 
@@ -330,7 +330,7 @@ def test_unreadable_case_is_not_extended(fake_iris):
     assert _add_to_case() is None
 
 
-# --- structured LLM analysis
+# --- strukturalt LLM elemzes
 
 def _llm_ctx(**analysis) -> CaseContext:
     ctx = _ctx()
@@ -351,7 +351,7 @@ def test_llm_analysis_goes_into_the_case():
     description = case_description(ctx)
     assert "**Summary:** Brute force against root" in description
     assert "### Immediate actions (L1)\n\n1. Block 185.220.101.45" in description
-    assert "1. grep 'Accepted' /var/log/auth.log" in description  # LLM steps lead the L2 first steps
+    assert "1. grep 'Accepted' /var/log/auth.log" in description  # Az LLM lepesei vezetik az L2 elso lepeseit.
 
     notes = dict(case_notes(ctx))
     assert "## Potential impact" in notes["1. Triage summary"]

@@ -34,7 +34,7 @@ def has_suspicious_pattern(text: str) -> bool:
 
 
 def mock_triage(alert: NormalizedAlert) -> TriageResult:
-    """Deterministic rule-based fallback - no API key or network call needed."""
+    # Determinisztikus, szabaly alapu tartalek triazs, API kulcs es halozat nelkul.
 
     text = alert.searchable_text()
     pattern_hit = has_suspicious_pattern(text)

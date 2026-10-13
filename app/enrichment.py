@@ -75,9 +75,7 @@ async def enrich_ip(client: httpx.AsyncClient, ip: str) -> dict:
 
 
 async def enrich_iocs(iocs: list[str]) -> list[dict]:
-    """Enrich IP-shaped IoCs via VirusTotal/AbuseIPDB. Skips silently if neither
-    API key is configured, and per-provider on any individual lookup failure -
-    enrichment is best-effort and must never block alert processing."""
+    # IP IoC-k enrichmentje VirusTotal/AbuseIPDB-vel; kulcs nelkul kimarad, hiba nem blokkol.
 
     if not settings.virustotal_api_key and not settings.abuseipdb_api_key:
         return []

@@ -5,9 +5,9 @@ class AlertStatus(str, enum.Enum):
     SUPPRESSED = "suppressed"
     ESCALATED = "escalated"
     ERROR = "error"
-    # FP verdict below REVIEW_CONFIDENCE_THRESHOLD: not escalated, but not silently dropped either
+    # Alacsony confidence-u FP itelet: nem eszkalalt, de nem is elnyomott.
     NEEDS_REVIEW = "needs_review"
-    # Received from the webhook, waiting for the background triage worker (app/pipeline.py)
+    # Webhookrol erkezett, a hatter workerre var (app/pipeline.py).
     QUEUED = "queued"
 
 

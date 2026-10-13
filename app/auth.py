@@ -1,4 +1,4 @@
-"""Password hashing, cookie-based login sessions and the FastAPI auth dependencies."""
+# Jelszo hash, cookie-s munkamenetek es a FastAPI auth dependency-k.
 
 import base64
 import hashlib
@@ -26,7 +26,7 @@ logger = logging.getLogger("siemantics.auth")
 
 SESSION_COOKIE = "siemantics_session"
 
-# scrypt parameters (~16 MB memory per hash) - stdlib only, no extra dependency
+# scrypt parameterek (~16 MB memoria hash-enkent), csak stdlib.
 _SCRYPT_N = 2**14
 _SCRYPT_R = 8
 _SCRYPT_P = 1
@@ -61,7 +61,7 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(digest, expected)
 
 
-# Used to spend the same time on unknown usernames as on wrong passwords
+# Ismeretlen felhasznalonal is ugyanannyi ido, mint rossz jelszonal (timing ellen).
 _DUMMY_HASH = hash_password(secrets.token_urlsafe(16))
 
 
@@ -113,7 +113,7 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
 
 
 async def ensure_initial_admin() -> None:
-    """Create the first admin from ADMIN_USERNAME/ADMIN_PASSWORD if the users table is empty."""
+    # Elso admin az ADMIN_USERNAME/ADMIN_PASSWORD alapjan, ha meg nincs felhasznalo.
     async with async_session() as session:
         if await count_users(session) > 0:
             return

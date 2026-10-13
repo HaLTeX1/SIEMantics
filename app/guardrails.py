@@ -1,6 +1,4 @@
-"""Decides what happens with a triage verdict: escalate, suppress or send to
-human review. The LLM's "benign" verdict is never trusted blindly - the log it
-reads is attacker-controlled and may try to talk it into suppression."""
+# Triazs itelet -> escalated / suppressed / needs_review, prompt injection vedohaloval.
 
 import re
 
@@ -9,7 +7,7 @@ from app.enums import AlertStatus
 from app.mock_engine import has_suspicious_pattern
 from app.schemas import NormalizedAlert, TriageResult
 
-# Szoveg alapú prompt injection minták, amikre ha a LLM-ben ráakadunk, a riasztást NEEDS_REVIEW-re kell állítani.
+# Prompt injection mintak; talalat eseten az LLM FP itelete NEEDS_REVIEW lesz.
 _INJECTION_PATTERNS = [
     r"\b(ignore|disregard|forget|override)\s+(all\s+|any\s+|the\s+|your\s+)?(previous|prior|above|earlier|system)\s+(instructions?|prompts?|rules)",
     r"\b(classify|mark|treat|label|report)\s+(this|it|the\s+alert)\s+as\s+(benign|safe|harmless|a\s+false\s+positive|false\s+positive|noise)",
@@ -29,8 +27,7 @@ def looks_like_prompt_injection(alert: NormalizedAlert) -> bool:
 
 
 def decide_status(alert: NormalizedAlert, triage: TriageResult) -> tuple[AlertStatus, str | None]:
-    """(status, review_reason). A true-positive verdict always escalates; a
-    false-positive one is suppressed only if nothing argues against it."""
+    # (status, review_reason): TP mindig eszkalal, FP csak biztos es gyanumentes esetben suppressed.
 
     if triage.is_true_positive:
         return AlertStatus.ESCALATED, None
@@ -40,7 +37,7 @@ def decide_status(alert: NormalizedAlert, triage: TriageResult) -> tuple[AlertSt
         reasons.append(f"low confidence ({triage.confidence:.2f} < {settings.review_confidence_threshold:.2f})")
     if looks_like_prompt_injection(alert):
         reasons.append("possible prompt injection: the alert text addresses the model")
-    # The mock engine already escalates on these, so they only matter for the LLM
+    # A mock motor ezekre maga eszkalal, csak az LLM-nel szamit.
     if triage.engine == "openrouter":
         if has_suspicious_pattern(alert.searchable_text()):
             reasons.append("LLM said benign, but a rule-based suspicious pattern matched the log")

@@ -428,7 +428,7 @@ sudo grep -i integratord /var/ossec/logs/ossec.log | tail
 
 A beérkezett riasztások először `Queued` státusszal jelennek meg a dashboardon, majd a triázs után kapják meg a végleges státuszt.
 
-**Suricata visszacsatolás:** ha a hálózatot Suricata figyeli, a sima HTTP-n kiszolgált dashboard/API válaszait is vizsgálja. Egy riasztás szövege (pl. `uid=0(root)` a `GPL ATTACK_RESPONSE` tesztből) a dashboard minden frissítésekor újra illeszkedik a szignatúrára, és új riasztást hoz létre — végtelen hurok. A `wazuh/zz_siemantics_rules.xml` Wazuh szabály ezt elnyomja (telepítés a fájl fejlécében); a tartós megoldás a HTTPS (lásd lent).
+**Suricata visszacsatolás:** ha a hálózatot Suricata figyeli, a sima HTTP-n kiszolgált dashboard/API válaszait is vizsgálja. Egy riasztás szövege (pl. `uid=0(root)` a `GPL ATTACK_RESPONSE` tesztből) a dashboard minden frissítésekor újra illeszkedik a szignatúrára, és új riasztást hoz létre — végtelen hurok. A `wazuh/zz_siemantics_rules.xml` Wazuh szabály ezt elnyomja: másold a managerre `/var/ossec/etc/rules/zz_siemantics_rules.xml` néven (`wazuh:wazuh`, `660`), igazítsd az IP-t/portot a SIEMantics címéhez, majd `systemctl restart wazuh-manager`. A `zz_` név azért kell, hogy a `suricata_rules.xml` (110575) után töltődjön be — a `local_rules.xml`-ben túl korán töltődne be, és a Wazuh figyelmen kívül hagyná. A tartós megoldás a HTTPS (lásd lent).
 
 **Hálózat:** a SIEMantics sima HTTP-n figyel (8000). Ha a manager és a SIEMantics között nem zárt lab hálózat van, tegyél elé TLS-t terminaló reverse proxyt, és a `hook_url` legyen `https://...` (a szkript ellenőrzi a tanúsítványt; önaláírt certnél a szkript elején a `VERIFY_TLS` kapcsolható ki).
 

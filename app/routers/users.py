@@ -40,7 +40,7 @@ async def update_user(
     if user is None:
         raise HTTPException(status_code=404, detail="user not found")
 
-    # an admin must not be able to lock themselves out of the admin panel
+    # Az admin nem zarhatja ki magat az admin panelbol.
     if user.id == admin.id and (body.is_active is False or (body.role is not None and body.role != UserRole.ADMIN)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="cannot deactivate or demote yourself")
 

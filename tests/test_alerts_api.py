@@ -1,5 +1,4 @@
-"""End-to-end tests of the webhook -> triage -> decision log -> IRIS flow,
-with the mock triage engine (no OpenRouter key) and a fake IRIS client."""
+# Webhook -> triazs -> dontesnaplo -> IRIS teszt mock motorral es hamis IRIS-szel.
 
 import re
 
@@ -19,7 +18,7 @@ def post_alert(client, payload):
 
 @pytest.fixture
 def llm_says(monkeypatch):
-    """Replace the triage engine with a fixed OpenRouter-style verdict."""
+    # A triazs motor helyett fix, OpenRouter-szeru itelet.
 
     def _set(is_tp, confidence, model="vendor/some-model:free"):
         async def fake_triage(alert, related=None):
@@ -40,7 +39,7 @@ def test_webhook_rejects_bad_token(client):
 
 
 def test_webhook_answers_before_triage(client, monkeypatch):
-    """The webhook only stores + queues the alert; triage runs in the background."""
+    # A webhook csak tarol es sorba allit, a triazs a hatterben fut.
     async def never_called(alert, related=None):
         raise AssertionError("triage must not run inside the request")
 
@@ -57,7 +56,7 @@ def test_queued_alert_cannot_be_escalated_by_hand(client, logged_in, monkeypatch
     monkeypatch.setattr(pipeline.alert_queue, "enqueue", lambda record_id: None)
     body = client.post("/api/v1/alerts", json=wazuh_alert(level=2), headers=WEBHOOK_HEADERS).json()
     assert client.post(f"/api/v1/alerts/{body['id'].lstrip('#')}/escalate").status_code == 409
-    # not triaged yet -> not part of the evaluation
+    # Meg nincs triazsolva, nem resze a kiertekelesnek.
     assert client.get("/api/v1/metrics").json()["sample_size"] == 0
 
 
@@ -72,14 +71,14 @@ def test_triage_crash_marks_record_as_error(client, monkeypatch):
 
 
 def test_wait_mode_answers_with_the_full_result(client, iris):
-    """?wait=true (Postman, test script): triaged within the request, nothing is queued."""
+    # ?wait=true: a keresen belul triazsol, nem kerul sorba.
     url = "/api/v1/alerts?wait=true"
     first = client.post(url, json=wazuh_alert(alert_id="w1", level=13), headers=WEBHOOK_HEADERS).json()
     assert first["status"] == "escalated"
     assert first["triage"]["engine"] == "mock"
     assert first["case"]["case_id"] == 1001
     assert first["correlated_with"] is None
-    # same rule + source IP -> added to the first alert's case
+    # Azonos szabaly + IP: az elso riasztas esetebe kerul.
     body = client.post(url, json=wazuh_alert(alert_id="w2", level=13), headers=WEBHOOK_HEADERS).json()
     assert body["correlated_with"] == first["id"] and body["case"]["case_id"] == 1001
 
@@ -101,7 +100,7 @@ def test_confident_benign_alert_is_suppressed(client, iris):
 
 
 def test_low_confidence_benign_alert_needs_review(client, iris):
-    # mock engine: severity 6, no pattern -> FP with confidence 0.6 < 0.7
+    # Mock motor: 6-os szint, nincs minta -> FP 0.6 < 0.7.
     body = post_alert(client, wazuh_alert(level=6))
     assert body["status"] == "needs_review"
     assert "low confidence" in body["review_reason"]
@@ -125,7 +124,7 @@ def test_iris_failure_marks_record_as_error(client, iris, logged_in):
 
     record = client.get("/api/v1/alerts/c2").json()
     assert record["status"] == "error"
-    # the triage decision itself was "escalate" - kept for the evaluation
+    # A triazs dontese eszkalalas volt, ez marad a kiertekeleshez.
     assert record["auto_status"] == "escalated"
     assert "iris case creation failed" in record["error_detail"]
 
@@ -152,14 +151,14 @@ def test_llm_cannot_suppress_critical_severity(client, llm_says):
     assert body["status"] == "needs_review"
 
 
-# --- display ID / lookup
+# --- display ID / kereses
 
 def test_duplicate_wazuh_ids_get_distinct_display_ids(client, logged_in):
     first = post_alert(client, wazuh_alert(alert_id="dup", level=2))
     second = post_alert(client, wazuh_alert(alert_id="dup", level=6))
     assert first["display_id"] != second["display_id"]
 
-    # by display ID: the exact record; by Wazuh ID: the latest one
+    # Display ID: pontosan az a rekord; Wazuh ID: a legutobbi.
     assert client.get(f"/api/v1/alerts/{first['display_id'].lstrip('#')}").json()["status"] == "suppressed"
     assert client.get("/api/v1/alerts/%23" + first["display_id"].lstrip("#")).json()["status"] == "suppressed"
     assert client.get("/api/v1/alerts/dup").json()["display_id"] == second["display_id"]
@@ -178,7 +177,7 @@ def test_read_endpoints_require_login(client):
     assert client.post("/api/v1/alerts/ID-1/escalate").status_code == 401
 
 
-# --- manual escalation
+# --- kezi eszkalacio
 
 def test_manual_escalation_of_review_alert(client, iris, logged_in):
     body = post_alert(client, wazuh_alert(alert_id="rev", level=6, log="3 failed logins for bob"))
@@ -197,13 +196,13 @@ def test_manual_escalation_of_review_alert(client, iris, logged_in):
     assert call["display_id"] == body["display_id"]
     assert call["escalated_by"] == "admin"
     assert call["triage"].engine == "manual"
-    # the case is built from the stored raw payload, so it has the full log
+    # Az eset a tarolt nyers payloadbol epul, igy teljes a log.
     assert call["alert"].log_snippet == "3 failed logins for bob"
 
     metrics = client.get("/api/v1/metrics").json()
     assert metrics["manually_escalated_count"] == 1
     assert metrics["needs_review_true_positive"] == 1
-    assert metrics["true_positive"] == 0  # the system did not escalate it on its own
+    assert metrics["true_positive"] == 0  # A rendszer magatol nem eszkalalta.
 
 
 def test_escalating_twice_is_rejected(client, iris, logged_in):

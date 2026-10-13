@@ -20,7 +20,7 @@ class Base(DeclarativeBase):
 
 
 async def init_db(attempts: int = 30, delay: float = 2.0) -> None:
-    # Megvarjuk mig elindul a database, ha pl. a docker-compose-ben a db service lassabban indulna el.
+    # Megvarjuk, mig elindul az adatbazis (pl. lassan indulo db kontener).
     for attempt in range(1, attempts + 1):
         try:
             await _init_db()
@@ -41,10 +41,7 @@ async def _init_db() -> None:
 
 
 def _add_missing_columns(conn) -> None:
-    """create_all() never alters an existing table, so a column added to a model
-    later would be missing on an already-running database. This adds such
-    columns (nullable only, without FK constraints) - a minimal stand-in for a
-    migration tool that covers the "new optional column" case."""
+    # Kesobb hozzaadott nullable oszlopok felvetele meglevo tablakba (create_all nem modosit).
 
     inspector = inspect(conn)
     preparer = conn.dialect.identifier_preparer
@@ -64,10 +61,7 @@ def _add_missing_columns(conn) -> None:
 
 
 async def _sync_alert_status_enums(conn) -> None:
-    """On MariaDB the AlertStatus columns are native ENUMs created with the
-    members that existed at the time, so a newly added member would be rejected.
-    Appending values to an ENUM is a cheap (instant) ALTER on MariaDB.
-    SQLite stores the enum as plain VARCHAR, so it needs nothing."""
+    # MariaDB-n az uj AlertStatus ertekek felvetele a nativ ENUM oszlopokba.
 
     from app.enums import AlertStatus
 

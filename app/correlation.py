@@ -40,8 +40,7 @@ def correlation_host(raw: dict | None) -> str | None:
 
 
 async def find_correlated_record(session: AsyncSession, record: AlertRecord) -> AlertRecord | None:
-    # Forras IP-vel: a legutobbi hasonlo riasztas esete az idoablakon belul.
-    # Forras IP nelkul: ugyanannak a hostnak a rovid idon beluli esete (egy muvelet riasztas-sorozata).
+    # IP-vel: hasonlo riasztas esete az ablakban; IP nelkul: a host rovid idon beluli esete.
     ip = correlation_ip(record.raw_payload)
     if not ip:
         return await _find_same_host_record(session, record)

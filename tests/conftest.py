@@ -2,8 +2,7 @@ import os
 import tempfile
 from pathlib import Path
 
-# Must be set before anything imports app.config: env vars take precedence over
-# a developer's .env, so tests never call OpenRouter/VirusTotal/AbuseIPDB or touch a real DB.
+# Az app.config importja elott: env felulirja a .env-et, igy nincs kulso hivas.
 _TMP_DIR = Path(tempfile.mkdtemp(prefix="siemantics-tests-"))
 os.environ.update(
     OPENROUTER_API_KEY="",
@@ -40,7 +39,7 @@ async def _reset_db() -> None:
 
 
 class FakeIris:
-    """Records create_case_from_alert calls instead of talking to DFIR-IRIS."""
+    # create_case_from_alert hivasok rogzitese DFIR-IRIS helyett.
 
     def __init__(self) -> None:
         self.calls: list[dict] = []
@@ -100,12 +99,11 @@ def iris(monkeypatch) -> FakeIris:
 @pytest.fixture
 def client(iris):
     with TestClient(app) as c:
-        # startup re-queues QUEUED records left by the previous test: let them
-        # finish before wiping the tables under the worker
+        # Az indulas ujra sorba allitja az elozo teszt QUEUED rekordjait, megvarjuk oket.
         c.portal.call(alert_queue.join)
         c.portal.call(_reset_db)
         yield c
-        # pooled aiosqlite connections are bound to this client's event loop
+        # Az aiosqlite kapcsolatok ehhez a kliens event loophoz kotottek.
         c.portal.call(engine.dispose)
 
 
@@ -123,8 +121,7 @@ async def _record_out(record_id: int) -> dict:
 
 
 def process_alert(client, payload) -> dict:
-    """POST an alert to the webhook, wait for the background worker to triage it,
-    and return the resulting decision log record (AlertRecordOut as JSON)."""
+    # Riasztas a webhookra, megvarja a hatter triazst, es visszaadja a rekordot.
     res = client.post("/api/v1/alerts", json=payload, headers=WEBHOOK_HEADERS)
     assert res.status_code == 202, res.text
     assert res.json()["status"] == "queued"

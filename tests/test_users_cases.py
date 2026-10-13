@@ -15,7 +15,7 @@ def _create_user(admin_client, username, role="analyst"):
 
 
 def _login(username, password="analyst-pass") -> TestClient:
-    # separate client = separate cookie jar; shares the app (and its event loop setup)
+    # Kulon kliens = kulon cookie; ugyanaz az app.
     c = TestClient(app)
     assert c.post("/api/v1/auth/login", json={"username": username, "password": password}).status_code == 200
     return c
@@ -42,12 +42,12 @@ def test_analyst_case_assignment_rules(logged_in):
     case_id = _escalated_case(logged_in)
     alice, bob = _login("alice"), _login("bob")
 
-    # an analyst can take an unowned case for themselves...
+    # Analyst magahoz veheti a gazdatlan esetet...
     assert alice.put(f"/api/v1/cases/{case_id}/assignee", json={"user_id": alice_id}).status_code == 200
-    # ...but cannot take someone else's, or assign it to another user
+    # ...de maset nem veheti el, es masnak sem adhatja.
     assert bob.put(f"/api/v1/cases/{case_id}/assignee", json={"user_id": bob_id}).status_code == 403
     assert bob.put(f"/api/v1/cases/{case_id}/assignee", json={"user_id": None}).status_code == 403
-    # the owner can release it; the admin can assign it to anyone
+    # A gazda leadhatja; az admin barkihez rendelheti.
     assert alice.put(f"/api/v1/cases/{case_id}/assignee", json={"user_id": None}).status_code == 200
     assert logged_in.put(f"/api/v1/cases/{case_id}/assignee", json={"user_id": bob_id}).status_code == 200
 

@@ -49,5 +49,5 @@ async def change_own_password(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="current password is incorrect")
     user.password_hash = hash_password(body.new_password)
     await save_user(session, user)
-    # log out every other device, keep the current session
+    # A tobbi eszkozon kijelentkeztet, a mostani munkamenet marad.
     await delete_sessions_for_user(session, user.id, keep_token_hash=hash_token(request.cookies[SESSION_COOKIE]))

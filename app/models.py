@@ -31,33 +31,33 @@ class AlertRecord(Base):
 
     processing_time_ms: Mapped[float] = mapped_column(Float)
 
-    # Manualisan escalalt riasztasoknal a ground_truth mezot az analyst allitja be, a system nem.
+    # Ground truth cimke a kiertekeleshez, az analyst allitja be.
     ground_truth: Mapped[GroundTruth | None] = mapped_column(Enum(GroundTruth), nullable=True)
     labeled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    # A riasztas feldolgozasa soran a system altal talalt IOC-k (pl. hash, IP, domain) - a triage logban is megjelenik.
+    # VirusTotal / AbuseIPDB eredmenyek IP IoC-nkent, eszkalalt riasztasnal.
     ioc_enrichment: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
-    # A riasztas eredeti payload-ja, hogy a teljes log alapjan később is lehetőség legyen a riasztás újrafeldolgozására.
+    # Eredeti Wazuh payload, kesobbi eszkalaciohoz / ujrafeldolgozashoz.
     raw_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    # A riasztas feldolgozasa soran a system altal talalt IOC-k (pl. hash, IP, domain) - a triage logban is megjelenik.
+    # A valaszolo konkret modell (az openrouter/free hivasonkent mas modellt valaszt).
     triage_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # review_reason mező csak akkor van kitöltve, ha a riasztás NEEDS_REVIEW státuszba került, és az analystnak kell dönteni róla.
+    # Miert lett NEEDS_REVIEW a SUPPRESSED helyett.
     review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # Automatikus döntés a riasztás státuszáról (ESCALATED, SUPPRESSED, NEEDS_REVIEW) - az analyst döntése nem számít bele a statisztikába.
+    # Az automatikus dontes; kezi eszkalacional is valtozatlan, a metrikak ezt hasznaljak.
     auto_status: Mapped[AlertStatus | None] = mapped_column(Enum(AlertStatus), nullable=True)
     escalated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     escalated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # Correlation key (related alerts from the same host)
+    # Korrelacios kulcs (kapcsolodo riasztasok ugyanarrol a hostrol).
     agent_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # Structured LLM ticket content (summary, actions, investigation steps, ...)
+    # Az LLM strukturalt elemzese (osszefoglalo, teendok, vizsgalati lepesek).
     llm_analysis: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # A korabbi riasztas ID-ja, akinek az IRIS esetebe ez a riasztas bekerult.
     correlated_with_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     @property
     def display_id(self) -> str:
-        """Unique, human-facing alert ID (the Wazuh alert_id is not unique)."""
+        # Egyedi riasztas azonosito (a Wazuh alert_id nem egyedi).
         return f"ID-{self.id}"
 
     @property
@@ -66,7 +66,7 @@ class AlertRecord(Base):
 
 
 class User(Base):
-    """Dashboard user. Only an admin can create users (see routers/users.py)."""
+    # Dashboard felhasznalo; csak admin hozhat letre.
 
     __tablename__ = "users"
 
@@ -75,14 +75,14 @@ class User(Base):
     full_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.ANALYST)
-    # A felhasználó aktív-e (be tud-e lépni). Ha egy admin deaktiválja, a session cookie-k azonnal lejárnak.
+    # Aktiv-e; deaktivalaskor a munkamenetei azonnal ervenytelenek.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class UserSession(Base):
-    """Server-side login session - only the SHA-256 of the cookie token is stored."""
+    # Szerver oldali munkamenet; csak a cookie token SHA-256-ja tarolodik.
 
     __tablename__ = "user_sessions"
 
@@ -94,11 +94,7 @@ class UserSession(Base):
 
 
 class CaseAssignment(Base):
-    """Assigns a DFIR-IRIS case (AlertRecord.iris_case_id) to a user.
-
-    Kept as a separate table instead of a column on alert_records so it is
-    picked up by create_all() on existing databases without a migration.
-    """
+    # IRIS eset felelose; kulon tabla, mert egy esethez tobb riasztas tartozhat.
 
     __tablename__ = "case_assignments"
 

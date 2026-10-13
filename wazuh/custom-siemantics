@@ -1,19 +1,5 @@
 #!/var/ossec/framework/python/bin/python3
-"""Wazuh integratord -> SIEMantics webhook.
-
-Installed on the Wazuh manager as /var/ossec/integrations/custom-siemantics
-(owner root:wazuh, mode 750) and enabled with an <integration> block in
-ossec.conf (see wazuh/ossec-integration.xml). integratord runs it once per
-matching alert with:
-
-    argv[1]  path of a file holding the alert as JSON (<alert_format>json</alert_format>)
-    argv[2]  <api_key>  -> sent as the X-Webhook-Token header (= WAZUH_WEBHOOK_TOKEN)
-    argv[3]  <hook_url> -> e.g. http://siemantics-host:8000/api/v1/alerts
-    "debug" anywhere after them turns on verbose logging
-
-Standard library only, so it runs on the Wazuh framework Python as-is.
-Log: /var/ossec/logs/integrations.log
-"""
+# Wazuh integratord -> SIEMantics webhook; telepites es parameterek: README, Wazuh bekotese.
 
 import json
 import ssl
@@ -25,11 +11,10 @@ from datetime import datetime
 
 LOG_FILE = "/var/ossec/logs/integrations.log"
 TIMEOUT_SECONDS = 15
-# SIEMantics answers as soon as the alert is stored (triage runs in the background),
-# so a retry is only needed for a short outage, e.g. while the container restarts.
+# A SIEMantics tarolas utan azonnal valaszol, retry csak rovid kiesesre kell.
 ATTEMPTS = 3
 RETRY_DELAY_SECONDS = 5
-# Only for an HTTPS hook_url with a self-signed certificate in an isolated lab network.
+# Csak onalairt HTTPS hook_url-hez, zart lab halozatban.
 VERIFY_TLS = True
 
 debug_enabled = False
@@ -62,7 +47,7 @@ def send(alert: dict, token: str, hook_url: str) -> bool:
                 return True
         except urllib.error.HTTPError as exc:
             detail = exc.read(300)
-            # 4xx (bad token, invalid payload) will not get better by retrying
+            # 4xx (rossz token, hibas payload) retry-ra sem javul.
             if exc.code < 500:
                 log(f"alert {alert.get('id')} rejected: HTTP {exc.code} {detail!r}")
                 return False
@@ -84,7 +69,7 @@ def main(args: list[str]) -> int:
     debug_enabled = "debug" in args[4:]
 
     try:
-        # Logs (e.g. Windows events) can carry non-UTF-8 bytes; one bad byte must not drop the alert
+        # A log (pl. Windows) nem UTF-8 bajtot is tartalmazhat, ez ne dobja el a riasztast.
         with open(alert_file, encoding="utf-8", errors="replace") as f:
             alert = json.load(f)
     except (OSError, ValueError) as exc:

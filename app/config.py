@@ -5,20 +5,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     openrouter_api_key: str = ""
-    # AI modell definiálása (Most épp csak ingyenes modelleket használ)
+    # LLM modell, csak ingyenes (openrouter/free vagy :free vegu).
     openrouter_model: str = "openrouter/free"
 
-    # Ez egy mock, azaz ha elérhetetlen az OR akkor erre fog visszaesni és csak a detection adatok alapján elemez.
+    # Mock motor kuszobe: OpenRouter nelkul ettol a Wazuh szinttol TP.
     llm_mock_severity_threshold: int = 7
-    # Egy OpenRouter hívás max. ideje (mp); lejárat után a mock motor dönt. Az OpenAI kliens
-    # alapértéke 600 mp lenne, ami egy lassú ingyenes modellnél percekre feltartaná a sort.
+    # Egy OpenRouter hivas max. ideje mp-ben, utana a mock motor dont.
     openrouter_timeout_seconds: float = Field(default=60.0, gt=0)
 
-    # Ha a triázs false positive-ot mond, de a confidence ez alatt van, a riasztás nem
-    # SUPPRESSED, hanem NEEDS_REVIEW lesz (analystnak kell ránéznie, IRIS eset nem nyílik).
+    # FP iteletnel ez alatti confidence-szel NEEDS_REVIEW lesz, nem SUPPRESSED.
     review_confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    # Prompt injection védőháló: ilyen Wazuh severity felett az LLM nem nyomhatja el a riasztást
-    # (false positive ítélet esetén is NEEDS_REVIEW lesz belőle).
+    # Prompt injection vedohalo: ettol a szinttol az LLM FP itelete NEEDS_REVIEW.
     review_severity_floor: int = 12
 
     # DFIR-IRIS
@@ -28,18 +25,15 @@ class Settings(BaseSettings):
     iris_verify_ssl: bool = True
     # Publikus URL, ha meg van adva, az IRIS eset visszalinkel a riasztasra.
     siemantics_public_url: str = ""
-    # Korrelacios ablak orakban, 0 = kikapcsolva. Ezen belul az azonos forras IP-rol jovo hasonlo riasztas a meglevo
-    # IRIS esetbe kerul, es az azonos hostrol / forras IP-rol jott riasztasok az LLM ele kerulnek ("related alerts").
+    # Korrelacios ablak oraban (0 = ki): IP alapu esetbe sorolas es LLM kontextus.
     correlation_window_hours: int = Field(default=24, ge=0)
-    # Forras IP nelkuli riasztas ennyi percen belul ugyanannak a hostnak a nyitott esetebe kerul
-    # (pl. egy useradd FIM + user/group riasztasai), 0 = kikapcsolva.
+    # Forras IP nelkuli riasztas ennyi percen belul a host nyitott esetebe kerul (0 = ki).
     correlation_host_window_minutes: int = Field(default=10, ge=0)
     # Legfeljebb ennyi kapcsolodo riasztas kerul az LLM ele.
     correlation_max_alerts: int = Field(default=10, ge=0)
 
     wazuh_webhook_token: str = ""
-    # Háttérben párhuzamosan feldolgozott riasztások száma (app/pipeline.py). 1 = sorban,
-    # ami kíméli az OpenRouter free rate limitet és a korreláció is a korábbi döntéseket látja.
+    # Parhuzamos triazs workerek; 1 = sorban (free rate limit, korrelacio).
     triage_workers: int = Field(default=1, ge=1)
 
     virustotal_api_key: str = ""
@@ -48,7 +42,7 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite+aiosqlite:///./siemantics.db"
 
-    # Felhasználókezelés: ha még nincs egyetlen felhasználó sem, induláskor ezzel jön létre az első admin.
+    # Elso admin, ha meg nincs egyetlen felhasznalo sem.
     admin_username: str = "admin"
     admin_password: str = ""
     session_ttl_hours: int = 12

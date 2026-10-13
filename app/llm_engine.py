@@ -35,7 +35,7 @@ _client = (
     else None
 )
 
-# A prompt ami alapján a tényleges triázs történni fog. Angol, mivel a promptokat angolul jobban kezelik az LLM-ek.
+# A triazs prompt; angolul, mert az LLM-ek azt kezelik jobban.
 _SYSTEM_PROMPT = (
     "You are a SOC tier-2 analyst triaging a single Wazuh alert. Decide if it is a true "
     "positive requiring incident response, or a false positive/noise, extract any concrete "
@@ -97,9 +97,7 @@ def _parse_json_response(raw: str) -> dict:
 
 
 def build_user_prompt(alert: NormalizedAlert, related: list[RelatedAlert] | None = None) -> str:
-    """JSON-encode the alert so the (attacker-controlled) log cannot break out of
-    the data block: quotes and newlines get escaped, and "<" is escaped too, so a
-    literal </alert_data> inside the log cannot close the tag."""
+    # A riasztas JSON-kent kerul a promptba, igy a tamado altal irt log nem tor ki az adatblokkbol.
 
     data = {
         "rule": alert.rule_description,
@@ -147,16 +145,14 @@ async def _openrouter_triage(alert: NormalizedAlert, related: list[RelatedAlert]
 
     raw = response.choices[0].message.content
     data = _parse_json_response(raw)
-    # engine/model are ours to set, not the model's
+    # Az engine/model mezot mi toltjuk ki, nem a modell.
     data.pop("engine", None)
     data.pop("model", None)
     return TriageResult(**data, engine="openrouter", model=response.model)
 
 
 async def triage_alert(alert: NormalizedAlert, related: list[RelatedAlert] | None = None) -> TriageResult:
-    """Triage via OpenRouter (free-tier only), falling back to the deterministic
-    mock engine if no API key is configured, the model isn't a free model, or the
-    call fails (network, rate limit, timeout, ...)."""
+    # Triazs OpenRouterrel (csak free); kulcs nelkul vagy hibanal a mock motor dont.
 
     if _client is None:
         logger.warning("OpenRouter not configured/available, using mock triage engine for alert %s", alert.alert_id)

@@ -1,5 +1,4 @@
-# Hatter feldolgozas: a webhook csak sorba allit, a workerek triazsolnak.
-# Ujrainditaskor a QUEUED rekordok ujra sorba kerulnek.
+# Hatter triazs: a webhook sorba allit, a workerek dolgozzak fel, ujrainditaskor folytatva.
 
 import asyncio
 import logging
@@ -35,7 +34,7 @@ def alert_from_record(record: AlertRecord) -> NormalizedAlert:
         alert = normalize_wazuh_alert(WazuhAlertPayload.model_validate(record.raw_payload))
         alert.received_at = record.received_at
         return alert
-    # Records stored before raw_payload existed
+    # raw_payload elotti regi rekordok.
     return NormalizedAlert(
         alert_id=record.alert_id,
         source_ip=record.source_ip,
@@ -58,8 +57,7 @@ async def related_alerts(
     if settings.correlation_window_hours <= 0 or settings.correlation_max_alerts <= 0:
         return []
     window = timedelta(hours=settings.correlation_window_hours)
-    # Agent 000 is the Wazuh manager: every firewall/cloud integration alert carries
-    # its name, so matching on it would link unrelated events - use the source IP only.
+    # A manager (000) nevet minden tuzfal/felho integracio viseli, ott csak IP alapjan.
     agent_name = alert.agent_name if alert.agent_id != "000" else None
     records = await find_related_alerts(
         session,
@@ -140,7 +138,7 @@ def manual_triage(record: AlertRecord, username: str) -> TriageResult:
         iocs=record.llm_iocs or [],
         engine="manual",
         model=record.triage_model,
-        # Keep the original structured analysis (summary, actions, ...) for the ticket
+        # Az eredeti strukturalt elemzes megmarad a tickethez.
         **(record.llm_analysis or {}),
     )
 
@@ -165,7 +163,7 @@ async def manual_escalate(
     record.escalated_by_id = user.id
     record.escalated_at = now
     if label_true_positive:
-        # Az eszkalacio az analyst TP iteleteje.
+        # Az eszkalacio az analyst TP itelete.
         record.ground_truth = GroundTruth.TRUE_POSITIVE
         record.labeled_at = now
     await save_alert_record(session, record)
@@ -229,7 +227,7 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessO
         case, correlated = await send_to_iris(session, record, alert, triage, record.ioc_enrichment or [])
     except Exception as exc:
         logger.exception("iris case creation failed for alert %s (%s)", alert.alert_id, record.display_id)
-        # auto_status stays ESCALATED: the triage decision was right, only IRIS was unavailable
+        # auto_status ESCALATED marad: a triazs jo volt, csak az IRIS nem volt elerheto.
         record.status = AlertStatus.ERROR
         record.error_detail = f"iris case creation failed: {exc}"
         record.processing_time_ms = _elapsed_ms(started)
@@ -278,8 +276,7 @@ class AlertQueue:
 
     def enqueue(self, record_id: int) -> None:
         if self._queue is None:
-            # Not started (should not happen in the app): the record stays QUEUED
-            # in the database and is picked up on the next startup.
+            # Nem fut a sor: a rekord QUEUED marad, ujrainditaskor feldolgozodik.
             logger.error("alert queue not running, record %s will be processed after restart", record_id)
             return
         self._queue.put_nowait(record_id)
@@ -304,8 +301,7 @@ class AlertQueue:
                         continue
                     await process_record(session, record)
             except Exception as exc:
-                # Keep the worker alive, and do not leave the record QUEUED (it would be
-                # retried - and probably fail again - on every restart)
+                # A worker eletben marad, a rekord ne maradjon QUEUED (ujrainditaskor ujra elbukna).
                 logger.exception("worker %d: unexpected error while processing record %s", index, record_id)
                 await _mark_failed(record_id, exc)
             finally:

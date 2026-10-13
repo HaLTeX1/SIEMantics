@@ -14,14 +14,12 @@ def _percentile(values: list[float], pct: float) -> float | None:
 
 
 def _automatic_status(record: AlertRecord) -> AlertStatus:
-    """The decision the system made on its own - an analyst's manual escalation
-    changes `status`, but must not count as a correct automatic prediction.
-    Records from before auto_status existed fall back to status."""
+    # A rendszer sajat dontese; a kezi eszkalacio nem szamit helyes predikcionak.
     return record.auto_status or record.status
 
 
 def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
-    # Not triaged yet: no decision to evaluate and no processing time
+    # Meg nincs triazsolva: nincs mit kiertekelni.
     records = [r for r in records if r.status != AlertStatus.QUEUED]
     tp = fp = tn = fn = 0
     review_true_positive = 0
@@ -29,7 +27,7 @@ def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
     for record in records:
         if record.ground_truth is None:
             continue
-            # NEEDS_REVIEW riasztásokat nem lehet belevenni a statisztikába, mert az analyst döntésén múlik, nem a rendszerén.
+        # NEEDS_REVIEW negativ predikcio; a TP-k kozuluk a review sor altal elkapott FN-ek.
         auto_status = _automatic_status(record)
         if auto_status == AlertStatus.NEEDS_REVIEW and record.ground_truth == GroundTruth.TRUE_POSITIVE:
             review_true_positive += 1

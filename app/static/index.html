@@ -455,7 +455,7 @@
   "use strict";
 
   const API_ALERTS = "/api/v1/alerts?limit=500";
-  // Strip a legacy "#" prefix: it would start a URL fragment
+  // Regi # elotag levagasa, URL fragmentet kezdene.
   const refOf = (displayId) => displayId.replace(/^#/, "");
   const API_LABEL = (displayId) => `/api/v1/alerts/${encodeURIComponent(refOf(displayId))}/label`;
   const API_ESCALATE = (displayId) => `/api/v1/alerts/${encodeURIComponent(refOf(displayId))}/escalate`;
@@ -529,8 +529,7 @@
     return `<span class="assignee${isMe ? " me" : ""}">${escapeHtml(userLabel(a.assignee))}${isMe ? " (én)" : ""}</span>`;
   }
 
-  // Admins get a dropdown of every active user; analysts can only take an
-  // unowned case or release their own (mirrors the API's permission rules).
+  // Admin barkit valaszthat, analyst csak gazdatlan esetet vehet at vagy a sajatjat adhatja le.
   function assignControl(a) {
     const caseId = escapeHtml(a.iris_case_id);
     const current = a.assignee ? a.assignee.id : null;
@@ -543,7 +542,7 @@
       const options = [`<option value="">— nincs felelős —</option>`].concat(
         assignees.map((u) => `<option value="${u.id}" ${u.id === current ? "selected" : ""}>${escapeHtml(userLabel(u))}</option>`)
       );
-      // keep a deactivated current assignee visible in the dropdown
+      // Inaktiv jelenlegi felelos is latszodjon a listaban.
       if (current != null && !assignees.some((u) => u.id === current)) {
         options.push(`<option value="${current}" selected>${escapeHtml(userLabel(a.assignee))} (inaktív)</option>`);
       }
@@ -568,7 +567,7 @@
       });
       if (!res.ok) {
         let detail = `HTTP ${res.status}`;
-        try { detail = (await res.json()).detail || detail; } catch (_) { /* not JSON */ }
+        try { detail = (await res.json()).detail || detail; } catch (_) { /* nem JSON */ }
         throw new Error(detail);
       }
     } catch (err) {
@@ -598,7 +597,7 @@
       const res = await SIEM.api(API_ESCALATE(displayId), { method: "POST" });
       if (!res.ok) {
         let detail = `HTTP ${res.status}`;
-        try { detail = (await res.json()).detail || detail; } catch (_) { /* not JSON */ }
+        try { detail = (await res.json()).detail || detail; } catch (_) { /* nem JSON */ }
         throw new Error(detail);
       }
     } catch (err) {
@@ -623,7 +622,7 @@
 
   async function errorDetail(res) {
     let detail = `HTTP ${res.status}`;
-    try { detail = (await res.json()).detail || detail; } catch (_) { /* not JSON */ }
+    try { detail = (await res.json()).detail || detail; } catch (_) { /* nem JSON */ }
     return typeof detail === "string" ? detail : JSON.stringify(detail);
   }
 
@@ -1013,7 +1012,7 @@
   assigneeFilter.addEventListener("change", applyFilters);
   el("refreshBtn").addEventListener("click", fetchAlerts);
 
-  // --- Timeline: single-series bar chart, rounded top, square baseline ---
+  // --- Timeline: egysoros oszlopdiagram ---
 
   const svg = el("timelineSvg");
   const tooltip = el("timelineTooltip");
@@ -1154,8 +1153,7 @@
       `<option value="${u.id}">${escapeHtml(userLabel(u))}</option>`).join(""));
   }
 
-  // the table is re-rendered once the user is known so "(én)" and the
-  // assignment controls reflect the current user's role
+  // A felhasznalo ismereteben ujrarajzolas, hogy az (en) es a jogosultsagok stimmeljenek.
   SIEM.me().then((user) => {
     currentUser = user;
     SIEM.renderUserMenu(el("userMenu"), user);

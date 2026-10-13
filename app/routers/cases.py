@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api/v1/cases", tags=["cases"])
 
 @router.get("/assignees", response_model=list[AssigneeOut], dependencies=[Depends(get_current_user)])
 async def get_assignable_users(session: AsyncSession = Depends(get_session)):
-    """Active users a case can be assigned to (for the assignee dropdown)."""
+    # Aktiv felhasznalok, akikhez eset rendelheto.
     return await list_active_users(session)
 
 
@@ -47,7 +47,7 @@ async def assign_case(
     current = await get_case_assignment(session, iris_case_id)
     current_user_id = current.user_id if current else None
 
-    # Analysts may only take an unowned case for themselves, or release their own.
+    # Analyst csak gazdatlan esetet vehet magahoz, vagy a sajatjat adhatja le.
     if user.role != UserRole.ADMIN:
         taking = body.user_id == user.id and current_user_id in (None, user.id)
         releasing = body.user_id is None and current_user_id == user.id

@@ -266,7 +266,7 @@
       const body = await res.json();
       if (typeof body.detail === "string") return body.detail;
       if (Array.isArray(body.detail)) return body.detail.map((d) => d.msg).join("; ");
-    } catch (_) { /* not JSON */ }
+    } catch (_) { /* nem JSON */ }
     return `HTTP ${res.status}`;
   }
 

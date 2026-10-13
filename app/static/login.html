@@ -108,7 +108,7 @@
   const submitBtn = document.getElementById("submitBtn");
   const errorMsg = document.getElementById("errorMsg");
 
-  // only allow same-site relative redirects after login
+  // Belepes utan csak relativ, azonos oldali atiranyitas.
   function nextUrl() {
     const next = new URLSearchParams(window.location.search).get("next") || "";
     return next.startsWith("/") && !next.startsWith("//") ? next : "/ui/";
