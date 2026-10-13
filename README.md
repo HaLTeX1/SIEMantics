@@ -88,6 +88,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `IRIS_API_KEY` | DFIR-IRIS API kulcs |
 | `IRIS_CUSTOMER_ID` | eset létrehozáshoz tartozó ügyfél ID |
 | `CORRELATION_WINDOW_HOURS` | alapértelmezett: `24`; ennyi órán belül az azonos forrás IP-ről jövő hasonló riasztás a meglévő IRIS esetbe kerül (lásd [Korreláció](#korreláció)), és az azonos hostról / forrás IP-ről érkezett korábbi riasztások az LLM elé kerülnek (lásd [Kapcsolódó riasztások](#kapcsolódó-riasztások-az-llm-nek)); `0` = kikapcsolva |
+| `CORRELATION_HOST_WINDOW_MINUTES` | alapértelmezett: `10`; forrás IP nélküli riasztás ennyi percen belül ugyanannak a hostnak a meglévő IRIS esetébe kerül (lásd [Korreláció](#korreláció)); `0` = kikapcsolva |
 | `CORRELATION_MAX_ALERTS` | alapértelmezett: `10` — legfeljebb ennyi kapcsolódó riasztás kerül az LLM elé riasztásonként |
 | `SIEMANTICS_PUBLIC_URL` | opcionális; ha meg van adva, az IRIS eset visszalinkel a SIEMantics riasztás-részletre |
 | `IRIS_VERIFY_SSL` | alapértelmezett: `true`. **Csak** ismert, belső/lab IRIS instanciánál önaláírt tanúsítvánnyal állítsd `false`-ra — lásd lent |
@@ -174,12 +175,13 @@ A riasztásból származó szöveg (log, `data` mezők, agent név) támadó ál
 
 ## Korreláció
 
-Egy eszkalált riasztás nem nyit új IRIS esetet, ha `CORRELATION_WINDOW_HOURS` (alapból 24 óra) belül már volt eszkalált riasztás
-- **ugyanarról a forrás IP-ről** (`data.srcip` — az agent IP nem számít; forrás IP nélküli riasztás sosem korrelálódik), és
-- **hasonló**: azonos Wazuh szabály ID, vagy legalább egy közös MITRE technika (az altechnika a fő technikának számít, pl. T1110.001 ~ T1110.003).
+Egy eszkalált riasztás két esetben nem nyit új IRIS esetet (`app/correlation.py`):
 
-Ilyenkor a riasztás a legutóbbi hasonló riasztás esetébe kerül (`app/correlation.py`):
-- saját `SIEMantics ID-43` note-csoportot kap (a triázs note jelzi: „Correlated with ID-42”), és új timeline eseményt, ami a már meglévő assethez/IoC-khoz kapcsolódik — a meglévő IoC-k és assetek nem kerülnek fel újra,
+1. **Van forrás IP-je** (`data.srcip` — az agent IP nem számít), és `CORRELATION_WINDOW_HOURS` (alapból 24 óra) belül már volt eszkalált riasztás **ugyanarról a forrás IP-ről**, ami **hasonló**: azonos Wazuh szabály ID, vagy legalább egy közös MITRE technika (az altechnika a fő technikának számít, pl. T1110.001 ~ T1110.003).
+2. **Nincs forrás IP-je** (FIM, felhasználó/csoport változás, csomagtelepítés, …), és `CORRELATION_HOST_WINDOW_MINUTES` (alapból 10 perc) belül már van IRIS esete **ugyanannak a hostnak** (Wazuh agent) — a szabálytól függetlenül. Egy művelet (pl. egy `useradd`: FIM a `/etc/passwd`-n, `/etc/shadow`-n, …, majd „New user added”) így egy esetbe kerül, nem ötbe. A Wazuh manager (agent `000`) riasztásai kimaradnak, mert azon fut minden tűzfal/felhő integráció.
+
+Ilyenkor a riasztás a legutóbbi ilyen riasztás esetébe kerül:
+- saját `SIEMantics ID-43` note-csoportot kap (a triázs note jelzi: „Correlated with ID-42”, és hogy forrás IP vagy host alapján), és új timeline eseményt, ami a már meglévő assethez/IoC-khoz kapcsolódik — a meglévő IoC-k és assetek nem kerülnek fel újra,
 - az eset tagjei bővülnek (`ID-43`, `correlated`, …), a severity és a névben a prioritás csak **emelkedhet** (pl. `[P3/MEDIUM]` → `[P1/CRITICAL]`),
 - a rekordon a `correlated_with` mező mutatja, melyik riasztás esetébe került (API, dashboard).
 

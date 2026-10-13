@@ -72,11 +72,57 @@ def test_same_alert_from_other_ip_opens_new_case(client, iris):
     assert second["correlated_with"] is None
 
 
-def test_alert_without_source_ip_is_not_correlated(client, iris):
-    post(client, tp_alert("c-1", srcip=None))
-    second = post(client, tp_alert("c-2", srcip=None))
+def host_alert(alert_id, rule_id, agent=None):
+    # Forras IP nelkuli riasztas (FIM, user/group valtozas), mint egy useradd riasztas-sorozata.
+    return tp_alert(alert_id, srcip=None, rule_id=rule_id, agent=agent or {"id": "024", "name": "IAM_PROD"})
+
+
+def test_alerts_without_source_ip_from_same_host_share_a_case(client, iris):
+    # Egy useradd: FIM a passwd-n, majd "new user added" - mas szabaly, de ugyanaz a muvelet.
+    first = post(client, host_alert("fim-1", "100405"))
+    second = post(client, host_alert("user-1", "5902"))
+    assert second["correlated_with"] == first["display_id"]
+    assert second["iris_case_id"] == first["iris_case_id"]
+    assert len(iris.calls) == 1 and len(iris.added) == 1
+
+
+def test_alert_without_source_ip_from_other_host_opens_new_case(client, iris):
+    post(client, host_alert("fim-1", "100405"))
+    second = post(client, host_alert("fim-2", "100405", agent={"id": "025", "name": "pve1"}))
     assert second["correlated_with"] is None
     assert len(iris.calls) == 2
+
+
+def test_wazuh_manager_alerts_are_not_correlated_by_host(client, iris):
+    manager = {"id": "000", "name": "wazuh-manager"}
+    post(client, host_alert("m-1", "100405", agent=manager))
+    assert post(client, host_alert("m-2", "5902", agent=manager))["correlated_with"] is None
+
+
+def test_same_host_alert_outside_host_window_opens_new_case(client, iris):
+    first = post(client, host_alert("fim-1", "100405"))
+
+    async def age_first_record():
+        async with async_session() as session:
+            old = datetime.utcnow() - timedelta(minutes=settings.correlation_host_window_minutes + 1)
+            await session.execute(update(AlertRecord).where(AlertRecord.id == first["id"]).values(received_at=old))
+            await session.commit()
+
+    client.portal.call(age_first_record)
+    assert post(client, host_alert("user-1", "5902"))["correlated_with"] is None
+
+
+def test_host_correlation_can_be_disabled(client, iris, monkeypatch):
+    monkeypatch.setattr(settings, "correlation_host_window_minutes", 0)
+    post(client, host_alert("fim-1", "100405"))
+    assert post(client, host_alert("user-1", "5902"))["correlated_with"] is None
+
+
+def test_alert_with_source_ip_is_not_correlated_by_host_alone(client, iris):
+    # Forras IP-s riasztasnal az IP szabaly dont: mas szabaly ugyanarrol a hostrol uj eset.
+    post(client, host_alert("fim-1", "100405"))
+    second = post(client, tp_alert("ssh-1", rule_id="31106", mitre=["T1190"], agent={"id": "024", "name": "IAM_PROD"}))
+    assert second["correlated_with"] is None
 
 
 def test_alert_outside_window_opens_new_case(client, iris):

@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from app.config import settings
+from app.correlation import correlation_ip
 from app.mock_engine import severity_bucket
 from app.schemas import NormalizedAlert, TriageResult
 
@@ -256,7 +257,11 @@ def case_tags(ctx: CaseContext) -> list[str]:
 
 
 def _correlation_line(ctx: CaseContext) -> str:
-    return f"Correlated with {ctx.correlated_with}: same source IP and similar alert, added to its case."
+    if correlation_ip(ctx.raw):
+        reason = "same source IP and similar alert"
+    else:
+        reason = f"same host within {settings.correlation_host_window_minutes} minutes (no source IP)"
+    return f"Correlated with {ctx.correlated_with}: {reason}, added to its case."
 
 
 def priority_tag(severity: str) -> str:

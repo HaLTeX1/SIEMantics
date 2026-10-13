@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # Korrelacios ablak orakban, 0 = kikapcsolva. Ezen belul az azonos forras IP-rol jovo hasonlo riasztas a meglevo
     # IRIS esetbe kerul, es az azonos hostrol / forras IP-rol jott riasztasok az LLM ele kerulnek ("related alerts").
     correlation_window_hours: int = Field(default=24, ge=0)
+    # Forras IP nelkuli riasztas ennyi percen belul ugyanannak a hostnak a nyitott esetebe kerul
+    # (pl. egy useradd FIM + user/group riasztasai), 0 = kikapcsolva.
+    correlation_host_window_minutes: int = Field(default=10, ge=0)
     # Legfeljebb ennyi kapcsolodo riasztas kerul az LLM ele.
     correlation_max_alerts: int = Field(default=10, ge=0)
 

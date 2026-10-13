@@ -31,10 +31,21 @@ def is_similar(raw_a: dict | None, raw_b: dict | None) -> bool:
     return bool(base_techniques(raw_a) & base_techniques(raw_b))
 
 
+def correlation_host(raw: dict | None) -> str | None:
+    # Az agent neve, a manager (000) kivetelevel: azon fut minden tuzfal/felho integracio.
+    agent = (raw or {}).get("agent") or {}
+    if agent.get("id") == "000":
+        return None
+    return agent.get("name") or None
+
+
 async def find_correlated_record(session: AsyncSession, record: AlertRecord) -> AlertRecord | None:
-    # A legutobbi, IRIS esettel rendelkezo hasonlo riasztas ugyanarrol a forras IP-rol az idoablakon belul.
+    # Forras IP-vel: a legutobbi hasonlo riasztas esete az idoablakon belul.
+    # Forras IP nelkul: ugyanannak a hostnak a rovid idon beluli esete (egy muvelet riasztas-sorozata).
     ip = correlation_ip(record.raw_payload)
-    if not ip or settings.correlation_window_hours <= 0:
+    if not ip:
+        return await _find_same_host_record(session, record)
+    if settings.correlation_window_hours <= 0:
         return None
 
     since = datetime.utcnow() - timedelta(hours=settings.correlation_window_hours)
@@ -50,5 +61,29 @@ async def find_correlated_record(session: AsyncSession, record: AlertRecord) -> 
     )
     for candidate in result.scalars():
         if correlation_ip(candidate.raw_payload) == ip and is_similar(record.raw_payload, candidate.raw_payload):
+            return candidate
+    return None
+
+
+async def _find_same_host_record(session: AsyncSession, record: AlertRecord) -> AlertRecord | None:
+    # A legutobbi, IRIS esettel rendelkezo riasztas ugyanarrol a hostrol, a riasztas korul +-ablakban.
+    host = correlation_host(record.raw_payload)
+    if not host or settings.correlation_host_window_minutes <= 0:
+        return None
+    window = timedelta(minutes=settings.correlation_host_window_minutes)
+    received = record.received_at or datetime.utcnow()
+    result = await session.execute(
+        select(AlertRecord)
+        .where(
+            AlertRecord.agent_name == host,
+            AlertRecord.iris_case_id.is_not(None),
+            AlertRecord.received_at >= received - window,
+            AlertRecord.received_at <= received + window,
+            AlertRecord.id != record.id,
+        )
+        .order_by(AlertRecord.received_at.desc())
+    )
+    for candidate in result.scalars():
+        if correlation_host(candidate.raw_payload) == host:
             return candidate
     return None

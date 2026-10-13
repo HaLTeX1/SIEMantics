@@ -374,3 +374,12 @@ def test_mock_triage_case_says_manual_triage_needed():
     ctx = _ctx()
     ctx.triage = ctx.triage.model_copy(update={"engine": "mock", "model": None})
     assert "triage this alert manually" in dict(case_notes(ctx))["1. Triage summary"]
+
+
+def test_correlation_reason_names_the_rule_that_matched():
+    by_ip = _ctx(correlated_with="ID-41")
+    assert "same source IP and similar alert" in dict(case_notes(by_ip))["1. Triage summary"]
+
+    raw = {**SSH_BRUTE_FORCE, "data": {}}
+    by_host = _ctx(raw=raw, correlated_with="ID-41")
+    assert "same host within 10 minutes (no source IP)" in dict(case_notes(by_host))["1. Triage summary"]
