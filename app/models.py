@@ -62,6 +62,8 @@ class AlertRecord(Base):
     rule_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     # Az elnyomo suppression szabaly, ha szabaly nyomta el.
     suppression_rule_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    # Mikor latta a SIEMantics lezartnak az IRIS esetet; utana nem kerdezi le ujra.
+    case_closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     @property
     def display_id(self) -> str:

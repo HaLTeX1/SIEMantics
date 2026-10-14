@@ -280,6 +280,7 @@
         ? `<a class="iris-link" href="${escapeHtml(irisBaseUrl)}/case?cid=${encodeURIComponent(a.iris_case_id)}" target="_blank" rel="noopener">Case #${escapeHtml(a.iris_case_id)} megnyitása az IRIS-ben ↗</a>`
         : `Case #${escapeHtml(a.iris_case_id)}`;
       fields.push(field("DFIR-IRIS eset", link));
+      fields.push(field("Eset állapota", a.case_closed_at ? `Lezárva (${fmtTime(a.case_closed_at)})` : "Nyitott"));
       if (a.correlated_with) {
         fields.push(field("Korrelálva",
           `<a href="alert.html?id=${encodeURIComponent(a.correlated_with)}">${escapeHtml(a.correlated_with)}</a> esetébe került (azonos forrás IP, hasonló riasztás)`));

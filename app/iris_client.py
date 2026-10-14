@@ -35,6 +35,11 @@ NOTE_GROUP_TITLE = "SIEMantics"
 _TLP_AMBER = 2
 _ANALYSIS_TO_BE_DONE = 2
 
+# IRIS eset kimenetel (status_id): 1 false positive, 2/4 true positive, 5 legitimate.
+OUTCOME_FALSE_POSITIVE = 1
+OUTCOME_TRUE_POSITIVE = (2, 4)
+OUTCOME_LEGITIMATE = 5
+
 # IRIS alap severity nevek.
 _IRIS_SEVERITY = {"low": "Low", "medium": "Medium", "high": "High", "critical": "Critical"}
 
@@ -152,6 +157,24 @@ class IrisClient:
             old = [t for t in str(case.get("case_tags") or "").split(",") if t]
             payload = {"case_name": name, "case_tags": ",".join(dict.fromkeys(old + tags))}
             await self._post(client, f"/manage/cases/update/{case_id}", json=payload)
+
+    async def get_case(self, case_id: int) -> dict | None:
+        # Az eset adatai (close_date, status_id, case_tags); None, ha nem letezik.
+        async with self._client() as client:
+            resp = await client.get(f"/manage/cases/{case_id}")
+            client.cookies.clear()
+            if resp.status_code == 404:
+                return None
+            resp.raise_for_status()
+            return resp.json()["data"]
+
+    async def set_case_outcome(self, case_id: int, status_id: int) -> None:
+        async with self._client() as client:
+            case = await self._get_case(client, case_id)
+            name = _CASE_NUMBER_PREFIX.sub("", (case or {}).get("case_name") or "")
+            if not name:
+                raise RuntimeError(f"IRIS case {case_id} not readable")
+            await self._post(client, f"/manage/cases/update/{case_id}", json={"case_name": name, "status_id": status_id})
 
     async def close_case(self, case_id: int) -> None:
         async with self._client() as client:

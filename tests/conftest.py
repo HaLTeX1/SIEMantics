@@ -18,6 +18,8 @@ os.environ.update(
     REVIEW_SEVERITY_FLOOR="12",
     # Alapbol ki, hogy az azonos riasztasokat kuldo tesztek a korrelaciot teszteljek.
     DEDUP_WINDOW_HOURS="0",
+    # A hatter IRIS szinkront a tesztek kezzel hivjak.
+    IRIS_SYNC_INTERVAL_SECONDS="0",
 )
 
 import pytest  # noqa: E402
@@ -53,6 +55,8 @@ class FakeIris:
         self.notes: list[tuple[int, str, list]] = []
         self.tags: dict[int, list[str]] = {}
         self.fail_notes = False
+        # IRIS kimenetel (status_id) esetenkent.
+        self.outcomes: dict[int, int] = {}
 
     async def create_case_from_alert(self, alert: NormalizedAlert, triage, enrichment=None, **kwargs):
         if self.fail:
@@ -87,13 +91,25 @@ class FakeIris:
             raise RuntimeError("iris down")
         self.closed.add(case_id)
 
+    async def get_case(self, case_id: int) -> dict | None:
+        if self.fail:
+            raise RuntimeError("iris down")
+        return {
+            "close_date": "2026-10-14" if case_id in self.closed else None,
+            "status_id": self.outcomes.get(case_id, 0),
+            "case_tags": ",".join(self.tags.get(case_id, [])),
+        }
+
+    async def set_case_outcome(self, case_id: int, status_id: int) -> None:
+        self.outcomes[case_id] = status_id
+
 
 @pytest.fixture
 def iris(monkeypatch) -> FakeIris:
     fake = FakeIris()
     monkeypatch.setattr(iris_client, "create_case_from_alert", fake.create_case_from_alert)
     monkeypatch.setattr(iris_client, "add_alert_to_case", fake.add_alert_to_case)
-    for name in ("is_open", "add_case_notes", "add_case_tags", "close_case"):
+    for name in ("is_open", "add_case_notes", "add_case_tags", "close_case", "get_case", "set_case_outcome"):
         monkeypatch.setattr(iris_client, name, getattr(fake, name))
     return fake
 

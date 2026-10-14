@@ -958,6 +958,7 @@
         ? `<a class="iris-link" href="${escapeHtml(irisBaseUrl)}/case?cid=${encodeURIComponent(a.iris_case_id)}" target="_blank" rel="noopener">Case #${escapeHtml(a.iris_case_id)} megnyitása az IRIS-ben ↗</a>`
         : `Case #${escapeHtml(a.iris_case_id)}`;
       fields.push(detailField("DFIR-IRIS eset", link));
+      fields.push(detailField("Eset állapota", a.case_closed_at ? `Lezárva (${fmtTime(a.case_closed_at)})` : "Nyitott"));
       if (a.correlated_with) {
         fields.push(detailField("Korrelálva",
           `<a class="alert-ref" href="${escapeHtml(DETAIL_PAGE(a.correlated_with))}" target="_blank" rel="noopener">${escapeHtml(a.correlated_with)}</a> esetébe került`));
@@ -1270,7 +1271,14 @@
   dispositionFilter.addEventListener("change", applyFilters);
   timeRangeFilter.addEventListener("change", applyFilters);
   assigneeFilter.addEventListener("change", applyFilters);
-  el("refreshBtn").addEventListener("click", fetchAlerts);
+  // Refresh elott az IRIS-ben lezart esetek kimenetele bekerul a dispositionbe.
+  el("refreshBtn").addEventListener("click", async () => {
+    const btn = el("refreshBtn");
+    btn.disabled = true;
+    await SIEM.api("/api/v1/cases/sync", { method: "POST" }).catch(() => null);
+    btn.disabled = false;
+    await fetchAlerts();
+  });
 
   // --- Timeline: egysoros oszlopdiagram ---
 

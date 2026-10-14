@@ -3,10 +3,11 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import AlertStatus, GroundTruth
-from app.iris_client import iris_client
+from app.iris_client import OUTCOME_FALSE_POSITIVE, OUTCOME_LEGITIMATE, OUTCOME_TRUE_POSITIVE, iris_client
 from app.iris_report import MergedAlert, false_positive_note, merge_note, merged_away_note
 from app.models import AlertRecord, User
 from app.normalize import related_log_excerpt
@@ -196,8 +197,15 @@ async def _close_case_fp(case_id: int, username: str, reason: str | None, displa
     note = false_positive_note(username, reason, display_ids)
     await iris_client.add_case_notes(case_id, f"false positive ({username})", [("Closed as false positive", note)])
     await _best_effort(iris_client.add_case_tags(case_id, ["false-positive"]), f"tagging case {case_id}")
+    await _best_effort(iris_client.set_case_outcome(case_id, OUTCOME_FALSE_POSITIVE), f"setting outcome of case {case_id}")
     await iris_client.close_case(case_id)
     return True
+
+
+def _mark_case_closed(records: list[AlertRecord], case_ids: set[int], now: datetime) -> None:
+    for record in records:
+        if record.iris_case_id in case_ids and record.case_closed_at is None:
+            record.case_closed_at = now
 
 
 def _label_false_positive(records: list[AlertRecord]) -> None:
@@ -222,6 +230,7 @@ async def close_as_false_positive(
             raise CaseActionError(502, "incident management backend unavailable") from exc
 
         _label_false_positive(records)
+        _mark_case_closed(records, {case_id}, datetime.utcnow())
         await session.commit()
         logger.info("%s closed IRIS case %s as false positive (%d alert(s))", user.username, case_id, len(records))
         return records, was_open
@@ -248,6 +257,7 @@ async def _close_records_fp(
 
     labeled = sorted(records.values(), key=lambda r: r.received_at)
     _label_false_positive(labeled)
+    _mark_case_closed(labeled, set(case_ids), datetime.utcnow())
     for record in labeled:
         if record.status == AlertStatus.QUEUED:
             # Triazs elott lezarva: nem kerul LLM ele, es nem rendszer-dontes.
@@ -294,3 +304,61 @@ async def delete_alerts(session: AsyncSession, refs: list[str], user: User) -> l
         await session.commit()
         logger.warning("%s deleted %d alert(s): %s", user.username, len(deleted), ", ".join(deleted[:50]))
         return deleted
+
+
+def case_disposition(case: dict) -> GroundTruth | None:
+    # IRIS kimenetelbol disposition; legitimate = nem fenyegetes, ezert FP.
+    try:
+        status_id = int(case.get("status_id") or 0)
+    except (TypeError, ValueError):
+        status_id = 0
+    if status_id in OUTCOME_TRUE_POSITIVE:
+        return GroundTruth.TRUE_POSITIVE
+    if status_id in (OUTCOME_FALSE_POSITIVE, OUTCOME_LEGITIMATE):
+        return GroundTruth.FALSE_POSITIVE
+    tags = [t.strip().lower() for t in str(case.get("case_tags") or "").split(",")]
+    return GroundTruth.FALSE_POSITIVE if "false-positive" in tags else None
+
+
+@dataclass
+class SyncOutcome:
+    checked: int = 0
+    closed_cases: list[int] = field(default_factory=list)
+    labeled: list[AlertRecord] = field(default_factory=list)
+
+
+async def sync_closed_cases(session: AsyncSession) -> SyncOutcome:
+    # Az IRIS-ben lezart esetek kimenetele a riasztasok dispositionjebe; IRIS hibanal a tobbi eset megy tovabb.
+    case_ids = await session.scalars(
+        select(AlertRecord.iris_case_id)
+        .where(AlertRecord.iris_case_id.is_not(None), AlertRecord.case_closed_at.is_(None))
+        .distinct()
+    )
+    outcome = SyncOutcome()
+    for case_id in sorted(set(case_ids)):
+        try:
+            case = await iris_client.get_case(case_id)
+        except Exception as exc:
+            logger.warning("case sync: IRIS case %s could not be read: %s", case_id, exc)
+            continue
+        outcome.checked += 1
+        if case is None or not case.get("close_date"):
+            continue
+        async with _lock:
+            records = await get_records_in_cases(session, {case_id})
+            disposition = case_disposition(case)
+            now = datetime.utcnow()
+            for record in records:
+                if record.case_closed_at is not None:
+                    continue
+                record.case_closed_at = now
+                if disposition is not None and record.ground_truth != disposition:
+                    # A lezaras az IRIS-ben a vegso itelet, felulirja a korabbi cimket.
+                    record.ground_truth = disposition
+                    record.labeled_at = now
+                    outcome.labeled.append(record)
+            await session.commit()
+        outcome.closed_cases.append(case_id)
+        logger.info("case sync: IRIS case %s closed (outcome %s) -> %s", case_id, case.get("status_id"),
+                    disposition.value if disposition else "no disposition")
+    return outcome

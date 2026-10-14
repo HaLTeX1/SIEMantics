@@ -40,7 +40,8 @@ app/
 ├── metrics.py           # konfúziós mátrix + feldolgozási idő statisztikák
 ├── pipeline.py          # háttérsor + worker: suppression -> dedup -> flood -> triázs -> guardrail -> enrichment -> IRIS
 ├── suppression.py       # elemzői elnyomó szabályok (illesztés, utólagos alkalmazás)
-├── case_actions.py      # FP lezárás (eset / csoport / tömeges), összevonás, tömeges törlés
+├── case_actions.py      # FP lezárás (eset / csoport / tömeges), összevonás, tömeges törlés, IRIS lezárás szinkron
+├── iris_sync.py         # háttérfeladat: időközönkénti IRIS lezárás szinkron
 └── routers/
     ├── alerts.py        # POST/GET /alerts, PATCH /alerts/{ref}/label, POST /alerts/{ref}/escalate
     ├── metrics.py         # GET /metrics
@@ -90,6 +91,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `IRIS_BASE_URL` | DFIR-IRIS instancia URL-je |
 | `IRIS_API_KEY` | DFIR-IRIS API kulcs |
 | `IRIS_CUSTOMER_ID` | eset létrehozáshoz tartozó ügyfél ID |
+| `IRIS_SYNC_INTERVAL_SECONDS` | alapértelmezett: `120`; ennyi másodpercenként a SIEMantics lekérdezi a nyitottnak tudott IRIS eseteket, és a lezártak kimenetelét átveszi a dispositionbe (lásd [IRIS lezárás szinkron](#iris-lezárás-szinkron)); `0` = kikapcsolva |
 | `CORRELATION_WINDOW_HOURS` | alapértelmezett: `24`; ennyi órán belül az azonos forrás IP-ről jövő hasonló riasztás a meglévő IRIS esetbe kerül (lásd [Korreláció](#korreláció)), és az azonos hostról / forrás IP-ről érkezett korábbi riasztások az LLM elé kerülnek (lásd [Kapcsolódó riasztások](#kapcsolódó-riasztások-az-llm-nek)); `0` = kikapcsolva |
 | `CORRELATION_HOST_WINDOW_MINUTES` | alapértelmezett: `10`; forrás IP nélküli riasztás ennyi percen belül ugyanannak a hostnak a meglévő IRIS esetébe kerül (lásd [Korreláció](#korreláció)); `0` = kikapcsolva |
 | `DEDUP_WINDOW_HOURS` | alapértelmezett: `24`; ennyi órán belül az azonos ujjlenyomatú riasztás nem megy az LLM-hez, átveszi a korábbi döntését (lásd [Ismétlődő riasztások](#ismétlődő-riasztások-duplikátum-szűrés-és-automatikus-csoportosítás)); `0` = kikapcsolva |
@@ -233,6 +235,18 @@ Ugyanaz a tevékenység (pl. egy szoftverfrissítés, egy agent telepítése, eg
 
 Mindkét művelet bármely bejelentkezett felhasználónak elérhető, és egyszerre csak egy fut (dupla kattintás ellen).
 
+## IRIS lezárás szinkron
+
+Ha egy esetet közvetlenül az IRIS-ben zársz le, a SIEMantics átveszi a lezárást. Egy háttérfeladat `IRIS_SYNC_INTERVAL_SECONDS` időközönként lekérdezi azokat az eseteket, amelyeket még nyitottnak tud. A dashboard **Refresh** gombja és a `POST /api/v1/cases/sync` azonnal lefuttatja ugyanezt. Lezárt esetnél a riasztásai `case_closed_at` időbélyeget kapnak, a disposition (`ground_truth`) pedig az IRIS eset **Outcome** mezőjéből jön:
+
+| IRIS outcome | Disposition |
+|---|---|
+| True positive with impact / without impact | Confirmed TP |
+| False positive, Legitimate | Confirmed FP |
+| Unknown, Not applicable | nem változik (kivéve, ha az eset `false-positive` taget kapott: akkor FP) |
+
+Az IRIS-beli lezárás a végső ítélet: felülírja a korábbi címkét. Egy lezárt esetet a szinkron később nem kérdez le újra, így a lezárás után a SIEMantics-ben adott kézi címke megmarad. Egy IRIS-ben újranyitott esetet a szinkron nem követ. A SIEMantics-ből indított FP-lezárás az IRIS-ben is beállítja a *False positive* outcome-ot.
+
 ## Flood kezelés
 
 Egy zajos szabály vagy egy szkenner percek alatt több száz riasztást küldhet. Az alábbiak a sorrendjükben futnak le minden riasztásnál, az LLM-hívás előtt:
@@ -311,6 +325,7 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `POST` | `/api/v1/auth/logout` | kijelentkezés, a munkamenet törlése |
 | `GET` | `/api/v1/auth/me` | a bejelentkezett felhasználó adatai |
 | `POST` | `/api/v1/auth/password` | saját jelszó módosítása (`current_password`, `new_password`); a többi eszközön kijelentkeztet |
+| `POST` | `/api/v1/cases/sync` | az IRIS-ben lezárt esetek kimenetelének azonnali átvétele, lásd [IRIS lezárás szinkron](#iris-lezárás-szinkron) |
 | `POST` | `/api/v1/cases/merge` | riasztások összevonása egy SIEMantics csoportba, nyitott IRIS eset esetén az IRIS-ben is (`alert_refs`), lásd [Case műveletek](#case-műveletek-false-positive-és-összevonás) |
 | `POST` | `/api/v1/cases/groups/{ref}/false-positive` | a riasztás csoportjának megjelölése false positive-ként, a nyitott IRIS esetek lezárása |
 | `POST` | `/api/v1/cases/{iris_case_id}/false-positive` | IRIS eset lezárása false positive-ként, minden riasztása FP címkét kap (`reason` opcionális) |

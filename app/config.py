@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     iris_api_key: str
     iris_customer_id: int = 1
     iris_verify_ssl: bool = True
+    # Ennyi masodpercenkent az IRIS-ben lezart esetek kimenetele bekerul a dispositionbe (0 = ki).
+    iris_sync_interval_seconds: int = Field(default=120, ge=0)
     # Publikus URL, ha meg van adva, az IRIS eset visszalinkel a riasztasra.
     siemantics_public_url: str = ""
     # Korrelacios ablak oraban (0 = ki): IP alapu esetbe sorolas es LLM kontextus.

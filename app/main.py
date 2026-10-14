@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from app.auth import ensure_initial_admin
 from app.config import settings
 from app.db import init_db
+from app.iris_sync import case_syncer
 from app.pipeline import alert_queue
 from app.routers import alerts, auth, cases, metrics, suppressions, users
 
@@ -28,9 +29,11 @@ async def lifespan(app: FastAPI):
             "set it (and the same value as <api_key> in the Wazuh integration) before connecting Wazuh"
         )
     await alert_queue.start(settings.triage_workers)
+    case_syncer.start(settings.iris_sync_interval_seconds)
     try:
         yield
     finally:
+        await case_syncer.stop()
         await alert_queue.stop()
 
 

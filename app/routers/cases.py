@@ -2,7 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import get_current_user
-from app.case_actions import CaseActionError, close_as_false_positive, close_group_as_false_positive, merge_alerts
+from app.case_actions import (
+    CaseActionError,
+    close_as_false_positive,
+    close_group_as_false_positive,
+    merge_alerts,
+    sync_closed_cases,
+)
 from app.db import get_session
 from app.enums import UserRole
 from app.models import User
@@ -18,6 +24,7 @@ from app.iris_client import iris_client
 from app.schemas import (
     AssigneeOut,
     CaseAssignmentOut,
+    CaseSyncResult,
     CaseAssignRequest,
     FalsePositiveRequest,
     FalsePositiveResult,
@@ -72,6 +79,17 @@ async def assign_case(
         assignee=assignee,
         assigned_by=user,
         assigned_at=assignment.assigned_at,
+    )
+
+
+@router.post("/sync", response_model=CaseSyncResult, dependencies=[Depends(get_current_user)])
+async def sync_cases(session: AsyncSession = Depends(get_session)):
+    # Azonnali szinkron: az IRIS-ben lezart esetek kimenetele a dispositionbe.
+    outcome = await sync_closed_cases(session)
+    return CaseSyncResult(
+        checked=outcome.checked,
+        closed_cases=outcome.closed_cases,
+        labeled=[r.display_id for r in outcome.labeled],
     )
 
 

@@ -223,6 +223,8 @@ class AlertRecordOut(BaseModel):
     rule_id: Optional[str] = None
     # Az elnyomo suppression szabaly ID-ja.
     suppression_rule_id: Optional[int] = None
+    # Az IRIS eset lezarasa (IRIS-ben vagy SIEMantics-bol).
+    case_closed_at: Optional[datetime] = None
 
 
 class LabelRequest(BaseModel):
@@ -269,6 +271,12 @@ class BulkFalsePositiveResult(BaseModel):
 
 class BulkDeleteResult(BaseModel):
     deleted: list[str]
+
+
+class CaseSyncResult(BaseModel):
+    checked: int
+    closed_cases: list[int]
+    labeled: list[str]
 
 
 class SuppressRequest(BaseModel):
