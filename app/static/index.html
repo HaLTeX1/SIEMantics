@@ -1002,21 +1002,61 @@
     return d.toLocaleString("hu-HU", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
 
-  async function fetchAlerts() {
-    errorState.hidden = true;
+  async function fetchAlerts(opts) {
+    const auto = !!(opts && opts.auto);
+    if (!auto) errorState.hidden = true;
     try {
       const res = await SIEM.api(API_ALERTS);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       allAlerts = await res.json();
+      lastFetchAt = Date.now();
+      errorState.hidden = true;
       lastUpdatedEl.textContent = "Frissítve: " + new Date().toLocaleTimeString("hu-HU");
       applyFilters();
     } catch (err) {
+      if (auto && allAlerts.length) {
+        // Automatikus frissitesnel a meglevo lista marad, csak jelezzuk a hibat.
+        lastUpdatedEl.textContent = "Frissítés sikertelen: " + new Date().toLocaleTimeString("hu-HU");
+        return;
+      }
       errorState.hidden = false;
       errorState.textContent = "Nem sikerült betölteni a riasztásokat: " + err.message;
       tableBody.innerHTML = "";
       renderTimeline([]);
     }
   }
+
+  // --- Automatikus frissites percenkent ---
+
+  const AUTO_REFRESH_MS = 60 * 1000;
+  let lastFetchAt = 0;
+  let autoRefreshing = false;
+
+  function autoRefreshBlocked() {
+    // Rejtett ful, nyitott dialog, folyamatban levo muvelet vagy a tablazatban aktiv mezo eseten kimarad.
+    if (document.hidden || document.querySelector("dialog[open]")) return true;
+    if (escalating.size || closingFp.size) return true;
+    if (document.querySelector(".bulkbar button:disabled")) return true;
+    const active = document.activeElement;
+    return !!(active && tableBody.contains(active) && active.matches("select, input, textarea"));
+  }
+
+  async function autoRefresh() {
+    if (autoRefreshing || Date.now() - lastFetchAt < AUTO_REFRESH_MS || autoRefreshBlocked()) return;
+    autoRefreshing = true;
+    try {
+      await fetchAlerts({ auto: true });
+    } finally {
+      autoRefreshing = false;
+    }
+  }
+
+  // Surun ellenorzunk, igy a kezi frissites utan is pontosan egy perc mulva jon a kovetkezo.
+  setInterval(autoRefresh, 5000);
+  // Visszatereskor a regi lista azonnal frissul.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) autoRefresh();
+  });
 
   function applyFilters() {
     const q = searchInput.value.trim().toLowerCase();
