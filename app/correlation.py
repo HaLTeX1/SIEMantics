@@ -8,6 +8,13 @@ from app.enums import AlertStatus
 from app.models import AlertRecord
 
 
+def join_group(record: AlertRecord, anchor: AlertRecord) -> None:
+    # A rekord az anchor csoportjaba kerul; csoport nelkuli anchor sajat csoportot nyit.
+    group_id = anchor.group_id or anchor.id
+    anchor.group_id = group_id
+    record.group_id = group_id
+
+
 def _has_case():
     return AlertRecord.iris_case_id.is_not(None)
 

@@ -5,7 +5,7 @@ from app.models import AlertRecord
 
 NEW_COLUMNS = {
     "raw_payload", "triage_model", "review_reason", "auto_status", "escalated_by_id", "escalated_at",
-    "agent_name", "llm_analysis", "correlated_with_id", "group_id",
+    "agent_name", "llm_analysis", "correlated_with_id", "group_id", "rule_id", "suppression_rule_id",
 }
 
 

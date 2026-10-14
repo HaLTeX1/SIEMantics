@@ -24,8 +24,8 @@ def _decided(record: AlertRecord) -> bool:
 
 
 def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
-    # Meg nincs triazsolva: nincs mit kiertekelni.
-    records = [r for r in records if r.status != AlertStatus.QUEUED]
+    # Meg nincs triazsolva, vagy az elemzo triazs elott lezarta: nincs mit kiertekelni.
+    records = [r for r in records if r.status != AlertStatus.QUEUED and r.triage_engine != "analyst"]
     decided = [r for r in records if _decided(r)]
     tp = fp = tn = fn = 0
     review_true_positive = 0

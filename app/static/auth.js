@@ -34,9 +34,9 @@
     }[c]));
   }
 
-  // A container-be: "<nev> · Admin · Kijelentkezes".
+  // A container-be: "<nev> · Riasztasok · Elnyomasok · Admin · Kijelentkezes".
   function renderUserMenu(container, user) {
-    const links = [];
+    const links = ['<a href="index.html">Riasztások</a>', '<a href="suppressions.html">Elnyomások</a>'];
     if (user.role === "admin") links.push('<a href="admin.html">Admin</a>');
     links.push('<a href="#" data-action="logout">Kijelentkezés</a>');
     container.innerHTML = `<span class="user-name">${escapeHtml(user.full_name || user.username)}</span>` + links.join("");

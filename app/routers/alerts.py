@@ -3,7 +3,8 @@ import logging
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_admin
+from app.case_actions import CaseActionError, close_alerts_as_false_positive, delete_alerts
 from app.config import settings
 from app.db import get_session
 from app.enums import AlertStatus
@@ -23,6 +24,9 @@ from app.repository import (
 from app.schemas import (
     AlertRecordOut,
     AssigneeOut,
+    BulkDeleteResult,
+    BulkFalsePositiveResult,
+    BulkRequest,
     LabelRequest,
     NormalizedAlert,
     WazuhAlertPayload,
@@ -79,6 +83,7 @@ async def receive_alert(
         severity=alert.severity,
         raw_payload=payload.model_dump(mode="json"),
         fingerprint=alert_fingerprint(payload.model_dump(mode="json")),
+        rule_id=payload.rule.id,
         status=AlertStatus.QUEUED,
         processing_time_ms=0.0,
     )
@@ -169,3 +174,31 @@ async def escalate_alert(
         _escalations_in_progress.discard(record.id)
 
     return (await _with_assignees(session, [record]))[0]
+
+
+@router.post("/alerts/bulk/false-positive", response_model=BulkFalsePositiveResult)
+async def bulk_false_positive(
+    body: BulkRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    # Flood: a kijelolt riasztasok FP cimket kapnak, a nyitott IRIS eseteik FP-kent lezarva.
+    try:
+        records, closed = await close_alerts_as_false_positive(session, body.alert_refs, user, body.reason)
+    except CaseActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return BulkFalsePositiveResult(labeled=[r.display_id for r in records], closed_cases=closed)
+
+
+@router.post("/alerts/bulk/delete", response_model=BulkDeleteResult)
+async def bulk_delete(
+    body: BulkRequest,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    # Csak admin; vegleges torles a SIEMantics adatbazisbol, az IRIS esetek maradnak.
+    try:
+        deleted = await delete_alerts(session, body.alert_refs, user)
+    except CaseActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return BulkDeleteResult(deleted=deleted)

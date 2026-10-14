@@ -10,7 +10,7 @@ from app.auth import ensure_initial_admin
 from app.config import settings
 from app.db import init_db
 from app.pipeline import alert_queue
-from app.routers import alerts, auth, cases, metrics, users
+from app.routers import alerts, auth, cases, metrics, suppressions, users
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("siemantics")
@@ -40,6 +40,7 @@ app.include_router(metrics.router)
 app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(cases.router)
+app.include_router(suppressions.router)
 app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
 
 

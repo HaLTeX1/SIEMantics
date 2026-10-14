@@ -6,11 +6,11 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
-from app.correlation import find_correlated_record
+from app.correlation import find_correlated_record, join_group
 from app.db import async_session
 from app.enrichment import enrich_iocs
 from app.enums import AlertStatus, GroundTruth
@@ -21,6 +21,7 @@ from app.models import AlertRecord, User
 from app.normalize import normalize_wazuh_alert, related_log_excerpt
 from app.repository import find_related_alerts, save_alert_record
 from app.schemas import IrisCaseResult, NormalizedAlert, RelatedAlert, TriageResult, WazuhAlertPayload
+from app.suppression import apply_rule, find_suppression
 
 logger = logging.getLogger("siemantics.pipeline")
 
@@ -180,13 +181,6 @@ class ProcessOutcome:
     correlated: AlertRecord | None = None
 
 
-def join_group(record: AlertRecord, anchor: AlertRecord) -> None:
-    # A rekord az anchor csoportjaba kerul; csoport nelkuli anchor sajat csoportot nyit.
-    group_id = anchor.group_id or anchor.id
-    anchor.group_id = group_id
-    record.group_id = group_id
-
-
 async def _auto_group(session: AsyncSession, record: AlertRecord, correlated: AlertRecord | None) -> None:
     # Korrelalt vagy azonos burst-be tartozo riasztas automatikusan csoportba kerul.
     anchor = correlated or await find_correlated_record(session, record, require_case=False)
@@ -226,12 +220,56 @@ async def _find_duplicate(session: AsyncSession, record: AlertRecord) -> tuple[A
     return (decided, False) if decided else None
 
 
+async def _find_flood_anchor(session: AsyncSession, record: AlertRecord) -> AlertRecord | None:
+    # Flood: a szabaly+host az ablakban elerte a kuszobot; a legutobbi dontes, ha nem enyhebb.
+    if settings.flood_threshold <= 0 or settings.flood_window_minutes <= 0 or not record.rule_id:
+        return None
+    since = record.received_at - timedelta(minutes=settings.flood_window_minutes)
+    same = [
+        AlertRecord.rule_id == record.rule_id,
+        AlertRecord.agent_name == record.agent_name if record.agent_name else AlertRecord.agent_name.is_(None),
+        AlertRecord.received_at >= since,
+        AlertRecord.received_at <= record.received_at,
+    ]
+    count = await session.scalar(select(func.count()).select_from(AlertRecord).where(*same))
+    if count < settings.flood_threshold:
+        return None
+    result = await session.execute(
+        select(AlertRecord)
+        .where(*same, AlertRecord.id != record.id, AlertRecord.suppression_rule_id.is_(None))
+        .order_by(AlertRecord.received_at.desc())
+    )
+    decided = next((c for c in result.scalars() if _is_decided(c)), None)
+    # Magasabb szintu riasztas nem orokolheti egy enyhebb donteset.
+    return decided if decided is not None and decided.severity >= record.severity else None
+
+
+async def _apply_suppression(session: AsyncSession, record: AlertRecord, rule, started: float) -> ProcessOutcome:
+    await apply_rule(session, rule, record)
+    record.processing_time_ms = _elapsed_ms(started)
+    await save_alert_record(session, record)
+    logger.info("alert %s (%s) suppressed by rule #%s", record.alert_id, record.display_id, rule.id)
+    triage = TriageResult(
+        is_true_positive=False, confidence=1.0, reasoning=record.llm_reasoning, iocs=[], engine="suppression"
+    )
+    return ProcessOutcome(triage=triage)
+
+
 async def _apply_duplicate(
-    session: AsyncSession, record: AlertRecord, anchor: AlertRecord, known_fp: bool, started: float
+    session: AsyncSession,
+    record: AlertRecord,
+    anchor: AlertRecord,
+    known_fp: bool,
+    started: float,
+    engine: str = "dedup",
 ) -> ProcessOutcome:
     # LLM hivas nelkul: az ismert FP elnyomva, kulonben a korabbi dontes atveve.
-    note = f"Duplicate of {anchor.display_id} (same host, rule and key fields within {settings.dedup_window_hours} h)"
-    record.triage_engine = "dedup"
+    if engine == "flood":
+        note = (f"Flood: rule {record.rule_id} fired at least {settings.flood_threshold} times on this host within "
+                f"{settings.flood_window_minutes} min, latest decision taken from {anchor.display_id}")
+    else:
+        note = f"Duplicate of {anchor.display_id} (same host, rule and key fields within {settings.dedup_window_hours} h)"
+    record.triage_engine = engine
     record.triage_model = anchor.triage_model
     record.llm_is_true_positive = anchor.llm_is_true_positive
     record.llm_confidence = anchor.llm_confidence
@@ -252,14 +290,14 @@ async def _apply_duplicate(
             record.ioc_enrichment = anchor.ioc_enrichment
     record.processing_time_ms = _elapsed_ms(started)
     await save_alert_record(session, record)
-    logger.info("alert %s (%s) is a duplicate of %s -> %s", record.alert_id, record.display_id,
-                anchor.display_id, record.status.value)
+    logger.info("alert %s (%s) is a %s of %s -> %s", record.alert_id, record.display_id,
+                "flood repeat" if engine == "flood" else "duplicate", anchor.display_id, record.status.value)
     triage = TriageResult(
         is_true_positive=bool(record.llm_is_true_positive) and not known_fp,
         confidence=record.llm_confidence or 0.0,
         reasoning=record.llm_reasoning,
         iocs=record.llm_iocs or [],
-        engine="dedup",
+        engine=engine,
         model=record.triage_model,
     )
     case = None
@@ -272,9 +310,15 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessO
     # QUEUED rekord triazsa; triazs/IRIS hibat ERROR statuszkent tarol, nem dob.
     alert = alert_from_record(record)
     started = time.perf_counter()
+    rule = await find_suppression(session, record)
+    if rule is not None:
+        return await _apply_suppression(session, record, rule, started)
     duplicate = await _find_duplicate(session, record)
     if duplicate is not None:
         return await _apply_duplicate(session, record, *duplicate, started)
+    flood_anchor = await _find_flood_anchor(session, record)
+    if flood_anchor is not None:
+        return await _apply_duplicate(session, record, flood_anchor, False, started, engine="flood")
     related = await related_alerts(session, alert, record.received_at, exclude_id=record.id)
 
     try:
@@ -346,6 +390,23 @@ class AlertQueue:
     def __init__(self) -> None:
         self._queue: asyncio.Queue[int] | None = None
         self._workers: list[asyncio.Task] = []
+        # Ujjlenyomatonkenti zar: az azonos riasztasok sorban mennek, igy a dedup elkapja oket.
+        self._locks: dict[str, asyncio.Lock] = {}
+        self._lock_users: dict[str, int] = {}
+
+    async def _process_serialized(self, session: AsyncSession, record: AlertRecord) -> None:
+        key = record.fingerprint or f"id:{record.id}"
+        lock = self._locks.setdefault(key, asyncio.Lock())
+        self._lock_users[key] = self._lock_users.get(key, 0) + 1
+        try:
+            async with lock:
+                await session.refresh(record)
+                if record.status == AlertStatus.QUEUED:
+                    await process_record(session, record)
+        finally:
+            self._lock_users[key] -= 1
+            if not self._lock_users[key]:
+                del self._lock_users[key], self._locks[key]
 
     async def start(self, workers: int) -> None:
         self._queue = asyncio.Queue()
@@ -392,7 +453,7 @@ class AlertQueue:
                     record = await session.get(AlertRecord, record_id)
                     if record is None or record.status != AlertStatus.QUEUED:
                         continue
-                    await process_record(session, record)
+                    await self._process_serialized(session, record)
             except Exception as exc:
                 # A worker eletben marad, a rekord ne maradjon QUEUED (ujrainditaskor ujra elbukna).
                 logger.exception("worker %d: unexpected error while processing record %s", index, record_id)

@@ -10,7 +10,7 @@ from app.iris_client import iris_client
 from app.iris_report import MergedAlert, false_positive_note, merge_note, merged_away_note
 from app.models import AlertRecord, User
 from app.normalize import related_log_excerpt
-from app.repository import get_alert_record_by_ref, get_group_members, get_records_in_cases
+from app.repository import get_alert_record_by_ref, get_alert_records_by_refs, get_group_members, get_records_in_cases
 
 logger = logging.getLogger("siemantics.cases")
 
@@ -46,6 +46,14 @@ async def _expand(session: AsyncSession, selected: list[AlertRecord]) -> list[Al
         if not new:
             return sorted(members.values(), key=lambda r: r.received_at)
         members.update((r.id, r) for r in new)
+
+
+async def resolve_many(session: AsyncSession, refs: list[str]) -> list[AlertRecord]:
+    # Sok hivatkozas egy lekerdezessel; hianyzo ID-nel 404.
+    records, missing = await get_alert_records_by_refs(session, refs)
+    if missing:
+        raise CaseActionError(404, f"alert not found: {', '.join(missing[:10])}")
+    return records
 
 
 async def _resolve(session: AsyncSession, refs: list[str]) -> list[AlertRecord]:
@@ -219,6 +227,37 @@ async def close_as_false_positive(
         return records, was_open
 
 
+async def _close_records_fp(
+    session: AsyncSession, members: list[AlertRecord], user: User, reason: str | None
+) -> tuple[list[AlertRecord], list[int]]:
+    # A tagok IRIS eseteinek tobbi riasztasa is FP lesz, ahogy az eset FP lezarasanal.
+    case_ids = sorted({r.iris_case_id for r in members if r.iris_case_id})
+    records = {r.id: r for r in members}
+    for other in await get_records_in_cases(session, set(case_ids)):
+        records.setdefault(other.id, other)
+
+    closed: list[int] = []
+    try:
+        for case_id in case_ids:
+            ids = [r.display_id for r in records.values() if r.iris_case_id == case_id]
+            if await _close_case_fp(case_id, user.username, reason, ids):
+                closed.append(case_id)
+    except Exception as exc:
+        logger.exception("closing IRIS cases %s as false positive failed", case_ids)
+        raise CaseActionError(502, "incident management backend unavailable") from exc
+
+    labeled = sorted(records.values(), key=lambda r: r.received_at)
+    _label_false_positive(labeled)
+    for record in labeled:
+        if record.status == AlertStatus.QUEUED:
+            # Triazs elott lezarva: nem kerul LLM ele, es nem rendszer-dontes.
+            record.status = AlertStatus.SUPPRESSED
+            record.triage_engine = "analyst"
+            record.review_reason = f"closed as false positive by {user.username} before triage"
+    await session.commit()
+    return labeled, closed
+
+
 async def close_group_as_false_positive(
     session: AsyncSession, ref: str, user: User, reason: str | None
 ) -> tuple[str, list[AlertRecord], list[int]]:
@@ -227,26 +266,31 @@ async def close_group_as_false_positive(
         if record is None:
             raise CaseActionError(404, "alert not found")
         members = await get_group_members(session, {record.group_id}) if record.group_id else [record]
-        # A tagok IRIS eseteinek tobbi riasztasa is FP lesz, ahogy az eset FP lezarasanal.
-        case_ids = sorted({r.iris_case_id for r in members if r.iris_case_id})
-        records = {r.id: r for r in members}
-        for other in await get_records_in_cases(session, set(case_ids)):
-            records.setdefault(other.id, other)
-
-        closed: list[int] = []
-        try:
-            for case_id in case_ids:
-                ids = [r.display_id for r in records.values() if r.iris_case_id == case_id]
-                if await _close_case_fp(case_id, user.username, reason, ids):
-                    closed.append(case_id)
-        except Exception as exc:
-            logger.exception("closing IRIS cases of group %s as false positive failed", record.group or record.display_id)
-            raise CaseActionError(502, "incident management backend unavailable") from exc
-
-        labeled = sorted(records.values(), key=lambda r: r.received_at)
-        _label_false_positive(labeled)
-        await session.commit()
+        labeled, closed = await _close_records_fp(session, members, user, reason)
         group = record.group or record.display_id
         logger.info("%s labeled group %s as false positive (%d alert(s), closed cases %s)",
                     user.username, group, len(labeled), closed)
         return group, labeled, closed
+
+
+async def close_alerts_as_false_positive(
+    session: AsyncSession, refs: list[str], user: User, reason: str | None
+) -> tuple[list[AlertRecord], list[int]]:
+    # Tomeges FP lezaras flood eseten; a varakozo riasztasok triazs nelkul lezarva.
+    async with _lock:
+        members = await resolve_many(session, refs)
+        labeled, closed = await _close_records_fp(session, members, user, reason)
+        logger.info("%s bulk-labeled %d alert(s) as false positive, closed cases %s", user.username, len(labeled), closed)
+        return labeled, closed
+
+
+async def delete_alerts(session: AsyncSession, refs: list[str], user: User) -> list[str]:
+    # Vegleges torles csak a SIEMantics adatbazisbol; az IRIS esetek maradnak.
+    async with _lock:
+        records = await resolve_many(session, refs)
+        deleted = [r.display_id for r in records]
+        for record in records:
+            await session.delete(record)
+        await session.commit()
+        logger.warning("%s deleted %d alert(s): %s", user.username, len(deleted), ", ".join(deleted[:50]))
+        return deleted

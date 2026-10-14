@@ -1,7 +1,7 @@
 import asyncio
 import logging
 
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text, update
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
@@ -36,6 +36,7 @@ async def _init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_add_missing_columns)
+        await conn.run_sync(_backfill_rule_ids)
         if conn.dialect.name == "mysql":
             await _sync_alert_status_enums(conn)
 
@@ -58,6 +59,18 @@ def _add_missing_columns(conn) -> None:
             conn.execute(
                 text(f"ALTER TABLE {preparer.quote(table.name)} ADD COLUMN {preparer.quote(column.name)} {col_type} NULL")
             )
+
+
+def _backfill_rule_ids(conn) -> None:
+    # A rule_id oszlop elotti rekordok kitoltese a raw_payload-bol.
+    table = Base.metadata.tables["alert_records"]
+    rows = conn.execute(
+        select(table.c.id, table.c.raw_payload).where(table.c.rule_id.is_(None), table.c.raw_payload.is_not(None))
+    ).all()
+    for row_id, raw in rows:
+        rule_id = ((raw or {}).get("rule") or {}).get("id")
+        if rule_id:
+            conn.execute(update(table).where(table.c.id == row_id).values(rule_id=str(rule_id)))
 
 
 async def _sync_alert_status_enums(conn) -> None:

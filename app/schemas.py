@@ -108,7 +108,7 @@ class TriageResult(BaseModel):
     iocs: list[str] = Field(default_factory=list)
     recommended_severity: Optional[str] = None
     # manual: tarolt rekordbol epul, kezi eszkalacional.
-    engine: Literal["openrouter", "mock", "manual", "dedup"]
+    engine: Literal["openrouter", "mock", "manual", "dedup", "flood", "suppression"]
     # A valaszolo konkret modell (mock motornal None).
     model: Optional[str] = None
 
@@ -220,6 +220,9 @@ class AlertRecordOut(BaseModel):
     # Az IRIS eset felelose.
     assignee: Optional[AssigneeOut] = None
     assigned_at: Optional[datetime] = None
+    rule_id: Optional[str] = None
+    # Az elnyomo suppression szabaly ID-ja.
+    suppression_rule_id: Optional[int] = None
 
 
 class LabelRequest(BaseModel):
@@ -251,6 +254,55 @@ class GroupFalsePositiveResult(BaseModel):
     group: Optional[str] = None
     labeled: list[str]
     closed_cases: list[int] = Field(default_factory=list)
+
+
+class BulkRequest(BaseModel):
+    # Tomeges muvelet a kijelolt riasztasokra (flood kezeles).
+    alert_refs: list[str] = Field(min_length=1, max_length=5000)
+    reason: Optional[str] = Field(default=None, max_length=2000)
+
+
+class BulkFalsePositiveResult(BaseModel):
+    labeled: list[str]
+    closed_cases: list[int] = Field(default_factory=list)
+
+
+class BulkDeleteResult(BaseModel):
+    deleted: list[str]
+
+
+class SuppressRequest(BaseModel):
+    # exact: azonos ujjlenyomat, rule_host: szabaly + host, rule: szabaly barmelyik hoston.
+    alert_refs: list[str] = Field(min_length=1, max_length=5000)
+    scope: Literal["exact", "rule_host", "rule"] = "exact"
+    reason: Optional[str] = Field(default=None, max_length=2000)
+    # None = lejarat nelkul.
+    duration_hours: Optional[int] = Field(default=None, ge=1, le=24 * 365)
+    # A meglevo, IRIS eset nelkuli egyezo riasztasok is elnyomva.
+    apply_existing: bool = True
+
+
+class SuppressionRuleOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    scope: str
+    fingerprint: Optional[str] = None
+    rule_id: Optional[str] = None
+    agent_name: Optional[str] = None
+    description: str
+    reason: Optional[str] = None
+    created_by: Optional[AssigneeOut] = None
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+    is_active: bool
+    hit_count: int
+    last_hit_at: Optional[datetime] = None
+
+
+class SuppressResult(BaseModel):
+    rules: list[SuppressionRuleOut]
+    suppressed: list[str]
 
 
 class FalsePositiveResult(BaseModel):

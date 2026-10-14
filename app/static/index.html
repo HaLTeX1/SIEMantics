@@ -136,7 +136,34 @@
     padding: 10px 14px;
     margin-bottom: 12px;
   }
-  .bulkbar.visible { display: flex; }
+  .bulkbar.visible { display: flex; flex-wrap: wrap; }
+  .bulkbar .spacer { flex: 1; }
+
+  dialog {
+    background: var(--surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    width: min(480px, calc(100vw - 32px));
+  }
+  dialog::backdrop { background: rgba(0,0,0,0.6); }
+  dialog h3 { margin: 0 0 6px; font-size: 15px; }
+  dialog .hint { color: var(--text-muted); font-size: 12px; margin: 0 0 12px; }
+  dialog fieldset { border: 0; padding: 0; margin: 0 0 12px; display: grid; gap: 6px; }
+  dialog legend { color: var(--text-secondary); font-size: 12px; margin-bottom: 4px; }
+  dialog label.opt { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; cursor: pointer; }
+  dialog label.opt small { display: block; color: var(--text-muted); }
+  dialog select, dialog input[type="text"] {
+    width: 100%;
+    background: var(--surface-2);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 7px 9px;
+    font-size: 13px;
+  }
+  dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
   .bulkbar .count { font-weight: 600; margin-right: 6px; }
 
   button.btn {
@@ -162,6 +189,9 @@
     background: transparent;
   }
   button.btn.outline-serious:hover { background: rgba(236,131,90,0.12); }
+  button.btn.danger { border-color: var(--critical); color: #f29b9b; background: transparent; }
+  button.btn.danger:hover { background: rgba(208,59,59,0.14); }
+  button.btn:disabled { opacity: 0.5; cursor: default; }
   button.btn.ghost {
     background: transparent;
     border-color: transparent;
@@ -221,6 +251,8 @@
   }
   .badge-outline.engine-openrouter { border-color: rgba(57,135,229,0.5); color: #8fb8ef; }
   .badge-outline.engine-mock       { border-color: rgba(144,133,233,0.5); color: #b9b2f2; }
+  .badge-outline.engine-dedup, .badge-outline.engine-flood { border-color: rgba(250,178,25,0.5); color: #fdd68a; }
+  .badge-outline.engine-suppression, .badge-outline.engine-analyst { border-color: rgba(255,255,255,0.18); color: var(--text-muted); }
 
   .confidence { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
 
@@ -418,6 +450,10 @@
       <button class="btn primary" id="labelTpBtn" type="button">Label: True Positive</button>
       <button class="btn outline-serious" id="labelFpBtn" type="button">Label: False Positive</button>
       <button class="btn" id="mergeBtn" type="button">Összevonás</button>
+      <button class="btn outline-serious" id="bulkFpBtn" type="button" title="False Positive címke, a nyitott IRIS esetek lezárva">Lezárás FP-ként</button>
+      <button class="btn" id="suppressBtn" type="button" title="Az egyező új riasztások LLM nélkül elnyomva">Elnyomás...</button>
+      <button class="btn danger" id="deleteBtn" type="button" hidden>Törlés</button>
+      <span class="spacer"></span>
       <button class="btn ghost" id="clearSelectionBtn" type="button">Kijelölés törlése</button>
     </div>
     <div id="actionMessage" class="action-message" role="status"></div>
@@ -453,6 +489,42 @@
 
   <div id="timelineTooltip"></div>
 
+  <dialog id="suppressDialog">
+    <form method="dialog" id="suppressForm">
+      <h3>Elnyomás: <span id="suppressCount"></span> riasztás alapján</h3>
+      <p class="hint">Az egyező új riasztások LLM nélkül, automatikusan elnyomva lesznek. A szabályok az Elnyomások oldalon kapcsolhatók ki.</p>
+      <fieldset>
+        <legend>Mire illeszkedjen?</legend>
+        <label class="opt"><input type="radio" name="scope" value="exact" checked />
+          <span>Pontosan ugyanaz<small>Azonos host, szabály és kulcsmezők (IP, parancssor, fájl...)</small></span></label>
+        <label class="opt"><input type="radio" name="scope" value="rule_host" />
+          <span>Szabály ezen a hoston<small>Ugyanaz a Wazuh szabály ugyanarról a hostról, bármilyen tartalommal</small></span></label>
+        <label class="opt"><input type="radio" name="scope" value="rule" />
+          <span>Szabály mindenhol<small>Ugyanaz a Wazuh szabály bármelyik hostról</small></span></label>
+      </fieldset>
+      <fieldset>
+        <legend>Időtartam</legend>
+        <select id="suppressDuration">
+          <option value="1">1 óra</option>
+          <option value="24" selected>24 óra</option>
+          <option value="168">7 nap</option>
+          <option value="720">30 nap</option>
+          <option value="">Lejárat nélkül</option>
+        </select>
+      </fieldset>
+      <fieldset>
+        <legend>Indoklás (opcionális)</legend>
+        <input type="text" id="suppressReason" maxlength="2000" />
+      </fieldset>
+      <label class="opt"><input type="checkbox" id="suppressExisting" checked />
+        <span>A már beérkezett egyező riasztások is<small>Csak IRIS eset nélküliek; az eszkalált riasztások nem változnak</small></span></label>
+      <div class="actions">
+        <button class="btn" type="button" id="suppressCancel">Mégse</button>
+        <button class="btn primary" type="submit" id="suppressSubmit">Elnyomás</button>
+      </div>
+    </form>
+  </dialog>
+
 <script src="auth.js"></script>
 <script>
 (function () {
@@ -481,6 +553,7 @@
   const fpErrors = new Map();
   const closingFp = new Set();
   const ESCALATABLE = new Set(["needs_review", "suppressed", "error"]);
+  const ENGINE_CLASSES = new Set(["openrouter", "dedup", "flood", "suppression", "analyst"]);
 
   SIEM.api(API_CONFIG).then((r) => r.ok ? r.json() : null).then((cfg) => {
     if (cfg && cfg.iris_base_url) irisBaseUrl = cfg.iris_base_url;
@@ -737,6 +810,81 @@
     await fetchAlerts();
   }
 
+  // --- Flood kezeles: tomeges FP, elnyomas, torles ---
+
+  async function postJson(url, payload) {
+    const res = await SIEM.api(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error(await errorDetail(res));
+    return res.json();
+  }
+
+  async function runBulk(btn, busyText, action) {
+    btn.disabled = true;
+    setActionMessage(busyText);
+    try {
+      setActionMessage(await action());
+      selected.clear();
+    } catch (err) {
+      setActionMessage("Sikertelen művelet: " + err.message, true);
+    }
+    btn.disabled = false;
+    await fetchAlerts();
+  }
+
+  async function bulkFalsePositive() {
+    const ids = withGroupMembers(Array.from(selected));
+    if (!ids.length) return;
+    const reason = window.prompt(`${ids.length} riasztás lezárása false positive-ként. Mind False Positive címkét kap, a nyitott IRIS eseteik lezárulnak, a még triázsra várók LLM nélkül lezárva.\n\nIndoklás (opcionális):`, "");
+    if (reason === null) return;
+    await runBulk(el("bulkFpBtn"), "Lezárás...", async () => {
+      const body = await postJson("/api/v1/alerts/bulk/false-positive", { alert_refs: ids.map(refOf), reason: reason.trim() || null });
+      let msg = `${body.labeled.length} riasztás lezárva false positive-ként.`;
+      if (body.closed_cases.length) msg += ` Lezárt IRIS esetek: ${body.closed_cases.map((c) => "#" + c).join(", ")}.`;
+      return msg;
+    });
+  }
+
+  function openSuppressDialog() {
+    const ids = withGroupMembers(Array.from(selected));
+    if (!ids.length) return;
+    el("suppressCount").textContent = String(ids.length);
+    el("suppressReason").value = "";
+    el("suppressDialog").showModal();
+  }
+
+  async function submitSuppress() {
+    const ids = withGroupMembers(Array.from(selected));
+    const form = el("suppressForm");
+    const duration = el("suppressDuration").value;
+    const payload = {
+      alert_refs: ids.map(refOf),
+      scope: form.querySelector('input[name="scope"]:checked').value,
+      reason: el("suppressReason").value.trim() || null,
+      duration_hours: duration ? Number(duration) : null,
+      apply_existing: el("suppressExisting").checked,
+    };
+    el("suppressDialog").close();
+    await runBulk(el("suppressBtn"), "Elnyomás...", async () => {
+      const body = await postJson("/api/v1/suppressions", payload);
+      const rules = body.rules.map((r) => "#" + r.id).join(", ");
+      return `Elnyomó szabály: ${rules}. ${body.suppressed.length} meglévő riasztás elnyomva.`;
+    });
+  }
+
+  async function bulkDelete() {
+    const ids = withGroupMembers(Array.from(selected));
+    if (!ids.length) return;
+    if (!window.confirm(`${ids.length} riasztás VÉGLEGES törlése a SIEMantics adatbázisból. Az IRIS esetek megmaradnak, a törölt riasztások kikerülnek a metrikákból. Folytatod?`)) return;
+    await runBulk(el("deleteBtn"), "Törlés...", async () => {
+      const body = await postJson("/api/v1/alerts/bulk/delete", { alert_refs: ids.map(refOf) });
+      return `${body.deleted.length} riasztás törölve.`;
+    });
+  }
+
   function detailField(label, valueHtml, opts) {
     opts = opts || {};
     const cls = "value" + (opts.mono ? " reasoning" : "") + (opts.cls ? " " + opts.cls : "");
@@ -785,6 +933,10 @@
     fields.push(detailField("Feldolgozási idő", `${Math.round(a.processing_time_ms)} ms`));
 
     if (a.triage_engine != null) fields.push(detailField("Triázs motor", escapeHtml(a.triage_engine)));
+    if (a.suppression_rule_id != null) {
+      fields.push(detailField("Elnyomó szabály", `<a class="alert-ref" href="suppressions.html#rule-${a.suppression_rule_id}">#${a.suppression_rule_id}</a>`));
+    }
+    if (a.review_reason && a.status !== "needs_review") fields.push(detailField("Megjegyzés", escapeHtml(a.review_reason)));
     if (a.triage_model) fields.push(detailField("Modell", escapeHtml(a.triage_model)));
     if (a.llm_confidence != null) fields.push(detailField("Confidence", Math.round(a.llm_confidence * 100) + "%"));
     if (a.llm_is_true_positive != null) {
@@ -963,7 +1115,7 @@
       const isSelected = selected.has(a.display_id);
       const isExpanded = expandedIds.has(a.display_id);
       const rowId = escapeHtml(a.display_id);
-      const engineCls = a.triage_engine === "openrouter" ? "engine-openrouter" : "engine-mock";
+      const engineCls = ENGINE_CLASSES.has(a.triage_engine) ? `engine-${a.triage_engine}` : "engine-mock";
       const engineLabel = a.triage_engine || "-";
       const confidence = a.llm_confidence != null ? Math.round(a.llm_confidence * 100) + "%" : "-";
 
@@ -1093,6 +1245,14 @@
   el("labelTpBtn").addEventListener("click", () => labelSelected("true_positive"));
   el("labelFpBtn").addEventListener("click", () => labelSelected("false_positive"));
   el("mergeBtn").addEventListener("click", mergeSelected);
+  el("bulkFpBtn").addEventListener("click", bulkFalsePositive);
+  el("suppressBtn").addEventListener("click", openSuppressDialog);
+  el("deleteBtn").addEventListener("click", bulkDelete);
+  el("suppressCancel").addEventListener("click", () => el("suppressDialog").close());
+  el("suppressForm").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    submitSuppress();
+  });
   collapseGroups.addEventListener("change", applyFilters);
   el("clearSelectionBtn").addEventListener("click", () => {
     selected.clear();
@@ -1257,6 +1417,7 @@
   SIEM.me().then((user) => {
     currentUser = user;
     SIEM.renderUserMenu(el("userMenu"), user);
+    el("deleteBtn").hidden = user.role !== "admin";
     return loadAssignees();
   }).then(applyFilters).catch(() => {});
   fetchAlerts();

@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIEMantics - Elnyomások</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #202020;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:    #2c2c2a;
+    --border:      rgba(255,255,255,0.10);
+    --accent:      #3987e5;
+    --accent-dim:  #1c5cab;
+    --good:        #0ca30c;
+    --serious:     #ec835a;
+    --critical:    #d03b3b;
+    --violet:      #9085e9;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  header.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand .name { font-weight: 700; font-size: 18px; color: var(--text-primary); text-decoration: none; }
+  .brand .sub { color: var(--text-muted); font-size: 13px; }
+
+  .user-menu { display: flex; align-items: center; gap: 14px; font-size: 13px; }
+  .user-menu .user-name { color: var(--text-secondary); }
+  .user-menu a { color: var(--accent); text-decoration: none; }
+  .user-menu a:hover { text-decoration: underline; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  button.btn {
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    background: var(--surface);
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+  button.btn:hover { background: #262625; }
+  button.btn:disabled { opacity: 0.5; cursor: default; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.btn.primary:hover { background: var(--accent-dim); }
+  button.btn.small { padding: 4px 10px; font-size: 12px; }
+  button.btn.danger { border-color: var(--serious); color: var(--serious); background: transparent; }
+  button.btn.danger:hover { background: rgba(236,131,90,0.12); }
+
+  .msg { font-size: 13px; min-height: 18px; margin-top: 10px; }
+  .msg.error { color: var(--critical); }
+  .msg.ok { color: #7be07b; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--gridline);
+    white-space: nowrap;
+  }
+  tbody td { padding: 10px; border-bottom: 1px solid var(--gridline); vertical-align: middle; }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+  tbody tr.inactive td { color: var(--text-muted); }
+  td select { width: auto; padding: 4px 8px; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .title-main { font-weight: 600; }
+  .title-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge-fill-good  { background: rgba(12,163,12,0.16); color: #7be07b; }
+  .badge-fill-muted { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+  .scope { color: var(--text-secondary); font-size: 12px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-secondary); }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 16px 0; flex-wrap: wrap; }
+  .toolbar label { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; cursor: pointer; }
+  .toolbar h2 { margin: 0; }
+  tbody tr:target { background: rgba(57,135,229,0.12); }
+  .hint { color: var(--text-muted); font-size: 13px; margin: 0; }
+
+  .state { padding: 30px 10px; text-align: center; color: var(--text-muted); }
+  .state.error { color: var(--critical); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <a class="name" href="./">SIEMantics</a>
+        <span class="sub">Elnyomások</span>
+      </div>
+      <div class="user-menu" id="userMenu"></div>
+    </header>
+
+    <div class="card">
+      <p class="hint">Az elnyomó szabályokhoz illeszkedő új riasztások LLM-triázs nélkül, automatikusan elnyomva lesznek. Új szabály a riasztások listáján, kijelölés után az „Elnyomás...” gombbal vehető fel.</p>
+    </div>
+
+    <div class="card" style="padding:0; overflow-x:auto;">
+      <div class="toolbar">
+        <h2>Elnyomó szabályok</h2>
+        <label><input type="checkbox" id="showInactive" style="width:auto;" /> Lejárt és kikapcsolt szabályok is</label>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Szabály</th>
+            <th>Hatókör</th>
+            <th>Találat</th>
+            <th>Lejárat</th>
+            <th>Létrehozta</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="rulesBody"></tbody>
+      </table>
+      <div id="rulesState" class="state" hidden></div>
+      <div class="msg" id="tableMsg" role="status" style="padding: 0 16px 12px;"></div>
+    </div>
+  </div>
+
+<script src="auth.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const API = "/api/v1/suppressions";
+  const el = (id) => document.getElementById(id);
+  let rules = [];
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  function parseTime(iso) {
+    return iso ? new Date(iso + (iso.endsWith("Z") ? "" : "Z")) : null;
+  }
+
+  function fmtTime(iso) {
+    const d = parseTime(iso);
+    if (!d || isNaN(d.getTime())) return iso || "-";
+    return d.toLocaleString("hu-HU", { year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  async function errorDetail(res) {
+    try {
+      const body = await res.json();
+      if (typeof body.detail === "string") return body.detail;
+    } catch (_) { /* nem JSON */ }
+    return `HTTP ${res.status}`;
+  }
+
+  function setMsg(text, ok) {
+    const node = el("tableMsg");
+    node.textContent = text;
+    node.className = "msg " + (ok ? "ok" : "error");
+  }
+
+  function scopeLabel(r) {
+    if (r.scope === "exact") return `Pontos egyezés<div class="mono" title="${escapeHtml(r.fingerprint || "")}">${escapeHtml((r.fingerprint || "").slice(0, 12))}…</div>`;
+    if (r.scope === "rule_host") return `Szabály ${escapeHtml(r.rule_id)} a(z) <b>${escapeHtml(r.agent_name)}</b> hoston`;
+    return `Szabály ${escapeHtml(r.rule_id)} minden hoston`;
+  }
+
+  function statusBadge(r) {
+    if (!r.is_active) return '<span class="badge badge-fill-muted">Kikapcsolva</span>';
+    const exp = parseTime(r.expires_at);
+    if (exp && exp <= new Date()) return '<span class="badge badge-fill-muted">Lejárt</span>';
+    return exp ? fmtTime(r.expires_at) : "Nincs";
+  }
+
+  function render() {
+    const state = el("rulesState");
+    state.hidden = rules.length > 0;
+    state.className = "state";
+    state.textContent = "Nincs elnyomó szabály.";
+    el("rulesBody").innerHTML = rules.map((r) => {
+      const live = r.is_active && !(r.expires_at && parseTime(r.expires_at) <= new Date());
+      const who = r.created_by ? (r.created_by.full_name || r.created_by.username) : "-";
+      return `
+        <tr id="rule-${r.id}" class="${live ? "" : "inactive"}">
+          <td>#${r.id}</td>
+          <td>
+            <div class="title-main">${escapeHtml(r.description)}</div>
+            <div class="title-sub">${escapeHtml(r.reason || "")}</div>
+          </td>
+          <td class="scope">${scopeLabel(r)}</td>
+          <td>${r.hit_count}${r.last_hit_at ? `<div class="title-sub">utoljára ${fmtTime(r.last_hit_at)}</div>` : ""}</td>
+          <td>${statusBadge(r)}</td>
+          <td>${escapeHtml(who)}<div class="title-sub">${fmtTime(r.created_at)}</div></td>
+          <td>${r.is_active ? `<button type="button" class="btn small danger off-btn" data-id="${r.id}">Kikapcsolás</button>` : ""}</td>
+        </tr>`;
+    }).join("");
+    document.querySelectorAll(".off-btn").forEach((btn) => btn.addEventListener("click", () => deactivate(Number(btn.dataset.id))));
+    if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: "center" });
+  }
+
+  async function load() {
+    try {
+      const res = await SIEM.api(`${API}?include_inactive=${el("showInactive").checked}`);
+      if (!res.ok) throw new Error(await errorDetail(res));
+      rules = await res.json();
+      render();
+    } catch (err) {
+      el("rulesBody").innerHTML = "";
+      const state = el("rulesState");
+      state.hidden = false;
+      state.className = "state error";
+      state.textContent = "Nem sikerült betölteni a szabályokat: " + err.message;
+    }
+  }
+
+  async function deactivate(id) {
+    if (!confirm(`A(z) #${id} elnyomó szabály kikapcsolása? Az új egyező riasztások ismét triázsra mennek; a már elnyomottak nem változnak.`)) return;
+    try {
+      const res = await SIEM.api(`${API}/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await errorDetail(res));
+      setMsg(`#${id} kikapcsolva.`, true);
+    } catch (err) {
+      setMsg("Sikertelen kikapcsolás: " + err.message, false);
+    }
+    await load();
+  }
+
+  el("showInactive").addEventListener("change", () => {
+    // A #hash ugras csak az elso betolteskor kell.
+    history.replaceState(null, "", location.pathname);
+    load();
+  });
+
+  // Elnyomott riasztasbol erkezve a kikapcsolt szabaly is lathato legyen.
+  if (location.hash) el("showInactive").checked = true;
+  SIEM.me().then((user) => SIEM.renderUserMenu(el("userMenu"), user)).catch(() => {});
+  load();
+})();
+</script>
+</body>
+</html>

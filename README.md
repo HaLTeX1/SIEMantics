@@ -38,12 +38,15 @@ app/
 ├── db.py              # SQLAlchemy async engine/session, induláskori sémafrissítés (új oszlopok, ENUM értékek)
 ├── models.py           # ORM táblák: AlertRecord (döntésnapló), User, UserSession, CaseAssignment
 ├── metrics.py           # konfúziós mátrix + feldolgozási idő statisztikák
-├── pipeline.py          # háttérsor + worker: triázs -> guardrail -> enrichment -> IRIS a webhook után
+├── pipeline.py          # háttérsor + worker: suppression -> dedup -> flood -> triázs -> guardrail -> enrichment -> IRIS
+├── suppression.py       # elemzői elnyomó szabályok (illesztés, utólagos alkalmazás)
+├── case_actions.py      # FP lezárás (eset / csoport / tömeges), összevonás, tömeges törlés
 └── routers/
     ├── alerts.py        # POST/GET /alerts, PATCH /alerts/{ref}/label, POST /alerts/{ref}/escalate
     ├── metrics.py         # GET /metrics
     ├── auth.py            # login/logout/me/jelszócsere
     ├── cases.py           # IRIS case-ek felhasználóhoz rendelése
+    ├── suppressions.py    # elnyomó szabályok létrehozása / listázása / kikapcsolása
     └── users.py           # admin: felhasználók listázása/létrehozása/módosítása
 tests/                   # pytest tesztek (lásd Tesztek)
 wazuh/
@@ -90,6 +93,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `CORRELATION_WINDOW_HOURS` | alapértelmezett: `24`; ennyi órán belül az azonos forrás IP-ről jövő hasonló riasztás a meglévő IRIS esetbe kerül (lásd [Korreláció](#korreláció)), és az azonos hostról / forrás IP-ről érkezett korábbi riasztások az LLM elé kerülnek (lásd [Kapcsolódó riasztások](#kapcsolódó-riasztások-az-llm-nek)); `0` = kikapcsolva |
 | `CORRELATION_HOST_WINDOW_MINUTES` | alapértelmezett: `10`; forrás IP nélküli riasztás ennyi percen belül ugyanannak a hostnak a meglévő IRIS esetébe kerül (lásd [Korreláció](#korreláció)); `0` = kikapcsolva |
 | `DEDUP_WINDOW_HOURS` | alapértelmezett: `24`; ennyi órán belül az azonos ujjlenyomatú riasztás nem megy az LLM-hez, átveszi a korábbi döntését (lásd [Ismétlődő riasztások](#ismétlődő-riasztások-duplikátum-szűrés-és-automatikus-csoportosítás)); `0` = kikapcsolva |
+| `FLOOD_THRESHOLD` / `FLOOD_WINDOW_MINUTES` | alapértelmezett: `20` / `10`; ha egy Wazuh szabály ugyanazon a hoston ennyiszer szól az ablakon belül, a további riasztások nem mennek az LLM-hez, átveszik a legutóbbi döntést (lásd [Flood kezelés](#flood-kezelés)); `0` = kikapcsolva |
 | `CORRELATION_MAX_ALERTS` | alapértelmezett: `10` — legfeljebb ennyi kapcsolódó riasztás kerül az LLM elé riasztásonként |
 | `SIEMANTICS_PUBLIC_URL` | opcionális; ha meg van adva, az IRIS eset visszalinkel a SIEMantics riasztás-részletre |
 | `IRIS_VERIFY_SSL` | alapértelmezett: `true`. **Csak** ismert, belső/lab IRIS instanciánál önaláírt tanúsítvánnyal állítsd `false`-ra — lásd lent |
@@ -229,6 +233,19 @@ Ugyanaz a tevékenység (pl. egy szoftverfrissítés, egy agent telepítése, eg
 
 Mindkét művelet bármely bejelentkezett felhasználónak elérhető, és egyszerre csak egy fut (dupla kattintás ellen).
 
+## Flood kezelés
+
+Egy zajos szabály vagy egy szkenner percek alatt több száz riasztást küldhet. Az alábbiak a sorrendjükben futnak le minden riasztásnál, az LLM-hívás előtt:
+
+1. **Elnyomó szabályok (suppression):** a dashboardon kijelölt riasztásokból az „Elnyomás...” gombbal (vagy `POST /api/v1/suppressions`) szabály vehető fel. Három hatókör van: `exact` (azonos ujjlenyomat), `rule_host` (ugyanaz a Wazuh szabály ugyanazon a hoston) és `rule` (a szabály bármelyik hoston). A szabály lejárata 1 óra és 1 év között választható, vagy lehet lejárat nélküli. Az egyező új riasztások **triázs nélkül** `suppressed` státuszt kapnak (`triage_engine = suppression`, `review_reason`: a szabály és az indoklás), és egy csoportba kerülnek. Opcionálisan a már beérkezett egyező riasztások is elnyomhatók. Ez csak az IRIS eset nélküli `needs_review` / `suppressed` / `error` riasztásokat érinti: az `auto_status` megmarad, így a metrikák nem torzulnak. A szabályok az **Elnyomások** oldalon (`/ui/suppressions.html`) listázhatók a találatszámmal együtt, és ott kapcsolhatók ki.
+2. **Duplikátum-szűrés:** lásd [Ismétlődő riasztások](#ismétlődő-riasztások-duplikátum-szűrés-és-automatikus-csoportosítás). Az azonos ujjlenyomatú riasztásokat a háttér workerek akkor is sorban dolgozzák fel, ha `TRIAGE_WORKERS > 1`, így egy burstből csak az első megy az LLM-hez.
+3. **Flood-őr:** ha egy szabály ugyanazon a hoston `FLOOD_WINDOW_MINUTES` alatt legalább `FLOOD_THRESHOLD` riasztást ad, a további riasztások – eltérő tartalommal is, pl. más forrás IP-vel – átveszik a szabály+host legutóbbi döntését (`triage_engine = flood`). Az eszkalált döntés átvételekor a riasztás a meglévő IRIS esethez kerül. Ha az új riasztás Wazuh szintje magasabb a döntés alapjául szolgálóénál, a flood-őr nem lép közbe, és rendes triázs fut.
+
+**Tömeges műveletek** a dashboard kijelölési sávjában:
+
+- **Lezárás FP-ként** (`POST /api/v1/alerts/bulk/false-positive`, `{"alert_refs": [...], "reason": "..."}`): a kijelölt riasztások és IRIS eseteik többi riasztása `false_positive` címkét kap, a nyitott esetek false positive-ként lezárulnak (note + tag). A még `queued` riasztások triázs nélkül `suppressed` státuszba kerülnek (`triage_engine = analyst`); ezek nem számítanak predikciónak a metrikákban.
+- **Törlés** (`POST /api/v1/alerts/bulk/delete`, **csak admin**): a riasztások **véglegesen** törlődnek a SIEMantics adatbázisból, a metrikákból is. Az IRIS esetek nem változnak. Elsősorban teszt- vagy szemétadat takarítására szolgál; valódi floodnál az elnyomás és az FP lezárás megtartja a nyomot.
+
 ## IoC enrichment (VirusTotal / AbuseIPDB)
 
 Escalated (true-positive) riasztásoknál a rendszer automatikusan enricheli az IP-típusú IoC-ket, ha be van állítva a megfelelő API kulcs (mindkettő független és opcionális — csak az fut le, amihez van kulcs). Az eredmény:
@@ -283,6 +300,11 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `GET` | `/api/v1/alerts/{ref}` | egy riasztás-rekord teljes részlete; `ref` = `ID-42` vagy Wazuh `alert_id` (legutóbbi) |
 | `PATCH` | `/api/v1/alerts/{ref}/label` | ground truth címkézés (`true_positive` / `false_positive`) |
 | `POST` | `/api/v1/alerts/{ref}/escalate` | kézi eszkaláció IRIS esetté (`needs_review`/`suppressed`/`error` riasztásnál), lásd [Kézi eszkaláció](#kézi-eszkaláció) |
+| `POST` | `/api/v1/alerts/bulk/false-positive` | tömeges FP lezárás (`alert_refs`, `reason`), lásd [Flood kezelés](#flood-kezelés) |
+| `POST` | `/api/v1/alerts/bulk/delete` | **admin:** riasztások végleges törlése (`alert_refs`) |
+| `GET` | `/api/v1/suppressions` | elnyomó szabályok (`include_inactive=true`: a lejártak és kikapcsoltak is) |
+| `POST` | `/api/v1/suppressions` | elnyomó szabály a kijelölt riasztásokból (`alert_refs`, `scope`, `reason`, `duration_hours`, `apply_existing`) |
+| `DELETE` | `/api/v1/suppressions/{id}` | elnyomó szabály kikapcsolása |
 | `GET` | `/api/v1/config` | nem-titkos konfiguráció a frontendnek (pl. `iris_base_url` az eset-linkhez) |
 | `GET` | `/api/v1/metrics` | konfúziós mátrix + feldolgozási idő statisztikák a címkézett rekordokból |
 | `POST` | `/api/v1/auth/login` | bejelentkezés (`username`, `password`), session cookie-t állít be |

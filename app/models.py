@@ -58,6 +58,10 @@ class AlertRecord(Base):
     group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Normalizalt ujjlenyomat a duplikatum-szureshez (app/fingerprint.py).
     fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # Wazuh szabaly ID, a flood szamlalashoz es a suppression szabalyokhoz.
+    rule_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    # Az elnyomo suppression szabaly, ha szabaly nyomta el.
+    suppression_rule_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     @property
     def display_id(self) -> str:
@@ -111,3 +115,28 @@ class CaseAssignment(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     assigned_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     assigned_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SuppressionRule(Base):
+    # Elemzo altal felvett elnyomas: az egyezo riasztasok LLM nelkul SUPPRESSED-ek.
+
+    __tablename__ = "suppression_rules"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # exact: ujjlenyomat, rule_host: szabaly + host, rule: szabaly barmelyik hoston.
+    scope: Mapped[str] = mapped_column(String(16))
+    fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rule_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    agent_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Az alapul szolgalo riasztas leirasa a listahoz.
+    description: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+    last_hit_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    def is_live(self, now: datetime) -> bool:
+        return self.is_active and (self.expires_at is None or self.expires_at > now)

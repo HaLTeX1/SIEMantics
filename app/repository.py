@@ -46,6 +46,31 @@ async def get_alert_record_by_ref(session: AsyncSession, ref: str) -> AlertRecor
     return await get_latest_alert_record(session, ref)
 
 
+async def get_alert_records_by_refs(session: AsyncSession, refs: list[str]) -> tuple[list[AlertRecord], list[str]]:
+    # (talalt rekordok egyszer, nem talalt hivatkozasok); ID-N egy IN lekerdezessel.
+    ids: dict[int, str] = {}
+    others: list[str] = []
+    for ref in refs:
+        match = _DISPLAY_ID_RE.fullmatch(ref.strip())
+        if match:
+            ids[int(match.group(1))] = ref
+        else:
+            others.append(ref)
+    found: dict[int, AlertRecord] = {}
+    for start in range(0, len(ids), 500):
+        chunk = list(ids)[start:start + 500]
+        result = await session.execute(select(AlertRecord).where(AlertRecord.id.in_(chunk)))
+        found.update((r.id, r) for r in result.scalars())
+    missing = [ref for record_id, ref in ids.items() if record_id not in found]
+    for ref in others:
+        record = await get_latest_alert_record(session, ref)
+        if record is None:
+            missing.append(ref)
+        else:
+            found[record.id] = record
+    return sorted(found.values(), key=lambda r: r.received_at), missing
+
+
 async def find_related_alerts(
     session: AsyncSession,
     *,

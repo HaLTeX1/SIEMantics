@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     correlation_host_window_minutes: int = Field(default=10, ge=0)
     # Ennyi oran belul az azonos ujjlenyomatu riasztas nem megy LLM-hez, a korabbi donteset kapja (0 = ki).
     dedup_window_hours: int = Field(default=24, ge=0)
+    # Flood: ha egy szabaly+host ennyi riasztast ad az ablakban, a tobbi LLM nelkul a legutobbi dontest kapja (0 = ki).
+    flood_threshold: int = Field(default=20, ge=0)
+    flood_window_minutes: int = Field(default=10, ge=0)
     # Legfeljebb ennyi kapcsolodo riasztas kerul az LLM ele.
     correlation_max_alerts: int = Field(default=10, ge=0)
 

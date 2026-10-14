@@ -6,10 +6,10 @@ from app.metrics import compute_metrics
 TP, FP = GroundTruth.TRUE_POSITIVE, GroundTruth.FALSE_POSITIVE
 
 
-def _rec(status, ground_truth=None, auto_status=None, escalated_by_id=None, ms=10.0):
+def _rec(status, ground_truth=None, auto_status=None, escalated_by_id=None, ms=10.0, engine="openrouter"):
     return SimpleNamespace(
         status=status, auto_status=auto_status, ground_truth=ground_truth,
-        escalated_by_id=escalated_by_id, processing_time_ms=ms,
+        escalated_by_id=escalated_by_id, processing_time_ms=ms, triage_engine=engine,
     )
 
 
@@ -71,3 +71,12 @@ def test_error_records_are_excluded_from_processing_time():
     m = compute_metrics([_rec(AlertStatus.ERROR, ms=9999.0), _rec(AlertStatus.SUPPRESSED, ms=10.0)])
     assert m.error_count == 1
     assert m.avg_processing_time_ms == 10.0
+
+
+def test_alerts_closed_before_triage_are_not_predictions():
+    # Flood: az elemzo a varakozo riasztasokat triazs elott lezarta.
+    m = compute_metrics([
+        _rec(AlertStatus.SUPPRESSED, FP),
+        _rec(AlertStatus.SUPPRESSED, FP, engine="analyst"),
+    ])
+    assert m.sample_size == 1 and m.true_negative == 1
