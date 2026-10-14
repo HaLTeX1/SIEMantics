@@ -56,6 +56,8 @@ class AlertRecord(Base):
     correlated_with_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # SIEMantics csoport: a csoport elso (fo) riasztasanak ID-ja, a fo riasztasnal a sajatja.
     group_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Normalizalt ujjlenyomat a duplikatum-szureshez (app/fingerprint.py).
+    fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
 
     @property
     def display_id(self) -> str:

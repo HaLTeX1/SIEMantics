@@ -7,6 +7,7 @@ from app.auth import get_current_user
 from app.config import settings
 from app.db import get_session
 from app.enums import AlertStatus
+from app.fingerprint import alert_fingerprint
 from app.normalize import normalize_wazuh_alert
 from app.models import AlertRecord, User
 from app.pipeline import alert_queue, manual_escalate, process_record
@@ -77,6 +78,7 @@ async def receive_alert(
         rule_description=alert.rule_description,
         severity=alert.severity,
         raw_payload=payload.model_dump(mode="json"),
+        fingerprint=alert_fingerprint(payload.model_dump(mode="json")),
         status=AlertStatus.QUEUED,
         processing_time_ms=0.0,
     )

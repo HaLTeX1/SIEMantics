@@ -85,8 +85,8 @@ def test_merge_moves_every_alert_of_a_selected_case(logged_in, iris):
     # Csak a masik eset egy riasztasa es az elso eset egyik riasztasa van kijelolve.
     body = logged_in.post(MERGE, json={"alert_refs": [other["display_id"], first_b["display_id"]]}).json()
     assert body["iris_case_id"] == first["iris_case_id"] and body["group"] == first["display_id"]
-    # Az elso eset fo riasztasa is a csoportba kerul.
-    assert sorted(body["merged"]) == sorted([first_b["display_id"], other["display_id"]])
+    # A korrelalt first_b mar automatikusan az elso csoportjaban volt.
+    assert body["merged"] == [other["display_id"]]
     assert get(logged_in, first["display_id"])["group_size"] == 3
 
 
@@ -110,8 +110,8 @@ def test_merge_rejects_bad_selections(logged_in, iris, monkeypatch):
 
     b = process_alert(logged_in, alert("r2", host="h1", srcip="198.51.100.1", rule_id="101"))
     assert b["iris_case_id"] == a["iris_case_id"]
-    # Egy esetben, de meg nem csoportban: osszevonhato; masodszorra mar nem.
-    assert logged_in.post(MERGE, json={"alert_refs": [a["display_id"], b["display_id"]]}).status_code == 200
+    # A korrelacio mar egy csoportba tette oket, nincs mit osszevonni.
+    assert b["group"] == a["display_id"]
     assert logged_in.post(MERGE, json={"alert_refs": [a["display_id"], b["display_id"]]}).status_code == 409
 
     monkeypatch.setattr(pipeline.alert_queue, "enqueue", lambda record_id: None)

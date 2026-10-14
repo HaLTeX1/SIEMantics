@@ -16,6 +16,8 @@ os.environ.update(
     DATABASE_URL=f"sqlite+aiosqlite:///{(_TMP_DIR / 'test.db').as_posix()}",
     REVIEW_CONFIDENCE_THRESHOLD="0.7",
     REVIEW_SEVERITY_FLOOR="12",
+    # Alapbol ki, hogy az azonos riasztasokat kuldo tesztek a korrelaciot teszteljek.
+    DEDUP_WINDOW_HOURS="0",
 )
 
 import pytest  # noqa: E402

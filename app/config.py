@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     correlation_window_hours: int = Field(default=24, ge=0)
     # Forras IP nelkuli riasztas ennyi percen belul a host nyitott esetebe kerul (0 = ki).
     correlation_host_window_minutes: int = Field(default=10, ge=0)
+    # Ennyi oran belul az azonos ujjlenyomatu riasztas nem megy LLM-hez, a korabbi donteset kapja (0 = ki).
+    dedup_window_hours: int = Field(default=24, ge=0)
     # Legfeljebb ennyi kapcsolodo riasztas kerul az LLM ele.
     correlation_max_alerts: int = Field(default=10, ge=0)
 

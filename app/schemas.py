@@ -108,7 +108,7 @@ class TriageResult(BaseModel):
     iocs: list[str] = Field(default_factory=list)
     recommended_severity: Optional[str] = None
     # manual: tarolt rekordbol epul, kezi eszkalacional.
-    engine: Literal["openrouter", "mock", "manual"]
+    engine: Literal["openrouter", "mock", "manual", "dedup"]
     # A valaszolo konkret modell (mock motornal None).
     model: Optional[str] = None
 

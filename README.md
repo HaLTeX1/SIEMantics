@@ -89,6 +89,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `IRIS_CUSTOMER_ID` | eset létrehozáshoz tartozó ügyfél ID |
 | `CORRELATION_WINDOW_HOURS` | alapértelmezett: `24`; ennyi órán belül az azonos forrás IP-ről jövő hasonló riasztás a meglévő IRIS esetbe kerül (lásd [Korreláció](#korreláció)), és az azonos hostról / forrás IP-ről érkezett korábbi riasztások az LLM elé kerülnek (lásd [Kapcsolódó riasztások](#kapcsolódó-riasztások-az-llm-nek)); `0` = kikapcsolva |
 | `CORRELATION_HOST_WINDOW_MINUTES` | alapértelmezett: `10`; forrás IP nélküli riasztás ennyi percen belül ugyanannak a hostnak a meglévő IRIS esetébe kerül (lásd [Korreláció](#korreláció)); `0` = kikapcsolva |
+| `DEDUP_WINDOW_HOURS` | alapértelmezett: `24`; ennyi órán belül az azonos ujjlenyomatú riasztás nem megy az LLM-hez, átveszi a korábbi döntését (lásd [Ismétlődő riasztások](#ismétlődő-riasztások-duplikátum-szűrés-és-automatikus-csoportosítás)); `0` = kikapcsolva |
 | `CORRELATION_MAX_ALERTS` | alapértelmezett: `10` — legfeljebb ennyi kapcsolódó riasztás kerül az LLM elé riasztásonként |
 | `SIEMANTICS_PUBLIC_URL` | opcionális; ha meg van adva, az IRIS eset visszalinkel a SIEMantics riasztás-részletre |
 | `IRIS_VERIFY_SSL` | alapértelmezett: `true`. **Csak** ismert, belső/lab IRIS instanciánál önaláírt tanúsítvánnyal állítsd `false`-ra — lásd lent |
@@ -195,6 +196,14 @@ A `needs_review`, `suppressed` vagy `error` (IRIS eset nélküli) riasztásokat 
 - lefut az IoC enrichment, a rekord `escalated` státuszt kap, `escalated_by` / `escalated_at` kitöltődik, és automatikusan **True Positive** címkét kap (az eszkalálás maga az analyst ítélete, hogy incidensről van szó),
 - az automatikus döntés az `auto_status`-ban megmarad (lásd Metrikák fent),
 - egy már eszkalált riasztás újra-eszkalálása `409`-et ad; ha az IRIS nem elérhető, `502`, és a rekord változatlan marad.
+
+## Ismétlődő riasztások: duplikátum-szűrés és automatikus csoportosítás
+
+Ugyanaz a tevékenység (pl. egy szoftverfrissítés, egy agent telepítése, egy flood) sok, szinte azonos riasztást hoz. Ezeket a rendszer két módon kezeli:
+
+- **Duplikátum-szűrés (`app/fingerprint.py`):** minden riasztás kap egy normalizált ujjlenyomatot (host + Wazuh szabály + kulcsmezők: parancssor, fájl, útvonal, URL, signature, CVE, felhasználó, IP-k). A szöveges mezőkből a verziószámok, hash-ek, GUID-ok és számok ki vannak véve, az IP-címek nem. Ha `DEDUP_WINDOW_HOURS` (alapból 24 óra) belül már volt azonos ujjlenyomatú, eldöntött riasztás, az új **nem megy az LLM-hez**: átveszi a korábbi döntését (eszkalált riasztásnál az IRIS esetét is, új note nélkül), és annak csoportjába kerül (`triage_engine = dedup`, a `correlated_with` a korábbira mutat). Ez az ingyenes LLM-kvótát is kíméli.
+- **Ismert false positive:** ha az azonos ujjlenyomatú korábbi riasztást egy elemző **false positive-nak** címkézte (és TP-nek egyiket sem), az új példány automatikusan `suppressed` lesz (`review_reason`: „duplicate of ID-x, labeled false positive”). Ground truth címkét nem kap automatikusan, így a metrikát nem torzítja.
+- **Automatikus csoportosítás:** a [korrelált](#korreláció) riasztások (azonos forrás IP és hasonló szabály, illetve forrás IP nélkül azonos host `CORRELATION_HOST_WINDOW_MINUTES`-on belül) automatikusan egy SIEMantics csoportba is kerülnek — eszkaláció nélkül is —, így a dashboardon egy sorként jelennek meg.
 
 ## Case műveletek: false positive és összevonás
 

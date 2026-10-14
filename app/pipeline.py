@@ -180,10 +180,101 @@ class ProcessOutcome:
     correlated: AlertRecord | None = None
 
 
+def join_group(record: AlertRecord, anchor: AlertRecord) -> None:
+    # A rekord az anchor csoportjaba kerul; csoport nelkuli anchor sajat csoportot nyit.
+    group_id = anchor.group_id or anchor.id
+    anchor.group_id = group_id
+    record.group_id = group_id
+
+
+async def _auto_group(session: AsyncSession, record: AlertRecord, correlated: AlertRecord | None) -> None:
+    # Korrelalt vagy azonos burst-be tartozo riasztas automatikusan csoportba kerul.
+    anchor = correlated or await find_correlated_record(session, record, require_case=False)
+    if anchor is not None:
+        join_group(record, anchor)
+
+
+def _is_decided(record: AlertRecord) -> bool:
+    auto = record.auto_status
+    if auto in (None, AlertStatus.ERROR, AlertStatus.QUEUED) or record.status == AlertStatus.ERROR:
+        return False
+    # Eszkalalt csak IRIS esettel atveheto.
+    return auto != AlertStatus.ESCALATED or record.iris_case_id is not None
+
+
+async def _find_duplicate(session: AsyncSession, record: AlertRecord) -> tuple[AlertRecord, bool] | None:
+    # Azonos ujjlenyomatu korabbi riasztas az ablakban; True, ha elemzo FP-nek jelolte.
+    if settings.dedup_window_hours <= 0 or not record.fingerprint:
+        return None
+    window = timedelta(hours=settings.dedup_window_hours)
+    result = await session.execute(
+        select(AlertRecord)
+        .where(
+            AlertRecord.fingerprint == record.fingerprint,
+            AlertRecord.id != record.id,
+            AlertRecord.received_at >= record.received_at - window,
+            AlertRecord.received_at <= record.received_at,
+        )
+        .order_by(AlertRecord.received_at.desc())
+    )
+    candidates = list(result.scalars())
+    labels = {c.ground_truth for c in candidates}
+    known_fp = GroundTruth.FALSE_POSITIVE in labels and GroundTruth.TRUE_POSITIVE not in labels
+    decided = next((c for c in candidates if _is_decided(c)), None)
+    if known_fp:
+        return decided or candidates[0], True
+    return (decided, False) if decided else None
+
+
+async def _apply_duplicate(
+    session: AsyncSession, record: AlertRecord, anchor: AlertRecord, known_fp: bool, started: float
+) -> ProcessOutcome:
+    # LLM hivas nelkul: az ismert FP elnyomva, kulonben a korabbi dontes atveve.
+    note = f"Duplicate of {anchor.display_id} (same host, rule and key fields within {settings.dedup_window_hours} h)"
+    record.triage_engine = "dedup"
+    record.triage_model = anchor.triage_model
+    record.llm_is_true_positive = anchor.llm_is_true_positive
+    record.llm_confidence = anchor.llm_confidence
+    record.llm_iocs = anchor.llm_iocs
+    record.llm_analysis = anchor.llm_analysis
+    record.correlated_with_id = anchor.id
+    join_group(record, anchor)
+    if known_fp:
+        record.status = record.auto_status = AlertStatus.SUPPRESSED
+        record.review_reason = f"duplicate of {anchor.display_id}, labeled false positive by an analyst"
+        record.llm_reasoning = f"{note}; an analyst labeled it false positive, suppressed without triage."
+    else:
+        record.status = record.auto_status = anchor.auto_status
+        record.review_reason = anchor.review_reason
+        record.llm_reasoning = f"{note}; decision taken over.\n\n{anchor.llm_reasoning or ''}".rstrip()
+        if anchor.auto_status == AlertStatus.ESCALATED:
+            record.iris_case_id = anchor.iris_case_id
+            record.ioc_enrichment = anchor.ioc_enrichment
+    record.processing_time_ms = _elapsed_ms(started)
+    await save_alert_record(session, record)
+    logger.info("alert %s (%s) is a duplicate of %s -> %s", record.alert_id, record.display_id,
+                anchor.display_id, record.status.value)
+    triage = TriageResult(
+        is_true_positive=bool(record.llm_is_true_positive) and not known_fp,
+        confidence=record.llm_confidence or 0.0,
+        reasoning=record.llm_reasoning,
+        iocs=record.llm_iocs or [],
+        engine="dedup",
+        model=record.triage_model,
+    )
+    case = None
+    if record.iris_case_id:
+        case = IrisCaseResult(case_id=record.iris_case_id, case_url=iris_client.case_url(record.iris_case_id))
+    return ProcessOutcome(triage=triage, case=case, correlated=anchor)
+
+
 async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessOutcome:
     # QUEUED rekord triazsa; triazs/IRIS hibat ERROR statuszkent tarol, nem dob.
     alert = alert_from_record(record)
     started = time.perf_counter()
+    duplicate = await _find_duplicate(session, record)
+    if duplicate is not None:
+        return await _apply_duplicate(session, record, *duplicate, started)
     related = await related_alerts(session, alert, record.received_at, exclude_id=record.id)
 
     try:
@@ -210,6 +301,7 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessO
     if alert_status != AlertStatus.ESCALATED:
         record.status = alert_status
         record.review_reason = review_reason
+        await _auto_group(session, record, None)
         record.processing_time_ms = _elapsed_ms(started)
         await save_alert_record(session, record)
         logger.info(
@@ -237,6 +329,7 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessO
     record.status = AlertStatus.ESCALATED
     record.iris_case_id = case.case_id
     record.correlated_with_id = correlated.id if correlated else None
+    await _auto_group(session, record, correlated)
     record.processing_time_ms = _elapsed_ms(started)
     await save_alert_record(session, record)
     logger.info(

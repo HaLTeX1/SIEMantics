@@ -4,7 +4,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.enums import AlertStatus
 from app.models import AlertRecord
+
+
+def _has_case():
+    return AlertRecord.iris_case_id.is_not(None)
 
 
 def correlation_ip(raw: dict | None) -> str | None:
@@ -39,11 +44,14 @@ def correlation_host(raw: dict | None) -> str | None:
     return agent.get("name") or None
 
 
-async def find_correlated_record(session: AsyncSession, record: AlertRecord) -> AlertRecord | None:
-    # IP-vel: hasonlo riasztas esete az ablakban; IP nelkul: a host rovid idon beluli esete.
+async def find_correlated_record(
+    session: AsyncSession, record: AlertRecord, *, require_case: bool = True
+) -> AlertRecord | None:
+    # IP-vel: hasonlo riasztas az ablakban; IP nelkul: a host rovid idon beluli riasztasa.
+    # require_case=False: csoportositashoz, IRIS eset nelkuli riasztas is jo.
     ip = correlation_ip(record.raw_payload)
     if not ip:
-        return await _find_same_host_record(session, record)
+        return await _find_same_host_record(session, record, require_case)
     if settings.correlation_window_hours <= 0:
         return None
 
@@ -52,7 +60,7 @@ async def find_correlated_record(session: AsyncSession, record: AlertRecord) -> 
         select(AlertRecord)
         .where(
             AlertRecord.source_ip == ip,
-            AlertRecord.iris_case_id.is_not(None),
+            _has_case() if require_case else AlertRecord.status != AlertStatus.QUEUED,
             AlertRecord.received_at >= since,
             AlertRecord.id != record.id,
         )
@@ -64,8 +72,8 @@ async def find_correlated_record(session: AsyncSession, record: AlertRecord) -> 
     return None
 
 
-async def _find_same_host_record(session: AsyncSession, record: AlertRecord) -> AlertRecord | None:
-    # A legutobbi, IRIS esettel rendelkezo riasztas ugyanarrol a hostrol, a riasztas korul +-ablakban.
+async def _find_same_host_record(session: AsyncSession, record: AlertRecord, require_case: bool) -> AlertRecord | None:
+    # A legutobbi riasztas ugyanarrol a hostrol a +-ablakban (require_case eseten IRIS esettel).
     host = correlation_host(record.raw_payload)
     if not host or settings.correlation_host_window_minutes <= 0:
         return None
@@ -75,7 +83,7 @@ async def _find_same_host_record(session: AsyncSession, record: AlertRecord) -> 
         select(AlertRecord)
         .where(
             AlertRecord.agent_name == host,
-            AlertRecord.iris_case_id.is_not(None),
+            _has_case() if require_case else AlertRecord.status != AlertStatus.QUEUED,
             AlertRecord.received_at >= received - window,
             AlertRecord.received_at <= received + window,
             AlertRecord.id != record.id,
