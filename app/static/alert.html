@@ -308,7 +308,8 @@
       const active = new Date(r.expires_at + (r.expires_at.endsWith("Z") ? "" : "Z")) > new Date();
       const label = { sent: "blokkolva", partial: "részben blokkolva", failed: "sikertelen",
                       dry_run: "próba: blokkolta volna" }[r.status] || r.status;
-      const targets = (r.targets || []).map((t) => `${escapeHtml(t.name || t.id)}${t.ok ? "" : " ✗"}`).join(", ");
+      // Proba futasnal ok = null: nem ment parancs, nem hiba.
+      const targets = (r.targets || []).map((t) => `${escapeHtml(t.name || t.id)}${t.ok === false ? " ✗" : ""}`).join(", ");
       const cls = r.status === "sent" ? "ok" : r.status === "dry_run" ? "muted" : "bad";
       return `<div><span class="${cls}">${escapeHtml(r.ip)} ${label}</span>
         <span class="muted">· ${escapeHtml(who)}, ${fmtTime(r.created_at)} · ${active ? "lejár: " + fmtTime(r.expires_at) : "lejárt"}
