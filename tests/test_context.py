@@ -252,3 +252,34 @@ def test_replay_measures_without_touching_the_database(logged_in, iris, monkeypa
     assert report["before"]["FP"] == 1 and report["after"]["TN"] == 1
     assert report["alerts"][0]["after"]["status"] == "needs_review"
     assert logged_in.get(f"/api/v1/alerts/{first['display_id']}").json()["status"] == "escalated"
+
+
+# --- agent nelkuli eszkozok IP alapjan
+
+def test_agentless_device_is_matched_by_ip_hostname_and_destination(logged_in, iris, seen):
+    fw = logged_in.post("/api/v1/hosts", json={"agent_name": "edge-fw01", "role": "edge firewall",
+                                                "ips": ["10.64.0.1", " 10.64.0.1 ", ""]})
+    assert fw.status_code == 201 and fw.json()["ips"] == ["10.64.0.1"]
+    logged_in.post("/api/v1/hosts", json={"agent_name": "core-sw", "role": "core switch"})
+    git = logged_in.post("/api/v1/hosts", json={"agent_name": "forgejo", "role": "git server", "ips": ["10.64.0.95"]}).json()
+    assert logged_in.patch(f"/api/v1/hosts/{git['id']}", json={"ips": ["nope"]}).status_code == 422
+
+    manager = {"id": "000", "name": "lab-soc-siem01"}
+    # Tuzfal syslog: a kuldo IP a location.
+    process_alert(logged_in, wazuh_alert("fw-1", level=5, agent=manager, location="10.64.0.1",
+                                         data={"srcip": "45.155.205.233", "dstip": "10.64.0.95"}))
+    env = seen[-1]["environment"]
+    assert env["host"]["name"] == "edge-fw01" and env["host"]["matched_by"] == "syslog sender 10.64.0.1"
+    assert env["destination_host"]["name"] == "forgejo" and env["destination_host"]["role"] == "git server"
+
+    # Hostname a predecoderbol, ha a location nem IP.
+    process_alert(logged_in, wazuh_alert("sw-1", level=5, agent=manager, location="/var/log/remote.log",
+                                         predecoder={"hostname": "CORE-SW", "program_name": "sshd"}, data={}))
+    assert seen[-1]["environment"]["host"]["name"] == "core-sw"
+
+    # Ismert host IP-je forraskent.
+    process_alert(logged_in, wazuh_alert("x-1", level=5, agent=manager, location="10.64.0.200",
+                                         data={"srcip": "10.64.0.95"}))
+    env = seen[-1]["environment"]
+    assert "host" not in env and env["source_ip"]["host"] == "forgejo"
+    assert env["source_ip"]["scope"] == "internal host in the inventory"

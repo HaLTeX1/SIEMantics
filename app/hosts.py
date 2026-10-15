@@ -107,31 +107,93 @@ def _network(cidr: str):
         return None
 
 
-async def ip_context(session: AsyncSession, ip: str | None) -> dict | None:
-    # A legszukebb ismert halozat cimkeje, kulonben a cim tipusa.
+def _as_ip(value) -> str | None:
+    try:
+        return str(ipaddress.ip_address(str(value).strip()))
+    except ValueError:
+        return None
+
+
+def profile_ips(profile: HostProfile) -> set[str]:
+    # Kezi IP-k es a Wazuh altal ismert agent IP ("any" nelkul).
+    ips = {ip for ip in (profile.ips or []) if ip}
+    wazuh_ip = _as_ip((profile.wazuh or {}).get("ip") or "")
+    if wazuh_ip:
+        ips.add(wazuh_ip)
+    return ips
+
+
+async def load_profiles(session: AsyncSession) -> list[HostProfile]:
+    return list((await session.execute(select(HostProfile))).scalars())
+
+
+def host_by_ip(profiles: list[HostProfile], ip: str | None) -> HostProfile | None:
+    ip = _as_ip(ip) if ip else None
+    return next((p for p in profiles if ip and ip in profile_ips(p)), None) if ip else None
+
+
+def describe_host(profile: HostProfile, matched_by: str | None = None) -> dict:
+    context = {"name": profile.agent_name, "role": profile.role, "criticality": profile.criticality,
+               "notes": profile.notes, "ips": sorted(profile.ips or []) or None, "matched_by": matched_by}
+    context.update({k: v for k, v in (profile.wazuh or {}).items() if k not in ("agent_version", "last_keepalive")})
+    return {k: v for k, v in context.items() if v not in (None, "", [])}
+
+
+async def ip_context(session: AsyncSession, ip: str | None, profiles: list[HostProfile] | None = None) -> dict | None:
+    # A legszukebb ismert halozat cimkeje (es ha ismert host IP-je, a host), kulonben a cim tipusa.
     if not ip:
         return None
     try:
         address = ipaddress.ip_address(ip)
     except ValueError:
         return None
+    host = host_by_ip(profiles if profiles is not None else await load_profiles(session), ip)
+    host_info = {"host": host.agent_name, "host_role": host.role} if host else {}
     networks = (await session.execute(select(KnownNetwork))).scalars()
     matches = [(net, n) for n in networks if (net := _network(n.cidr)) and address.version == net.version and address in net]
     if matches:
         net, best = max(matches, key=lambda m: m[0].prefixlen)
-        return {"ip": ip, "known_as": best.label, "network": str(net), "trusted": best.trusted}
-    return {"ip": ip, "known_as": None, "scope": "public" if address.is_global else "private/internal, not documented"}
+        return {"ip": ip, "known_as": best.label, "network": str(net), "trusted": best.trusted,
+                **{k: v for k, v in host_info.items() if v}}
+    scope = "public" if address.is_global else "private/internal, not documented"
+    if host:
+        scope = "internal host in the inventory"
+    return {"ip": ip, "known_as": None, "scope": scope, **{k: v for k, v in host_info.items() if v}}
 
 
-async def host_context(session: AsyncSession, agent_name: str | None) -> dict | None:
-    if not agent_name:
-        return None
-    profile = (await session.execute(select(HostProfile).where(HostProfile.agent_name == agent_name))).scalars().first()
-    if profile is None:
-        return {"name": agent_name, "profile": "unknown host, no inventory data"}
-    context = {"name": agent_name, "role": profile.role, "criticality": profile.criticality, "notes": profile.notes}
-    context.update({k: v for k, v in (profile.wazuh or {}).items() if k not in ("agent_version", "last_keepalive")})
-    return {k: v for k, v in context.items() if v not in (None, "", [])}
+def _event_field(alert, *keys: str) -> str | None:
+    return next((alert.event_fields[k] for k in keys if alert.event_fields.get(k)), None)
+
+
+async def host_context(session: AsyncSession, alert, profiles: list[HostProfile] | None = None) -> dict | None:
+    # A riasztast ado eszkoz: agent neve; a manager altal tovabbitottnal a kuldo IP (location) vagy hostname.
+    profiles = profiles if profiles is not None else await load_profiles(session)
+    if alert.agent_id != "000" and alert.agent_name:
+        profile = next((p for p in profiles if p.agent_name == alert.agent_name), None)
+        if profile is not None:
+            return describe_host(profile)
+        # Agentes host, de ismeretlen nev: az agent IP-je meg azonosithatja.
+        by_ip = host_by_ip(profiles, alert.agent_ip)
+        if by_ip is not None:
+            return describe_host(by_ip, matched_by=f"agent IP {alert.agent_ip}")
+        return {"name": alert.agent_name, "profile": "unknown host, no inventory data"}
+    location_ip = _as_ip(alert.location or "")
+    by_location = host_by_ip(profiles, location_ip)
+    if by_location is not None:
+        return describe_host(by_location, matched_by=f"syslog sender {location_ip}")
+    hostname = (_event_field(alert, "predecoder.hostname") or "").strip().lower()
+    if hostname:
+        by_name = next((p for p in profiles if p.agent_name.lower() == hostname), None)
+        if by_name is not None:
+            return describe_host(by_name, matched_by=f"hostname {hostname}")
+    return None
+
+
+async def destination_host(session: AsyncSession, alert, profiles: list[HostProfile] | None = None) -> dict | None:
+    # A forgalom celja, ha ismert host (pl. Suricata riasztasnal a megtamadott gep).
+    ip = _event_field(alert, "data.dstip", "data.dest_ip", "data.dst_ip")
+    profile = host_by_ip(profiles if profiles is not None else await load_profiles(session), ip)
+    return describe_host(profile, matched_by=f"destination IP {ip}") if profile else None
 
 
 class HostSyncer:

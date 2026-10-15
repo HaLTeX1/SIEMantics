@@ -21,7 +21,8 @@ _SOURCE_IP_FIELDS = (
 )
 
 # Felso szintu Wazuh mezok (a data mellett), amik esemenyadatot hordoznak.
-_EXTRA_EVENT_SECTIONS = ("syscheck", "previous_output")
+# predecoder.hostname: syslogot kuldo, agent nelkuli eszkoz neve.
+_EXTRA_EVENT_SECTIONS = ("syscheck", "previous_output", "predecoder")
 
 
 def _clean_ip(value) -> str | None:

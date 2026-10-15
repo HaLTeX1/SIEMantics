@@ -16,7 +16,7 @@ from app.enrichment import enrich_iocs
 from app.enums import AlertStatus, GroundTruth
 from app.guardrails import Evidence, decide_status
 from app.iris_client import iris_client
-from app.hosts import host_context, ip_context
+from app.hosts import destination_host, host_context, ip_context, load_profiles
 from app.surrounding import surrounding_events
 from app.llm_engine import LlmUnavailable, second_opinion_enabled, triage_alert
 from app.models import AlertRecord, User
@@ -105,10 +105,14 @@ async def analyst_history(session: AsyncSession, record: AlertRecord, as_of: dat
 async def environment_context(session: AsyncSession, alert: NormalizedAlert) -> dict:
     # Host profil (szerep, OS, szolgaltatasok) es a forras IP besorolasa az ismert halozatok alapjan.
     context: dict = {}
-    host = await host_context(session, alert.agent_name if alert.agent_id != "000" else None)
+    profiles = await load_profiles(session)
+    host = await host_context(session, alert, profiles)
     if host:
         context["host"] = host
-    source = await ip_context(session, alert.source_ip)
+    target = await destination_host(session, alert, profiles)
+    if target and target.get("name") != (host or {}).get("name"):
+        context["destination_host"] = target
+    source = await ip_context(session, alert.source_ip, profiles)
     if source:
         context["source_ip"] = source
     # A Wazuh indexerbol a host / IP koruli osszes esemeny, az alacsony szintuek is (a promptban kulon kulcs).

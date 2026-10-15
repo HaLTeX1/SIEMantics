@@ -168,7 +168,7 @@
     <nav class="admin-tabs" id="adminTabs" aria-label="Admin panel"></nav>
 
     <div class="card">
-      <p class="hint">Az LLM a triázsnál megkapja a riasztás hostjának adatait és szerepét, valamint azt, hogy a forrás IP egy ismert, megbízható rendszer-e. A hostok adatai (OS, IP, csoportok, figyelő szolgáltatások) óránként frissülnek a Wazuh-ból; az új hostok maguktól megjelennek. A szerepet, a kritikusságot és a megjegyzést itt adhatod meg (L2 vagy admin).</p>
+      <p class="hint">Az LLM a triázsnál megkapja a riasztás hostjának adatait és szerepét, valamint azt, hogy a forrás IP egy ismert, megbízható rendszer-e. A hostok adatai (OS, IP, csoportok, figyelő szolgáltatások) óránként frissülnek a Wazuh-ból; az új hostok maguktól megjelennek. A szerepet, a kritikusságot, a megjegyzést és az IP-címeket itt adhatod meg (L2 vagy admin). Agent nélküli eszköznél (tűzfal, router, switch) az IP-cím azonosítja a riasztást küldő eszközt, mert a név alapján nem mindig sikerül.</p>
     </div>
 
     <div class="card" style="padding:0; overflow-x:auto;">
@@ -192,7 +192,8 @@
       </table>
       <div id="hostsState" class="state" hidden></div>
       <form id="hostForm" class="form-row" hidden autocomplete="off">
-        <div><label for="newHostName">Agent nélküli host neve</label><input id="newHostName" required maxlength="128" placeholder="pl. edge-fw01" /></div>
+        <div><label for="newHostName">Agent nélküli eszköz neve</label><input id="newHostName" required maxlength="128" placeholder="pl. edge-fw01" /></div>
+        <div><label for="newHostIps">IP-címek</label><input id="newHostIps" placeholder="pl. 10.64.0.1" /></div>
         <div><label for="newHostRole">Szerep</label><input id="newHostRole" maxlength="256" placeholder="pl. határtűzfal" /></div>
         <div><button type="submit" class="btn small">Host felvétele</button></div>
       </form>
@@ -274,7 +275,7 @@
 
   function editCell(h) {
     if (!canEdit) {
-      const parts = [h.role, h.criticality && `kritikusság: ${h.criticality}`, h.notes].filter(Boolean);
+      const parts = [h.role, h.criticality && `kritikusság: ${h.criticality}`, (h.ips || []).length && `IP: ${h.ips.join(", ")}`, h.notes].filter(Boolean);
       return parts.length ? parts.map(escapeHtml).join("<br>") : '<span class="muted">-</span>';
     }
     const crit = ["", "low", "medium", "high", "critical"].map((c) =>
@@ -282,6 +283,7 @@
     const who = h.updated_by ? `${escapeHtml(h.updated_by.full_name || h.updated_by.username)}, ${fmtTime(h.updated_at)}` : "";
     return `<div class="host-edit" data-id="${h.id}">
         <input id="role-${h.id}" value="${escapeHtml(h.role || "")}" maxlength="256" placeholder="Szerep, pl. Zabbix monitoring szerver" />
+        <input id="ips-${h.id}" value="${escapeHtml((h.ips || []).join(", "))}" placeholder="IP-címek vesszővel (agent nélküli eszköznél ez azonosít)" aria-label="IP-címek" />
         <textarea id="notes-${h.id}" maxlength="4000" placeholder="Megjegyzés, pl. rendszeres karbantartás, telepített szoftverek">${escapeHtml(h.notes || "")}</textarea>
         <div class="row">
           <select id="crit-${h.id}">${crit}</select>
@@ -303,7 +305,7 @@
       return `<tr class="${h.in_wazuh ? "" : "inactive"}">
           <td><div class="title-main">${escapeHtml(h.agent_name)}</div>
             <div class="title-sub">${h.agent_id ? "agent " + escapeHtml(h.agent_id) + " · " : ""}${statusBadge(h)}</div></td>
-          <td>${escapeHtml(w.os || "-")}<div class="title-sub">${escapeHtml(w.ip || "")}${groups ? " · " + escapeHtml(groups) : ""}</div></td>
+          <td>${escapeHtml(w.os || (h.in_wazuh ? "-" : "Agent nélküli eszköz"))}<div class="title-sub">${escapeHtml([w.ip && w.ip !== "any" ? w.ip : null, ...(h.ips || [])].filter(Boolean).join(", "))}${groups ? " · " + escapeHtml(groups) : ""}</div></td>
           <td><div class="services">${services || '<span class="muted">-</span>'}</div></td>
           <td>${editCell(h)}</td>
         </tr>`;
@@ -358,10 +360,15 @@
     }
   }
 
+  function splitIps(text) {
+    return text.split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean);
+  }
+
   async function saveHost(id) {
     try {
       const updated = await send(`/api/v1/hosts/${id}`, "PATCH", {
         role: el(`role-${id}`).value, notes: el(`notes-${id}`).value, criticality: el(`crit-${id}`).value,
+        ips: splitIps(el(`ips-${id}`).value),
       });
       hosts = hosts.map((h) => (h.id === id ? updated : h));
       renderHosts();
@@ -423,7 +430,9 @@
   el("hostForm").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     try {
-      const created = await send("/api/v1/hosts", "POST", { agent_name: el("newHostName").value.trim(), role: el("newHostRole").value });
+      const created = await send("/api/v1/hosts", "POST", {
+        agent_name: el("newHostName").value.trim(), role: el("newHostRole").value, ips: splitIps(el("newHostIps").value),
+      });
       el("hostForm").reset();
       hosts = [...hosts, created].sort((a, b) => a.agent_name.localeCompare(b.agent_name));
       renderHosts();

@@ -32,6 +32,8 @@ def _apply(host: HostProfile, body: HostUpdate, user: User) -> None:
         value = getattr(body, field)
         if value is not None:
             setattr(host, field, value.strip() or None)
+    if body.ips is not None:
+        host.ips = body.ips or None
     host.updated_by_id = user.id
     host.updated_at = datetime.utcnow()
 

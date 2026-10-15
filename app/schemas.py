@@ -1,3 +1,4 @@
+import ipaddress
 import json
 from datetime import datetime
 from typing import Literal, Optional
@@ -313,6 +314,7 @@ class HostProfileOut(BaseModel):
     role: Optional[str] = None
     criticality: Optional[str] = None
     notes: Optional[str] = None
+    ips: Optional[list[str]] = None
     wazuh: Optional[dict] = None
     in_wazuh: bool
     synced_at: Optional[datetime] = None
@@ -321,10 +323,27 @@ class HostProfileOut(BaseModel):
 
 
 class HostUpdate(BaseModel):
-    # Kezi kontextus; ures szoveg torli a mezot.
+    # Kezi kontextus; ures szoveg torli a mezot, ures lista az IP-ket.
     role: Optional[str] = Field(default=None, max_length=256)
     criticality: Optional[Literal["low", "medium", "high", "critical", ""]] = None
     notes: Optional[str] = Field(default=None, max_length=4000)
+    ips: Optional[list[str]] = Field(default=None, max_length=32)
+
+    @field_validator("ips")
+    @classmethod
+    def _valid_ips(cls, value):
+        if value is None:
+            return None
+        out = []
+        for item in value:
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                out.append(str(ipaddress.ip_address(item)))
+            except ValueError as exc:
+                raise ValueError(f"invalid IP address: {item}") from exc
+        return list(dict.fromkeys(out))
 
 
 class HostCreate(HostUpdate):

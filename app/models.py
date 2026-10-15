@@ -179,6 +179,8 @@ class HostProfile(Base):
     role: Mapped[str | None] = mapped_column(String(256), nullable=True)
     criticality: Mapped[str | None] = mapped_column(String(16), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Kezi IP-cimek: agent nelkuli eszkoz (tuzfal, router) vagy "any" IP-s agent azonositasahoz.
+    ips: Mapped[list | None] = mapped_column(JSON, nullable=True)
     # Wazuh-bol: OS, IP, csoportok, statusz, figyelo portok.
     wazuh: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # False, ha a Wazuh-ban mar nincs ilyen agent (a kezi adatok megmaradnak).
