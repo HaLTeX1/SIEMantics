@@ -220,3 +220,27 @@ def test_failed_manual_escalation_leaves_record_unchanged(client, iris, logged_i
     record = client.get(f"/api/v1/alerts/{ref}").json()
     assert record["status"] == "needs_review"
     assert record["ground_truth"] is None
+
+
+# --- ignoralt szabalycsoportok
+
+def test_sca_benchmark_alerts_are_dropped(logged_in, iris):
+    from conftest import WEBHOOK_HEADERS, wazuh_alert
+
+    payload = wazuh_alert(alert_id="sca-1", level=7, description="CIS Ubuntu Linux 24.04 LTS Benchmark v1.0.0.: "
+                          "Ensure sshd HostbasedAuthentication is disabled.: Status changed from passed to failed")
+    payload["rule"].update(id="19007", groups=["sca"])
+    res = logged_in.post("/api/v1/alerts", json=payload, headers=WEBHOOK_HEADERS)
+    assert res.status_code == 202 and res.json()["status"] == "ignored"
+    assert logged_in.get("/api/v1/alerts").json() == [] and iris.calls == []
+    assert logged_in.get("/healthz").json()["ignored_alerts"] >= 1
+
+
+def test_ignored_groups_are_configurable(logged_in, iris, monkeypatch):
+    from app.config import settings
+    from conftest import WEBHOOK_HEADERS, wazuh_alert
+
+    monkeypatch.setattr(settings, "ignored_rule_groups", "")
+    payload = wazuh_alert(alert_id="sca-2")
+    payload["rule"]["groups"] = ["sca"]
+    assert logged_in.post("/api/v1/alerts", json=payload, headers=WEBHOOK_HEADERS).json()["status"] == "queued"

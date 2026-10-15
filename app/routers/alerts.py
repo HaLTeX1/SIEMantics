@@ -40,6 +40,9 @@ logger = logging.getLogger("siemantics.alerts")
 
 router = APIRouter(prefix="/api/v1", tags=["alerts"])
 
+# Ignoralt szabalycsoport miatt eldobott riasztasok szama indulas ota (/healthz).
+ignored_counter = {"count": 0}
+
 # Folyamatban levo kezi eszkalaciok, dupla kattintas ellen.
 _escalations_in_progress: set[int] = set()
 
@@ -47,6 +50,11 @@ _escalations_in_progress: set[int] = set()
 def _verify_token(x_webhook_token: str | None) -> None:
     if settings.wazuh_webhook_token and x_webhook_token != settings.wazuh_webhook_token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook token")
+
+
+def _ignored_group(payload: WazuhAlertPayload) -> str | None:
+    ignored = {g.strip().lower() for g in settings.ignored_rule_groups.split(",") if g.strip()}
+    return next((g for g in payload.rule.groups if str(g).lower() in ignored), None)
 
 
 async def _with_assignees(session: AsyncSession, records: list[AlertRecord]) -> list[AlertRecordOut]:
@@ -76,6 +84,13 @@ async def receive_alert(
 ):
     # Eltarolja es sorba allitja a riasztast; ?wait=true eseten azonnal triazsol (teszteleshez).
     _verify_token(x_webhook_token)
+
+    group = _ignored_group(payload)
+    if group is not None:
+        # Pl. SCA benchmark: nem tarolodik, nem megy LLM-hez, nem nyit esetet.
+        ignored_counter["count"] += 1
+        logger.debug("alert %s ignored (rule %s, group %s)", payload.id, payload.rule.id, group)
+        return {"status": "ignored", "alert_id": payload.id, "reason": f"rule group '{group}' is ignored"}
 
     alert: NormalizedAlert = normalize_wazuh_alert(payload)
     record = await create_alert_record(

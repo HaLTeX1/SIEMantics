@@ -54,4 +54,4 @@ async def root():
 
 @app.get("/healthz")
 async def healthz():
-    return {"status": "ok", "queued_alerts": alert_queue.size()}
+    return {"status": "ok", "queued_alerts": alert_queue.size(), "ignored_alerts": alerts.ignored_counter["count"]}

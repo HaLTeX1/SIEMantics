@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     correlation_max_alerts: int = Field(default=10, ge=0)
 
     wazuh_webhook_token: str = ""
+    # Ezekbe a Wazuh szabalycsoportokba tartozo riasztasokat a webhook eldobja (vesszovel; sca = benchmarkok).
+    ignored_rule_groups: str = "sca"
 
     # Wazuh manager API a valaszlepesekhez (IP blokkolas); ures URL = kikapcsolva.
     wazuh_api_url: str = ""
