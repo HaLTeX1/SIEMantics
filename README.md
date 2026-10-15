@@ -194,7 +194,12 @@ Ilyenkor a riasztás a legutóbbi ilyen riasztás esetébe kerül:
 - az eset tagjei bővülnek (`ID-43`, `correlated`, …), a severity és a névben a prioritás csak **emelkedhet** (pl. `[P3/MEDIUM]` → `[P1/CRITICAL]`),
 - a rekordon a `correlated_with` mező mutatja, melyik riasztás esetébe került (API, dashboard).
 
-Lezárt (vagy nem olvasható) esetbe nem kerül riasztás, ilyenkor új eset nyílik. A kézi eszkaláció ugyanígy korrelálódik.
+**Lezárt esetbe soha nem kerül riasztás**, hiszen azzal már senki nem foglalkozik: ilyenkor új eset nyílik, és a további hasonló riasztások már ebbe az új esetbe korrelálódnak. Lezártnak számít az eset, ha az [IRIS lezárás szinkron](#iris-lezárás-szinkron) már annak látta, vagy ha az IRIS élőben ezt mondja (a nyitott állapotot esetenként 60 másodpercig gyorsítótárazza). A szabály minden útvonalra vonatkozik:
+- **Korreláció:** a lezárt esetű riasztás nem lehet jelölt, a SIEMantics a következő nyitott esetűt keresi.
+- **Duplikátum-szűrés és flood-őr:** egy lezárt esetre eszkalált döntést nem vesznek át, az ismétlődés újra triázsra megy. Kivétel: ha az esetet false positive-ként zárták, az ismétlődés továbbra is elnyomódik.
+- **Automatikus csoportosítás:** az új riasztás nem kerül a lezárt eset SIEMantics-csoportjába, így a dashboardon külön sorként látszik.
+
+Ha az IRIS nem elérhető, az esetet nyitottnak veszi (a korábbi viselkedés szerint). A kézi eszkaláció ugyanígy korrelálódik.
 
 ## Kézi eszkaláció
 

@@ -86,6 +86,45 @@ async def related_alerts(
     ]
 
 
+class CaseStateCache:
+    # IRIS esetek nyitott/lezart allapota a szinkron elott is; nyitottnal rovid ideig gyorsitotarazva.
+
+    OPEN_TTL_SECONDS = 60
+
+    def __init__(self) -> None:
+        self.closed: set[int] = set()
+        self._open_at: dict[int, float] = {}
+
+    def clear(self) -> None:
+        self.closed.clear()
+        self._open_at.clear()
+
+    def mark_closed(self, case_id: int) -> None:
+        self.closed.add(case_id)
+        self._open_at.pop(case_id, None)
+
+    async def is_open(self, record: AlertRecord) -> bool:
+        case_id = record.iris_case_id
+        if case_id is None or record.case_closed_at is not None or case_id in self.closed:
+            return False
+        if time.monotonic() - self._open_at.get(case_id, float("-inf")) < self.OPEN_TTL_SECONDS:
+            return True
+        try:
+            case = await iris_client.get_case(case_id)
+        except Exception:
+            # IRIS nem elerheto: nyitottnak vesszuk, a hozzaadas ugyis ujra ellenorzi.
+            logger.warning("IRIS case %s state unknown, treating it as open", case_id, exc_info=True)
+            return True
+        if case is None or case.get("close_date"):
+            self.mark_closed(case_id)
+            return False
+        self._open_at[case_id] = time.monotonic()
+        return True
+
+
+case_state = CaseStateCache()
+
+
 async def send_to_iris(
     session: AsyncSession,
     record: AlertRecord,
@@ -94,9 +133,11 @@ async def send_to_iris(
     enrichment: list[dict],
     escalated_by: str | None = None,
 ) -> tuple[IrisCaseResult, AlertRecord | None]:
-    # Uj IRIS eset, vagy a korrelalt korabbi riasztas esete.
-    correlated = await find_correlated_record(session, record)
-    if correlated is not None:
+    # Uj IRIS eset, vagy a korrelalt korabbi riasztas nyitott esete; lezart esetbe soha.
+    for _ in range(3):
+        correlated = await find_correlated_record(session, record, exclude_cases=case_state.closed)
+        if correlated is None:
+            break
         case = await iris_client.add_alert_to_case(
             correlated.iris_case_id,
             alert,
@@ -109,6 +150,8 @@ async def send_to_iris(
         )
         if case is not None:
             return case, correlated
+        # Az IRIS-ben lezarva (vagy nem olvashato): a kovetkezo jeloltet nezzuk.
+        case_state.mark_closed(correlated.iris_case_id)
     case = await iris_client.create_case_from_alert(
         alert, triage, enrichment, display_id=record.display_id, escalated_by=escalated_by, raw_payload=record.raw_payload
     )
@@ -183,7 +226,9 @@ class ProcessOutcome:
 
 async def _auto_group(session: AsyncSession, record: AlertRecord, correlated: AlertRecord | None) -> None:
     # Korrelalt vagy azonos burst-be tartozo riasztas automatikusan csoportba kerul.
-    anchor = correlated or await find_correlated_record(session, record, require_case=False)
+    anchor = correlated or await find_correlated_record(
+        session, record, require_case=False, exclude_cases=case_state.closed
+    )
     if anchor is not None:
         join_group(record, anchor)
 
@@ -214,10 +259,21 @@ async def _find_duplicate(session: AsyncSession, record: AlertRecord) -> tuple[A
     candidates = list(result.scalars())
     labels = {c.ground_truth for c in candidates}
     known_fp = GroundTruth.FALSE_POSITIVE in labels and GroundTruth.TRUE_POSITIVE not in labels
-    decided = next((c for c in candidates if _is_decided(c)), None)
+    decided = await _first_usable_anchor(candidates)
     if known_fp:
         return decided or candidates[0], True
     return (decided, False) if decided else None
+
+
+async def _first_usable_anchor(candidates: list[AlertRecord]) -> AlertRecord | None:
+    # Eldontott riasztas, aminek a dontese atveheto; lezart esetu eszkalacio nem: oda mar senki nem nez.
+    for candidate in candidates:
+        if not _is_decided(candidate):
+            continue
+        if candidate.auto_status == AlertStatus.ESCALATED and not await case_state.is_open(candidate):
+            continue
+        return candidate
+    return None
 
 
 async def _find_flood_anchor(session: AsyncSession, record: AlertRecord) -> AlertRecord | None:
@@ -239,7 +295,7 @@ async def _find_flood_anchor(session: AsyncSession, record: AlertRecord) -> Aler
         .where(*same, AlertRecord.id != record.id, AlertRecord.suppression_rule_id.is_(None))
         .order_by(AlertRecord.received_at.desc())
     )
-    decided = next((c for c in result.scalars() if _is_decided(c)), None)
+    decided = await _first_usable_anchor(list(result.scalars()))
     # Magasabb szintu riasztas nem orokolheti egy enyhebb donteset.
     return decided if decided is not None and decided.severity >= record.severity else None
 

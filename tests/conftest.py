@@ -29,13 +29,15 @@ from app.auth import ensure_initial_admin  # noqa: E402
 from app.db import Base, async_session, engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models import AlertRecord  # noqa: E402
-from app.pipeline import alert_queue, iris_client  # noqa: E402
+from app.pipeline import alert_queue, case_state, iris_client  # noqa: E402
 from app.schemas import AlertRecordOut, IrisCaseResult, NormalizedAlert  # noqa: E402
 
 WEBHOOK_HEADERS = {"X-Webhook-Token": "test-token"}
 
 
 async def _reset_db() -> None:
+    # A FakeIris esetszamai tesztenkent ujraindulnak, a lezart esetek gyorsitotara se oroklodjon.
+    case_state.clear()
     async with engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             await conn.execute(table.delete())

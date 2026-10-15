@@ -123,6 +123,37 @@
   .field .value .analysis-list li + li { margin-top: 4px; }
   .field .value.closure-note { white-space: pre-wrap; }
   .hint { color: var(--text-muted); }
+
+  h2.panel-title { font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin: 22px 0 8px; }
+  .response-panel { display: block; }
+  .response-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+  .response-control input, .response-control select {
+    background: var(--page, #0d0d0d);
+    color: var(--text-primary);
+    border: 1px solid var(--border, rgba(255,255,255,0.10));
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 13px;
+  }
+  .response-control input { width: 150px; font-family: ui-monospace, Consolas, monospace; }
+  .response-control button {
+    border-radius: 6px;
+    border: 1px solid #ec835a;
+    color: #ec835a;
+    background: transparent;
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .response-control button:hover { background: rgba(236,131,90,0.12); }
+  .response-control button:disabled { opacity: 0.5; cursor: default; }
+  .response-msg { font-size: 12.5px; margin-top: 8px; }
+  .response-msg.error { color: #f29b9b; }
+  .response-msg.ok { color: #7be07b; }
+  .response-history { margin-top: 10px; display: grid; gap: 6px; font-size: 12.5px; }
+  .response-history .ok { color: #7be07b; }
+  .response-history .bad { color: #f29b9b; }
+  .response-history .muted { color: var(--text-muted); }
   .field .value.review-reason {
     background: rgba(250,178,25,0.10);
     border: 1px solid rgba(250,178,25,0.35);
@@ -243,7 +274,115 @@
     return null;
   }
 
+  // --- Valaszlepes: IP blokkolas Wazuh Active Response-szal (csak ezen az oldalon) ---
+
+  const IPV4 = /^\d{1,3}(\.\d{1,3}){3}$/;
+  const response = { enabled: false, user: null, actions: [], form: null, busy: false, message: "", error: false };
+  let view = null;
+
+  function candidateIps(a) {
+    return Array.from(new Set([a.source_ip, ...(a.llm_iocs || [])].filter((v) => v && IPV4.test(v))));
+  }
+
+  function responseHistoryHtml() {
+    if (!response.actions.length) return '<div class="response-history"><span class="muted">Még nem volt válaszlépés.</span></div>';
+    return `<div class="response-history">${response.actions.map((r) => {
+      const who = r.requested_by ? (r.requested_by.full_name || r.requested_by.username) : "-";
+      const active = new Date(r.expires_at + (r.expires_at.endsWith("Z") ? "" : "Z")) > new Date();
+      const label = { sent: "blokkolva", partial: "részben blokkolva", failed: "sikertelen" }[r.status] || r.status;
+      const targets = (r.targets || []).map((t) => `${escapeHtml(t.name || t.id)}${t.ok ? "" : " ✗"}`).join(", ");
+      return `<div><span class="${r.status === "sent" ? "ok" : "bad"}">${escapeHtml(r.ip)} ${label}</span>
+        <span class="muted">· ${escapeHtml(who)}, ${fmtTime(r.created_at)} · ${active ? "lejár: " + fmtTime(r.expires_at) : "lejárt"}
+        · ${targets}${r.error_detail ? " · " + escapeHtml(r.error_detail) : ""}</span></div>`;
+    }).join("")}</div>`;
+  }
+
+  function responsePanel(a) {
+    if (!response.enabled) return "";
+    const ips = candidateIps(a);
+    const isAdmin = response.user && response.user.role === "admin";
+    let control = "";
+    if (isAdmin && ips.length) {
+      const form = response.form || (response.form = { ip: ips[0], scope: "agent", duration: "24" });
+      control = `<div class="response-control">
+          <input id="respIp" value="${escapeHtml(form.ip)}" list="respIps" />
+          <datalist id="respIps">${ips.map((ip) => `<option value="${escapeHtml(ip)}"></option>`).join("")}</datalist>
+          <select id="respScope">
+            <option value="agent" ${form.scope === "agent" ? "selected" : ""}>Érintett host (${escapeHtml(a.agent_name || "-")})</option>
+            <option value="all" ${form.scope === "all" ? "selected" : ""}>Minden aktív agent</option>
+          </select>
+          <select id="respDuration">
+            ${[["1", "1 óra"], ["24", "24 óra"], ["168", "7 nap"]].map(([v, l]) =>
+              `<option value="${v}" ${form.duration === v ? "selected" : ""}>${l}</option>`).join("")}
+          </select>
+          <button type="button" id="respBtn" ${response.busy ? "disabled" : ""}>${response.busy ? "Blokkolás..." : "IP blokkolása"}</button>
+        </div>`;
+    }
+    const msg = response.message ? `<div class="response-msg ${response.error ? "error" : "ok"}">${escapeHtml(response.message)}</div>` : "";
+    return `<h2 class="panel-title">Válaszlépés</h2>
+      <div class="panel response-panel">${control}${msg}${responseHistoryHtml()}</div>`;
+  }
+
+  function bindResponse(a) {
+    const btn = document.getElementById("respBtn");
+    if (!btn) return;
+    const sync = () => {
+      response.form = {
+        ip: document.getElementById("respIp").value,
+        scope: document.getElementById("respScope").value,
+        duration: document.getElementById("respDuration").value,
+      };
+    };
+    ["respIp", "respScope", "respDuration"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", sync);
+      document.getElementById(id).addEventListener("change", sync);
+    });
+    btn.addEventListener("click", () => { sync(); blockIp(a); });
+  }
+
+  async function errorDetail(res) {
+    try {
+      const body = await res.json();
+      if (typeof body.detail === "string") return body.detail;
+    } catch (_) { /* nem JSON */ }
+    return `HTTP ${res.status}`;
+  }
+
+  async function blockIp(a) {
+    const form = response.form;
+    const where = form.scope === "all" ? "MINDEN aktív agenten" : `a(z) ${a.agent_name || "érintett"} hoston`;
+    const hours = { "1": "1 órára", "24": "24 órára", "168": "7 napra" }[form.duration];
+    if (!window.confirm(`${form.ip} blokkolása ${where}, ${hours}. A blokk a lejáratkor magától feloldódik. Folytatod?`)) return;
+    response.busy = true;
+    response.message = "";
+    rerender();
+    try {
+      const res = await SIEM.api(`/api/v1/alerts/${encodeURIComponent(a.display_id)}/block-ip`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ip: form.ip.trim(), scope: form.scope, duration_hours: Number(form.duration) }),
+      });
+      if (!res.ok) throw new Error(await errorDetail(res));
+      const body = await res.json();
+      response.actions = [body, ...response.actions];
+      const ok = (body.targets || []).filter((t) => t.ok).length;
+      response.message = `${body.ip} blokkolva ${ok}/${(body.targets || []).length} agenten` +
+        (body.iris_noted ? ", IRIS note hozzáadva." : ".");
+      response.error = body.status !== "sent";
+    } catch (err) {
+      response.message = "Sikertelen blokkolás: " + err.message;
+      response.error = true;
+    }
+    response.busy = false;
+    rerender();
+  }
+
+  function rerender() {
+    if (view) render(view.a, view.irisBaseUrl, view.info);
+  }
+
   function render(a, irisBaseUrl, info) {
+    view = { a, irisBaseUrl, info };
     document.title = `SIEMantics - ${a.display_id}`;
     const sev = severityInfo(a.severity);
     const st = statusInfo(a.status);
@@ -319,7 +458,9 @@
         ${badge(disp.label, disp.cls)}
       </div>
       <div class="panel">${fields.join("")}</div>
+      ${responsePanel(a)}
     `;
+    bindResponse(a);
   }
 
   async function load() {
@@ -335,13 +476,26 @@
       if (!alertRes.ok) throw new Error(`HTTP ${alertRes.status}`);
       const alertData = await alertRes.json();
       const configData = configRes && configRes.ok ? await configRes.json() : {};
+      response.enabled = !!configData.response_enabled;
       render(alertData, configData.iris_base_url || "", null);
       if (alertData.iris_case_id != null) {
         // Az IRIS eset elo allapota (annotacio) utolag, hogy a lap ne varjon az IRIS-re.
         SIEM.api(`/api/v1/cases/${encodeURIComponent(alertData.iris_case_id)}`)
           .then((r) => (r.ok ? r.json() : null))
-          .then((info) => { if (info) render(alertData, configData.iris_base_url || "", info); })
+          .then((info) => { if (info) { view.info = info; rerender(); } })
           .catch(() => {});
+      }
+      if (response.enabled) {
+        // Valaszlepes: a felhasznalo szerepe (admin indithat) es a korabbi lepesek.
+        Promise.all([
+          SIEM.me().catch(() => null),
+          SIEM.api(`/api/v1/alerts/${encodeURIComponent(alertData.display_id)}/responses`)
+            .then((r) => (r.ok ? r.json() : [])).catch(() => []),
+        ]).then(([user, actions]) => {
+          response.user = user;
+          response.actions = actions;
+          rerender();
+        });
       }
     } catch (err) {
       content.innerHTML = `<div class="state error">Nem sikerült betölteni a riasztást: ${escapeHtml(err.message)}</div>`;

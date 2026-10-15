@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -17,6 +17,14 @@ def join_group(record: AlertRecord, anchor: AlertRecord) -> None:
 
 def _has_case():
     return AlertRecord.iris_case_id.is_not(None)
+
+
+def _not_closed(exclude_cases):
+    # Lezart eset riasztasa nem lehet korrelacios / csoport anchor: ott mar senki nem nezi.
+    conditions = [AlertRecord.case_closed_at.is_(None)]
+    if exclude_cases:
+        conditions.append(or_(AlertRecord.iris_case_id.is_(None), AlertRecord.iris_case_id.notin_(exclude_cases)))
+    return conditions
 
 
 def correlation_ip(raw: dict | None) -> str | None:
@@ -52,13 +60,13 @@ def correlation_host(raw: dict | None) -> str | None:
 
 
 async def find_correlated_record(
-    session: AsyncSession, record: AlertRecord, *, require_case: bool = True
+    session: AsyncSession, record: AlertRecord, *, require_case: bool = True, exclude_cases: set[int] = frozenset()
 ) -> AlertRecord | None:
     # IP-vel: hasonlo riasztas az ablakban; IP nelkul: a host rovid idon beluli riasztasa.
-    # require_case=False: csoportositashoz, IRIS eset nelkuli riasztas is jo.
+    # require_case=False: csoportositashoz, IRIS eset nelkuli riasztas is jo; lezart eset soha.
     ip = correlation_ip(record.raw_payload)
     if not ip:
-        return await _find_same_host_record(session, record, require_case)
+        return await _find_same_host_record(session, record, require_case, exclude_cases)
     if settings.correlation_window_hours <= 0:
         return None
 
@@ -70,6 +78,7 @@ async def find_correlated_record(
             _has_case() if require_case else AlertRecord.status != AlertStatus.QUEUED,
             AlertRecord.received_at >= since,
             AlertRecord.id != record.id,
+            *_not_closed(exclude_cases),
         )
         .order_by(AlertRecord.received_at.desc())
     )
@@ -79,7 +88,9 @@ async def find_correlated_record(
     return None
 
 
-async def _find_same_host_record(session: AsyncSession, record: AlertRecord, require_case: bool) -> AlertRecord | None:
+async def _find_same_host_record(
+    session: AsyncSession, record: AlertRecord, require_case: bool, exclude_cases: set[int]
+) -> AlertRecord | None:
     # A legutobbi riasztas ugyanarrol a hostrol a +-ablakban (require_case eseten IRIS esettel).
     host = correlation_host(record.raw_payload)
     if not host or settings.correlation_host_window_minutes <= 0:
@@ -94,6 +105,7 @@ async def _find_same_host_record(session: AsyncSession, record: AlertRecord, req
             AlertRecord.received_at >= received - window,
             AlertRecord.received_at <= received + window,
             AlertRecord.id != record.id,
+            *_not_closed(exclude_cases),
         )
         .order_by(AlertRecord.received_at.desc())
     )
