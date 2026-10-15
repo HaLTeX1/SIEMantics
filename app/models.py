@@ -93,8 +93,20 @@ class User(Base):
     role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.ANALYST)
     # Aktiv-e; deaktivalaskor a munkamenetei azonnal ervenytelenek.
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Kulon engedely valaszlepesre (IP blokkolas) L2 szerepkor nelkul is.
+    response_allowed: Mapped[bool | None] = mapped_column(Boolean, nullable=True, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    @property
+    def can_suppress(self) -> bool:
+        # Elnyomo szabaly: L2 (es admin).
+        return self.role in (UserRole.ADMIN, UserRole.L2)
+
+    @property
+    def can_block_ip(self) -> bool:
+        # Valaszlepes: L2 (es admin), vagy kulon engedelyezett felhasznalo.
+        return self.role in (UserRole.ADMIN, UserRole.L2) or bool(self.response_allowed)
 
 
 class UserSession(Base):

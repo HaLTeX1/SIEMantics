@@ -396,6 +396,15 @@ class UserOut(BaseModel):
     is_active: bool
     created_at: datetime
     last_login_at: Optional[datetime] = None
+    # Kulon valaszlepes engedely; a can_* mezok a szerepkorbol szamolt jogok.
+    response_allowed: bool = False
+    can_suppress: bool = False
+    can_block_ip: bool = False
+
+    @field_validator("response_allowed", mode="before")
+    @classmethod
+    def _none_is_false(cls, value):
+        return bool(value)
 
 
 class LoginRequest(BaseModel):
@@ -413,6 +422,7 @@ class UserCreate(BaseModel):
     full_name: Optional[str] = Field(default=None, max_length=128)
     password: str = Field(min_length=8, max_length=128)
     role: UserRole = UserRole.ANALYST
+    response_allowed: bool = False
 
 
 class UserUpdate(BaseModel):
@@ -421,6 +431,7 @@ class UserUpdate(BaseModel):
     full_name: Optional[str] = Field(default=None, max_length=128)
     role: Optional[UserRole] = None
     is_active: Optional[bool] = None
+    response_allowed: Optional[bool] = None
     password: Optional[str] = Field(default=None, min_length=8, max_length=128)
 
 

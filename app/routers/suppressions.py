@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user
+from app.auth import get_current_user, require_suppress
 from app.case_actions import CaseActionError, resolve_many
 from app.db import get_session
 from app.models import SuppressionRule, User
@@ -31,7 +31,7 @@ async def get_rules(include_inactive: bool = False, session: AsyncSession = Depe
 @router.post("", response_model=SuppressResult)
 async def suppress_alerts(
     body: SuppressRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_suppress),
     session: AsyncSession = Depends(get_session),
 ):
     # A kijelolt riasztasokbol suppression szabaly; az egyezo uj riasztasok LLM nelkul elnyomva.
@@ -54,7 +54,7 @@ async def suppress_alerts(
 @router.delete("/{rule_id}", response_model=SuppressionRuleOut)
 async def remove_rule(
     rule_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_suppress),
     session: AsyncSession = Depends(get_session),
 ):
     try:

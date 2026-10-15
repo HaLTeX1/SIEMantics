@@ -123,7 +123,7 @@ def test_disabled_without_configuration(logged_in, iris):
     assert logged_in.get("/api/v1/config").json()["response_enabled"] is False
 
 
-def test_only_admins_can_block(logged_in, iris, wazuh):
+def test_analyst_without_permission_cannot_block(logged_in, iris, wazuh):
     record = alert(logged_in)
     logged_in.post("/api/v1/users", json={"username": "alice", "password": "analyst-pass", "role": "analyst"})
     alice = TestClient(app)

@@ -300,9 +300,9 @@
   function responsePanel(a) {
     if (!response.enabled) return "";
     const ips = candidateIps(a);
-    const isAdmin = response.user && response.user.role === "admin";
+    const canBlock = !!(response.user && response.user.can_block_ip);
     let control = "";
-    if (isAdmin && ips.length) {
+    if (canBlock && ips.length) {
       const form = response.form || (response.form = { ip: ips[0], scope: "agent", duration: "24" });
       control = `<div class="response-control">
           <input id="respIp" value="${escapeHtml(form.ip)}" list="respIps" />

@@ -26,6 +26,7 @@ async def add_user(body: UserCreate, session: AsyncSession = Depends(get_session
         full_name=body.full_name,
         password_hash=hash_password(body.password),
         role=body.role,
+        response_allowed=body.response_allowed,
     )
 
 
@@ -50,6 +51,8 @@ async def update_user(
         user.role = body.role
     if body.is_active is not None:
         user.is_active = body.is_active
+    if body.response_allowed is not None:
+        user.response_allowed = body.response_allowed
     if body.password is not None:
         user.password_hash = hash_password(body.password)
     await save_user(session, user)

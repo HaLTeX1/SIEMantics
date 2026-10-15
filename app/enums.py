@@ -19,3 +19,5 @@ class GroundTruth(str, enum.Enum):
 class UserRole(str, enum.Enum):
     ADMIN = "admin"
     ANALYST = "analyst"
+    # Tapasztalt elemzo: elnyomo szabalyok es valaszlepesek.
+    L2 = "l2"

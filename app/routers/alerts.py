@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user, require_admin
+from app.auth import get_current_user, require_admin, require_block_ip
 from app.case_actions import CaseActionError, close_alerts_as_false_positive, delete_alerts
 from app.config import settings
 from app.db import get_session
@@ -223,10 +223,10 @@ async def _actions_out(session: AsyncSession, actions) -> list[ResponseActionOut
 async def block_alert_ip(
     alert_ref: str,
     body: BlockIpRequest,
-    user: User = Depends(require_admin),
+    user: User = Depends(require_block_ip),
     session: AsyncSession = Depends(get_session),
 ):
-    # Csak admin: IP blokkolas Wazuh Active Response-szal, lejarattal; IRIS note az esetbe.
+    # L2 vagy kulon engedely: IP blokkolas Wazuh Active Response-szal, lejarattal; IRIS note az esetbe.
     record = await get_alert_record_by_ref(session, alert_ref)
     if record is None:
         raise HTTPException(status_code=404, detail="alert not found")

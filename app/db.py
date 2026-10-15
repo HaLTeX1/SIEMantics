@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase
 
 from app.config import settings
+from app.enums import AlertStatus, UserRole
 
 logger = logging.getLogger("siemantics.db")
 
@@ -39,6 +40,7 @@ async def _init_db() -> None:
         await conn.run_sync(_backfill_rule_ids)
         if conn.dialect.name == "mysql":
             await _sync_alert_status_enums(conn)
+            await _sync_enum_column(conn, "users", "role", UserRole, nullable=False)
 
 
 def _add_missing_columns(conn) -> None:
@@ -75,22 +77,24 @@ def _backfill_rule_ids(conn) -> None:
 
 async def _sync_alert_status_enums(conn) -> None:
     # MariaDB-n az uj AlertStatus ertekek felvetele a nativ ENUM oszlopokba.
-
-    from app.enums import AlertStatus
-
-    values = ", ".join(f"'{m.name}'" for m in AlertStatus)
     for column, nullable in (("status", False), ("auto_status", True)):
-        column_type = await conn.scalar(
-            text(
-                "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
-                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'alert_records' AND COLUMN_NAME = :column"
-            ),
-            {"column": column},
-        )
-        if column_type is None or all(f"'{m.name}'" in column_type for m in AlertStatus):
-            continue
-        null_sql = "NULL" if nullable else "NOT NULL"
-        await conn.execute(text(f"ALTER TABLE alert_records MODIFY COLUMN {column} ENUM({values}) {null_sql}"))
+        await _sync_enum_column(conn, "alert_records", column, AlertStatus, nullable)
+
+
+async def _sync_enum_column(conn, table: str, column: str, enum_cls, nullable: bool) -> None:
+    # Hianyzo enum ertekek felvetele egy nativ ENUM oszlopba (create_all nem modosit).
+    column_type = await conn.scalar(
+        text(
+            "SELECT COLUMN_TYPE FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table AND COLUMN_NAME = :column"
+        ),
+        {"table": table, "column": column},
+    )
+    if column_type is None or all(f"'{m.name}'" in column_type for m in enum_cls):
+        return
+    values = ", ".join(f"'{m.name}'" for m in enum_cls)
+    null_sql = "NULL" if nullable else "NOT NULL"
+    await conn.execute(text(f"ALTER TABLE {table} MODIFY COLUMN {column} ENUM({values}) {null_sql}"))
 
 
 async def get_session() -> AsyncSession:

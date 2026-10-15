@@ -282,7 +282,7 @@ A riasztás részletpaneljén az admin egy kattintással blokkolhatja a támadó
 
 - **Védőkorlátok:** csak publikus IP blokkolható. A privát, loopback, link-local és dokumentációs tartományt, valamint az IRIS, a Wazuh és a SIEMantics saját címét a backend elutasítja. További védett címek a `RESPONSE_PROTECTED_NETWORKS` beállításban adhatók meg (pl. saját publikus IP-k). A Wazuh manager saját riasztásainál (agent 000: tűzfal-, felhő- és Suricata-integrációk) csak „Minden aktív agent” választható.
 - **Napló:** minden lépés bekerül a `response_actions` táblába (ki, mikor, melyik IP, mely agenteken, milyen eredménnyel), és megjelenik a részletpanelen. Ha a riasztásnak van IRIS esete, az eset egy „IP blocked” note-ot kap.
-- **Jogosultság:** csak admin indíthat blokkolást; a naplót mindenki látja.
+- **Jogosultság:** blokkolást L2, admin vagy külön engedélyezett felhasználó indíthat (lásd [Felhasználókezelés](#felhasználókezelés)); a naplót mindenki látja.
 
 **Beállítás a Wazuh manageren (egyszeri):**
 
@@ -297,7 +297,7 @@ A riasztás részletpaneljén az admin egy kattintással blokkolhatja a támadó
 
 Egy zajos szabály vagy egy szkenner percek alatt több száz riasztást küldhet. Az alábbiak a sorrendjükben futnak le minden riasztásnál, az LLM-hívás előtt:
 
-1. **Elnyomó szabályok (suppression):** a dashboardon kijelölt riasztásokból az „Elnyomás...” gombbal (vagy `POST /api/v1/suppressions`) szabály vehető fel. Három hatókör van: `exact` (azonos ujjlenyomat), `rule_host` (ugyanaz a Wazuh szabály ugyanazon a hoston) és `rule` (a szabály bármelyik hoston). A szabály lejárata 1 óra és 1 év között választható, vagy lehet lejárat nélküli. Az egyező új riasztások **triázs nélkül** `suppressed` státuszt kapnak (`triage_engine = suppression`, `review_reason`: a szabály és az indoklás), és egy csoportba kerülnek. Opcionálisan a már beérkezett egyező riasztások is elnyomhatók. Ez csak az IRIS eset nélküli `needs_review` / `suppressed` / `error` riasztásokat érinti: az `auto_status` megmarad, így a metrikák nem torzulnak. A szabályok az **Elnyomások** oldalon (`/ui/suppressions.html`) listázhatók a találatszámmal együtt, és ott kapcsolhatók ki.
+1. **Elnyomó szabályok (suppression):** a dashboardon kijelölt riasztásokból az „Elnyomás...” gombbal (vagy `POST /api/v1/suppressions`) szabály vehető fel; szabályt létrehozni és kikapcsolni csak **L2** (és admin) szerepkörrel lehet. Három hatókör van: `exact` (azonos ujjlenyomat), `rule_host` (ugyanaz a Wazuh szabály ugyanazon a hoston) és `rule` (a szabály bármelyik hoston). A szabály lejárata 1 óra és 1 év között választható, vagy lehet lejárat nélküli. Az egyező új riasztások **triázs nélkül** `suppressed` státuszt kapnak (`triage_engine = suppression`, `review_reason`: a szabály és az indoklás), és egy csoportba kerülnek. Opcionálisan a már beérkezett egyező riasztások is elnyomhatók. Ez csak az IRIS eset nélküli `needs_review` / `suppressed` / `error` riasztásokat érinti: az `auto_status` megmarad, így a metrikák nem torzulnak. A szabályok az **Elnyomások** oldalon (`/ui/suppressions.html`) listázhatók a találatszámmal együtt, és ott kapcsolhatók ki.
 2. **Duplikátum-szűrés:** lásd [Ismétlődő riasztások](#ismétlődő-riasztások-duplikátum-szűrés-és-automatikus-csoportosítás). Az azonos ujjlenyomatú riasztásokat a háttér workerek akkor is sorban dolgozzák fel, ha `TRIAGE_WORKERS > 1`, így egy burstből csak az első megy az LLM-hez.
 3. **Flood-őr:** ha egy szabály ugyanazon a hoston `FLOOD_WINDOW_MINUTES` alatt legalább `FLOOD_THRESHOLD` riasztást ad, a további riasztások – eltérő tartalommal is, pl. más forrás IP-vel – átveszik a szabály+host legutóbbi döntését (`triage_engine = flood`). Az eszkalált döntés átvételekor a riasztás a meglévő IRIS esethez kerül. Ha az új riasztás Wazuh szintje magasabb a döntés alapjául szolgálóénál, a flood-őr nem lép közbe, és rendes triázs fut.
 
@@ -330,8 +330,16 @@ A triázs előtt az app lekérdezi az elmúlt `CORRELATION_WINDOW_HOURS` óra ri
 A dashboard és az olvasó/címkéző API végpontok (`GET /alerts`, `GET /alerts/{id}`, `PATCH /alerts/{id}/label`, `GET /metrics`, `GET /config`) bejelentkezést igényelnek. A Wazuh webhook (`POST /api/v1/alerts`) továbbra is az `X-Webhook-Token` headerrel hitelesít, a `/healthz` nyitott.
 
 - **Első admin:** induláskor, ha még egyetlen felhasználó sincs, az app létrehozza az `ADMIN_USERNAME` / `ADMIN_PASSWORD` adminját. Ha az `ADMIN_PASSWORD` üres, csak egy figyelmeztetést logol — ilyenkor senki nem tud belépni.
-- **Szerepkörök:** `admin` (mindenhez hozzáfér + admin panel) és `analyst` (riasztások megtekintése, címkézés, metrikák).
-- **Admin panel** (`/ui/admin.html`, a fejlécben az „Admin” linkről): új felhasználó felvétele, szerepkör módosítása, jelszó beállítása, letiltás/engedélyezés. Felhasználót törölni nem lehet, csak letiltani — így a hozzá rendelt case-ek megmaradnak. Letiltáskor és jelszó-visszaállításkor a felhasználó összes munkamenete azonnal érvénytelenné válik. Az admin a saját fiókját nem tilthatja le és nem fokozhatja le (hogy ne zárja ki magát).
+- **Szerepkörök:**
+
+  | Szerepkör | Jogok |
+  |---|---|
+  | `analyst` | riasztások megtekintése, címkézés, eszkaláció, FP-lezárás, összevonás, metrikák |
+  | `l2` | mint az analyst, plusz **elnyomó szabályok** létrehozása/kikapcsolása és **válaszlépés** (IP blokkolás) |
+  | `admin` | minden, plusz admin panel és tömeges törlés |
+
+  Válaszlépést (IP blokkolást) egy `analyst` is indíthat, ha az admin külön engedélyezi neki: az admin panel „Active response” oszlopában (`response_allowed`). Az L2-nek és az adminnak ez a szerepkörből jár. A jogokat a backend számolja, és a `GET /api/v1/auth/me` válaszában adja vissza (`can_suppress`, `can_block_ip`); a felület ezek alapján jeleníti meg az „Elnyomás...” gombot, a szabály-kikapcsolást és a blokkolás vezérlőjét. A végpontok jogosultság nélkül 403-at adnak.
+- **Admin panel** (`/ui/admin.html`, a fejlécben az „Admin” linkről): új felhasználó felvétele, szerepkör módosítása, active response engedély, jelszó beállítása, letiltás/engedélyezés. Felhasználót törölni nem lehet, csak letiltani — így a hozzá rendelt case-ek megmaradnak. Letiltáskor és jelszó-visszaállításkor a felhasználó összes munkamenete azonnal érvénytelenné válik. Az admin a saját fiókját nem tilthatja le és nem fokozhatja le (hogy ne zárja ki magát).
 - **Munkamenet:** bejelentkezéskor egy véletlen token kerül egy `HttpOnly`, `SameSite=Lax` cookie-ba (`siemantics_session`); az adatbázisban csak a token SHA-256 hash-e tárolódik, így kijelentkezéskor/letiltáskor szerveroldalon visszavonható. A jelszavak `scrypt`-tel (stdlib `hashlib`) sózva hash-elődnek.
 - **Case-ek felhasználóhoz rendelése:** a `case_assignments` tábla (`CaseAssignment` modell) egy DFIR-IRIS esetet (`iris_case_id`) rendel egy felhasználóhoz (`user_id`, `assigned_by_id`, `assigned_at`); egy esetnek egyszerre egy felelőse lehet. Külön tábla és nem új oszlop az `alert_records`-on, mert egy case-hez több riasztás-rekord is tartozhat, a felelős viszont case-szintű.
   - **Jogosultság:** admin bármelyik case-t bármelyik aktív felhasználóhoz rendelheti, átrendelheti vagy felelős nélkülivé teheti. Analyst csak egy *felelős nélküli* case-t vehet magához, illetve a saját case-ét adhatja le — más case-ét nem veheti el (403).
@@ -365,7 +373,7 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `GET` | `/api/v1/suppressions` | elnyomó szabályok (`include_inactive=true`: a lejártak és kikapcsoltak is) |
 | `POST` | `/api/v1/suppressions` | elnyomó szabály a kijelölt riasztásokból (`alert_refs`, `scope`, `reason`, `duration_hours`, `apply_existing`) |
 | `DELETE` | `/api/v1/suppressions/{id}` | elnyomó szabály kikapcsolása |
-| `POST` | `/api/v1/alerts/{ref}/block-ip` | **admin:** IP blokkolása Wazuh Active Response-szal (`ip`, `scope`: `agent`/`all`, `duration_hours`: 1/24/168) |
+| `POST` | `/api/v1/alerts/{ref}/block-ip` | **L2 / engedélyezett:** IP blokkolása Wazuh Active Response-szal (`ip`, `scope`: `agent`/`all`, `duration_hours`: 1/24/168) |
 | `GET` | `/api/v1/alerts/{ref}/responses` | a riasztásból indított válaszlépések naplója |
 | `GET` | `/api/v1/config` | nem-titkos konfiguráció a frontendnek (pl. `iris_base_url` az eset-linkhez) |
 | `GET` | `/api/v1/metrics` | konfúziós mátrix + feldolgozási idő statisztikák a címkézett rekordokból |

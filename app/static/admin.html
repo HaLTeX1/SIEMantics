@@ -160,6 +160,9 @@
   dialog h3 { margin: 0 0 14px; font-size: 15px; }
   dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 
+  .check-label { display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0; font-size: 13px; color: var(--text-secondary); cursor: pointer; }
+  .check-label input { width: auto; }
+
   .state { padding: 30px 10px; text-align: center; color: var(--text-muted); }
   .state.error { color: var(--critical); }
 </style>
@@ -193,8 +196,12 @@
           <label for="newRole">Szerepkör</label>
           <select id="newRole">
             <option value="analyst">Analyst</option>
+            <option value="l2">L2</option>
             <option value="admin">Admin</option>
           </select>
+        </div>
+        <div>
+          <label class="check-label"><input type="checkbox" id="newResponse" /> Active response (IP blokkolás)</label>
         </div>
         <div>
           <button class="btn primary" type="submit" id="createBtn">Felhasználó létrehozása</button>
@@ -210,6 +217,7 @@
           <tr>
             <th>Felhasználó</th>
             <th>Szerepkör</th>
+            <th title="IP blokkolás Wazuh Active Response-szal; L2 és admin szerepkörrel alapból jár">Active response</th>
             <th>Státusz</th>
             <th>Utolsó belépés</th>
             <th>Létrehozva</th>
@@ -306,9 +314,13 @@
           <td>
             <select class="role-select" data-id="${u.id}" ${isSelf ? "disabled" : ""}>
               <option value="analyst" ${u.role === "analyst" ? "selected" : ""}>Analyst</option>
+              <option value="l2" ${u.role === "l2" ? "selected" : ""}>L2</option>
               <option value="admin" ${u.role === "admin" ? "selected" : ""}>Admin</option>
             </select>
           </td>
+          <td>${u.role === "analyst"
+            ? `<label class="check-label"><input type="checkbox" class="response-check" data-id="${u.id}" ${u.response_allowed ? "checked" : ""} /> engedélyezve</label>`
+            : '<span class="title-sub">szerepkör alapján</span>'}</td>
           <td>${status}</td>
           <td>${fmtTime(u.last_login_at)}</td>
           <td>${fmtTime(u.created_at)}</td>
@@ -323,6 +335,9 @@
 
     document.querySelectorAll(".role-select").forEach((sel) => {
       sel.addEventListener("change", () => updateUser(Number(sel.dataset.id), { role: sel.value }));
+    });
+    document.querySelectorAll(".response-check").forEach((cb) => {
+      cb.addEventListener("change", () => updateUser(Number(cb.dataset.id), { response_allowed: cb.checked }));
     });
     document.querySelectorAll(".toggle-btn").forEach((btn) => {
       btn.addEventListener("click", () => {
@@ -373,6 +388,7 @@
           full_name: el("newFullName").value.trim() || null,
           password: el("newPassword").value,
           role: el("newRole").value,
+          response_allowed: el("newResponse").checked,
         }),
       });
       if (res.status === 409) throw new Error("ez a felhasználónév már foglalt");

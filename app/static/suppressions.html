@@ -146,7 +146,7 @@
     </header>
 
     <div class="card">
-      <p class="hint">Az elnyomó szabályokhoz illeszkedő új riasztások LLM-triázs nélkül, automatikusan elnyomva lesznek. Új szabály a riasztások listáján, kijelölés után az „Elnyomás...” gombbal vehető fel.</p>
+      <p class="hint">Az elnyomó szabályokhoz illeszkedő új riasztások LLM-triázs nélkül, automatikusan elnyomva lesznek. Új szabály a riasztások listáján, kijelölés után az „Elnyomás...” gombbal vehető fel; szabályt létrehozni és kikapcsolni L2 szerepkörrel lehet.</p>
     </div>
 
     <div class="card" style="padding:0; overflow-x:auto;">
@@ -181,6 +181,7 @@
   const API = "/api/v1/suppressions";
   const el = (id) => document.getElementById(id);
   let rules = [];
+  let canSuppress = false;
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
@@ -244,7 +245,7 @@
           <td>${r.hit_count}${r.last_hit_at ? `<div class="title-sub">utoljára ${fmtTime(r.last_hit_at)}</div>` : ""}</td>
           <td>${statusBadge(r)}</td>
           <td>${escapeHtml(who)}<div class="title-sub">${fmtTime(r.created_at)}</div></td>
-          <td>${r.is_active ? `<button type="button" class="btn small danger off-btn" data-id="${r.id}">Kikapcsolás</button>` : ""}</td>
+          <td>${r.is_active && canSuppress ? `<button type="button" class="btn small danger off-btn" data-id="${r.id}">Kikapcsolás</button>` : ""}</td>
         </tr>`;
     }).join("");
     document.querySelectorAll(".off-btn").forEach((btn) => btn.addEventListener("click", () => deactivate(Number(btn.dataset.id))));
@@ -286,7 +287,12 @@
 
   // Elnyomott riasztasbol erkezve a kikapcsolt szabaly is lathato legyen.
   if (location.hash) el("showInactive").checked = true;
-  SIEM.me().then((user) => SIEM.renderUserMenu(el("userMenu"), user)).catch(() => {});
+  SIEM.me().then((user) => {
+    SIEM.renderUserMenu(el("userMenu"), user);
+    // Szabalyt csak L2 (es admin) kapcsolhat ki.
+    canSuppress = !!user.can_suppress;
+    render();
+  }).catch(() => {});
   load();
 })();
 </script>

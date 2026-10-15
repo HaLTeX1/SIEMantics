@@ -112,6 +112,19 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+async def require_suppress(user: User = Depends(get_current_user)) -> User:
+    if not user.can_suppress:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="L2 role required for suppression rules")
+    return user
+
+
+async def require_block_ip(user: User = Depends(get_current_user)) -> User:
+    if not user.can_block_ip:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="L2 role or response permission required for response actions")
+    return user
+
+
 async def ensure_initial_admin() -> None:
     # Elso admin az ADMIN_USERNAME/ADMIN_PASSWORD alapjan, ha meg nincs felhasznalo.
     async with async_session() as session:

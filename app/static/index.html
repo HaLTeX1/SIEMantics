@@ -452,7 +452,7 @@
       <button class="btn outline-serious" id="labelFpBtn" type="button">Label: False Positive</button>
       <button class="btn" id="mergeBtn" type="button">Összevonás</button>
       <button class="btn outline-serious" id="bulkFpBtn" type="button" title="False Positive címke, a nyitott IRIS esetek lezárva">Lezárás FP-ként</button>
-      <button class="btn" id="suppressBtn" type="button" title="Az egyező új riasztások LLM nélkül elnyomva">Elnyomás...</button>
+      <button class="btn" id="suppressBtn" type="button" title="Az egyező új riasztások LLM nélkül elnyomva (L2)" hidden>Elnyomás...</button>
       <button class="btn danger" id="deleteBtn" type="button" hidden>Törlés</button>
       <span class="spacer"></span>
       <button class="btn ghost" id="clearSelectionBtn" type="button">Kijelölés törlése</button>
@@ -1497,6 +1497,7 @@
     currentUser = user;
     SIEM.renderUserMenu(el("userMenu"), user);
     el("deleteBtn").hidden = user.role !== "admin";
+    el("suppressBtn").hidden = !user.can_suppress;
     return loadAssignees();
   }).then(applyFilters).catch(() => {});
   fetchAlerts();
