@@ -86,3 +86,14 @@ def test_admin_cannot_delete_themselves_and_analysts_cannot_delete(logged_in):
     _create_user(logged_in, "carol")
     assert _login("carol").delete(f"/api/v1/users/{bob_id}").status_code == 403
     assert logged_in.delete("/api/v1/users/999999").status_code == 404
+
+
+def test_deleting_a_user_who_edited_the_environment(logged_in):
+    # Minden users.id hivatkozas (host, halozat) NULL-ra all, a torles nem akad el.
+    bob_id = _create_user(logged_in, "bob", role="l2")
+    bob = _login("bob")
+    host = bob.post("/api/v1/hosts", json={"agent_name": "edge-fw01", "role": "firewall"}).json()
+    assert bob.post("/api/v1/networks", json={"cidr": "10.64.0.95", "label": "Forgejo"}).status_code == 201
+    assert logged_in.delete(f"/api/v1/users/{bob_id}").status_code == 200
+    kept = next(h for h in logged_in.get("/api/v1/hosts").json() if h["id"] == host["id"])
+    assert kept["role"] == "firewall" and kept["updated_by"] is None

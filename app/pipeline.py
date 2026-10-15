@@ -435,19 +435,26 @@ async def _apply_duplicate(
 
 
 async def _defer(session: AsyncSession, record: AlertRecord, exc: LlmUnavailable, started: float) -> ProcessOutcome:
-    # A mock nem dont helyette: a rekord var, a hataridon tul elemzohoz kerul.
+    # A mock nem dont helyette: a rekord var; magas szintu vagy tul regota varo riasztas elemzohoz kerul.
     waited = datetime.utcnow() - record.received_at
-    if waited < timedelta(hours=settings.llm_retry_max_hours):
+    high = record.severity >= settings.review_severity_floor
+    if not high and waited < timedelta(hours=settings.llm_retry_max_hours):
         logger.warning("LLM unavailable for %s, will retry later: %s", record.display_id, exc)
+        # A dashboardon latszodjon, miert var a riasztas.
+        record.error_detail = f"waiting for the LLM, retrying: {exc}"[:2000]
+        await save_alert_record(session, record)
         return ProcessOutcome(deferred=True, quota=exc.quota)
     record.status = AlertStatus.NEEDS_REVIEW
     # Nem rendszer-dontes: a metrikak nem szamoljak predikcionak.
     record.auto_status = AlertStatus.ERROR
-    record.review_reason = f"LLM unavailable for {waited.total_seconds() / 3600:.1f} h, needs manual triage"
+    record.review_reason = (
+        f"LLM unavailable, Wazuh level {record.severity} >= {settings.review_severity_floor}: needs manual triage now"
+        if high else f"LLM unavailable for {waited.total_seconds() / 3600:.1f} h, needs manual triage"
+    )
     record.error_detail = str(exc)[:2000]
     record.processing_time_ms = _elapsed_ms(started)
     await save_alert_record(session, record)
-    logger.warning("%s sent to manual review: LLM unavailable for too long", record.display_id)
+    logger.warning("%s sent to manual review: LLM unavailable (%s)", record.display_id, record.review_reason)
     return ProcessOutcome()
 
 

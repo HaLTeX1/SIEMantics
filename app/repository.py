@@ -5,7 +5,8 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import GroundTruth
-from app.models import AlertRecord, CaseAssignment, ResponseAction, SuppressionRule, User, UserSession
+from app.db import Base
+from app.models import AlertRecord, CaseAssignment, User, UserSession
 
 
 async def create_alert_record(session: AsyncSession, **fields) -> AlertRecord:
@@ -191,9 +192,11 @@ async def delete_user(session: AsyncSession, user: User) -> list[int]:
     released = list(await session.scalars(select(CaseAssignment.iris_case_id).where(CaseAssignment.user_id == user.id)))
     await session.execute(delete(UserSession).where(UserSession.user_id == user.id))
     await session.execute(delete(CaseAssignment).where(CaseAssignment.user_id == user.id))
-    for column in (CaseAssignment.assigned_by_id, AlertRecord.escalated_by_id,
-                   ResponseAction.requested_by_id, SuppressionRule.created_by_id):
-        await session.execute(update(column.class_).where(column == user.id).values({column.key: None}))
+    # Minden users.id-re mutato, nullable hivatkozas NULL-ra, igy egy kesobbi uj tabla sem akasztja meg (MariaDB FK).
+    for table in Base.metadata.sorted_tables:
+        for column in table.columns:
+            if column.nullable and any(fk.column.table.name == "users" for fk in column.foreign_keys):
+                await session.execute(update(table).where(column == user.id).values({column.name: None}))
     await session.delete(user)
     await session.commit()
     return sorted(released)

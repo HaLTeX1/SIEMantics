@@ -176,21 +176,32 @@ def llm_down(monkeypatch):
 
 
 def test_llm_outage_keeps_the_alert_queued_instead_of_guessing(logged_in, iris, llm_down):
-    res = logged_in.post("/api/v1/alerts", json=wazuh_alert("o1", level=13), headers=WEBHOOK_HEADERS).json()
+    res = logged_in.post("/api/v1/alerts", json=wazuh_alert("o1", level=8), headers=WEBHOOK_HEADERS).json()
     logged_in.portal.call(pipeline.alert_queue.join)
     record = logged_in.get(f"/api/v1/alerts/{res['id']}").json()
     assert record["status"] == "queued" and iris.calls == []
+    assert record["error_detail"].startswith("waiting for the LLM")
     assert llm_down["later"] == [(res["record_id"], pipeline.RETRY_DELAY_SECONDS)]
+
+
+def test_high_level_alert_goes_to_review_at_once_during_outage(logged_in, iris, llm_down):
+    # Kritikus riasztas nem varhat orakig: azonnal elemzohoz kerul, es keziel eszkalalhato.
+    res = logged_in.post("/api/v1/alerts", json=wazuh_alert("o2", level=13), headers=WEBHOOK_HEADERS).json()
+    logged_in.portal.call(pipeline.alert_queue.join)
+    record = logged_in.get(f"/api/v1/alerts/{res['id']}").json()
+    assert record["status"] == "needs_review" and "needs manual triage now" in record["review_reason"]
+    assert llm_down["later"] == []
+    assert logged_in.post(f"/api/v1/alerts/{res['id']}/escalate").status_code == 200
 
 
 def test_quota_error_pauses_the_queue(logged_in, iris, llm_down):
     llm_down["quota"] = True
     try:
-        logged_in.post("/api/v1/alerts", json=wazuh_alert("q1"), headers=WEBHOOK_HEADERS)
+        logged_in.post("/api/v1/alerts", json=wazuh_alert("q1", level=5), headers=WEBHOOK_HEADERS)
         logged_in.portal.call(pipeline.alert_queue.join)
         assert pipeline.alert_queue.pause_remaining() > 0
         # Szunet alatt a kovetkezo riasztas mar LLM hivas nelkul kerul vissza.
-        logged_in.post("/api/v1/alerts", json=wazuh_alert("q2", full_log="x"), headers=WEBHOOK_HEADERS)
+        logged_in.post("/api/v1/alerts", json=wazuh_alert("q2", level=5, full_log="x"), headers=WEBHOOK_HEADERS)
         logged_in.portal.call(pipeline.alert_queue.join)
         assert llm_down["calls"] == 1 and len(llm_down["later"]) == 2
     finally:
@@ -200,8 +211,8 @@ def test_quota_error_pauses_the_queue(logged_in, iris, llm_down):
 def test_alert_waiting_too_long_goes_to_manual_review(logged_in, iris, llm_down):
     async def old_record() -> int:
         async with async_session() as session:
-            record = AlertRecord(alert_id="old", rule_description="r", severity=12, status=pipeline.AlertStatus.QUEUED,
-                                 processing_time_ms=0.0, raw_payload=wazuh_alert("old", level=12),
+            record = AlertRecord(alert_id="old", rule_description="r", severity=5, status=pipeline.AlertStatus.QUEUED,
+                                 processing_time_ms=0.0, raw_payload=wazuh_alert("old", level=5),
                                  received_at=datetime.utcnow() - timedelta(hours=settings.llm_retry_max_hours + 1))
             session.add(record)
             await session.commit()
@@ -217,7 +228,7 @@ def test_alert_waiting_too_long_goes_to_manual_review(logged_in, iris, llm_down)
 
 
 def test_wait_mode_reports_llm_outage(logged_in, iris, llm_down):
-    res = logged_in.post("/api/v1/alerts?wait=true", json=wazuh_alert("w1"), headers=WEBHOOK_HEADERS)
+    res = logged_in.post("/api/v1/alerts?wait=true", json=wazuh_alert("w1", level=5), headers=WEBHOOK_HEADERS)
     assert res.status_code == 503 and len(llm_down["later"]) == 1
 
 

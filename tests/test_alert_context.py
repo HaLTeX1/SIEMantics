@@ -6,7 +6,6 @@ from datetime import datetime
 
 import pytest
 
-from app.enums import AlertStatus
 from app.guardrails import looks_like_prompt_injection
 from app.llm_engine import build_user_prompt
 from app.mock_engine import mock_triage

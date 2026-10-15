@@ -25,6 +25,7 @@ os.environ.update(
 )
 
 import pytest  # noqa: E402
+from sqlalchemy import event  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.auth import ensure_initial_admin  # noqa: E402
@@ -35,6 +36,12 @@ from app.pipeline import alert_queue, case_state, iris_client  # noqa: E402
 from app.schemas import AlertRecordOut, IrisCaseResult, NormalizedAlert  # noqa: E402
 
 WEBHOOK_HEADERS = {"X-Webhook-Token": "test-token"}
+
+
+@event.listens_for(engine.sync_engine, "connect")
+def _sqlite_foreign_keys(dbapi_connection, _record) -> None:
+    # Az eles MariaDB-hez hasonloan a kulso kulcsok ellenorizve, igy az FK hibak a tesztben is elojonnek.
+    dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
 
 async def _reset_db() -> None:
