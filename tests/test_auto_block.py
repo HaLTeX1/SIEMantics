@@ -95,3 +95,18 @@ def test_switching_to_enforce_blocks_an_ip_seen_in_dry_run(logged_in, iris, wazu
     monkeypatch.setattr(settings, "auto_block_mode", "enforce")
     process_alert(logged_in, brute("s2"))
     assert len(wazuh.commands) == 1
+
+
+def test_settings_accept_env_strings(monkeypatch):
+    # A .env minden erteke szoveg: az app ezzel is induljon el (a deploy health check ezen bukott el).
+    from app.config import Settings
+
+    monkeypatch.setenv("AUTO_BLOCK_DURATION_HOURS", "24")
+    monkeypatch.setenv("AUTO_BLOCK_MODE", "enforce")
+    monkeypatch.setenv("AUTO_BLOCK_SCOPE", "all")
+    monkeypatch.setenv("AUTO_BLOCK_MAX_PER_HOUR", "5")
+    loaded = Settings()
+    assert (loaded.auto_block_duration_hours, loaded.auto_block_mode, loaded.auto_block_scope) == (24, "enforce", "all")
+    monkeypatch.setenv("AUTO_BLOCK_DURATION_HOURS", "5")
+    with pytest.raises(ValueError):
+        Settings()

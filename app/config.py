@@ -1,6 +1,6 @@
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -81,7 +81,7 @@ class Settings(BaseSettings):
     auto_block_rule_groups: str = "authentication_failures"
     # AbuseIPDB pontszam minimuma (0 = nem kell); hianyzo adatnal lekeri.
     auto_block_min_abuse_score: int = Field(default=90, ge=0, le=100)
-    auto_block_duration_hours: Literal[1, 24, 168] = 1
+    auto_block_duration_hours: int = 1
     # agent: a megtamadott host agentjen; all: minden aktiv agenten (a manager riasztasainal csak ez mukodik).
     auto_block_scope: Literal["agent", "all"] = "agent"
     auto_block_max_per_hour: int = Field(default=10, ge=1)
@@ -112,6 +112,15 @@ class Settings(BaseSettings):
     # Soha ki nem tiltott IP-k / halozatok (vesszovel), pl. az admin sajat gepe.
     login_ban_exempt: str = ""
     session_cookie_secure: bool = False
+
+
+    @field_validator("auto_block_duration_hours")
+    @classmethod
+    def _block_duration(cls, value: int) -> int:
+        # A .env-bol szovegkent jon, ezert int + ellenorzes (Literal[1, 24, 168] nem alakitana at).
+        if value not in (1, 24, 168):
+            raise ValueError("AUTO_BLOCK_DURATION_HOURS must be 1, 24 or 168")
+        return value
 
 
 settings = Settings()
