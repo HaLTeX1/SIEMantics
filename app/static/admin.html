@@ -46,6 +46,12 @@
   .brand { display: flex; align-items: baseline; gap: 10px; }
   .brand .name { font-weight: 700; font-size: 18px; color: var(--text-primary); text-decoration: none; }
   .brand .sub { color: var(--text-muted); font-size: 13px; }
+  .admin-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; flex-wrap: wrap; }
+  .admin-tab { padding: 8px 14px; color: var(--text-secondary); text-decoration: none; font-size: 14px;
+               border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .admin-tab:hover { color: var(--text-primary); }
+  .admin-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); font-weight: 600; }
+  .admin-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   .user-menu { display: flex; align-items: center; gap: 14px; font-size: 13px; }
   .user-menu .user-name { color: var(--text-secondary); }
@@ -176,6 +182,7 @@
       </div>
       <div class="user-menu" id="userMenu"></div>
     </header>
+    <nav class="admin-tabs" id="adminTabs" aria-label="Admin panel"></nav>
 
     <div class="card">
       <h2>Új felhasználó</h2>
@@ -450,7 +457,13 @@
       return; // SIEM.api already redirected to the login page
     }
     SIEM.renderUserMenu(el("userMenu"), currentUser);
+    SIEM.renderAdminTabs(el("adminTabs"), currentUser, "users");
     if (currentUser.role !== "admin") {
+      // L2 csak a Kornyezet fulet latja.
+      if (currentUser.can_edit_context) {
+        window.location.replace("hosts.html");
+        return;
+      }
       document.querySelectorAll(".card").forEach((c) => { c.hidden = true; });
       const denied = document.createElement("div");
       denied.className = "state error";

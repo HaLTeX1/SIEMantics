@@ -34,11 +34,12 @@
     }[c]));
   }
 
-  // A container-be: "<nev> · Riasztasok · Elnyomasok · Kornyezet · Admin · Kijelentkezes".
+  // A container-be: "<nev> · Riasztasok · Elnyomasok · Admin · Kijelentkezes".
   function renderUserMenu(container, user) {
-    const links = ['<a href="index.html">Riasztások</a>', '<a href="suppressions.html">Elnyomások</a>',
-      '<a href="hosts.html">Környezet</a>'];
+    const links = ['<a href="index.html">Riasztások</a>', '<a href="suppressions.html">Elnyomások</a>'];
+    // Admin fulek: Felhasznalok (admin), Kornyezet (admin es L2).
     if (user.role === "admin") links.push('<a href="admin.html">Admin</a>');
+    else if (user.can_edit_context) links.push('<a href="hosts.html">Admin</a>');
     links.push('<a href="#" data-action="logout">Kijelentkezés</a>');
     container.innerHTML = `<span class="user-name">${escapeHtml(user.full_name || user.username)}</span>` + links.join("");
     container.querySelector('[data-action="logout"]').addEventListener("click", (ev) => {
@@ -47,5 +48,15 @@
     });
   }
 
-  window.SIEM = { api, me, logout, renderUserMenu, redirectToLogin };
+  // Az admin panel alfulei; a Felhasznalok csak adminnak.
+  function renderAdminTabs(container, user, active) {
+    const tabs = [];
+    if (user.role === "admin") tabs.push(["users", "admin.html", "Felhasználók"]);
+    tabs.push(["environment", "hosts.html", "Környezet"]);
+    container.innerHTML = tabs.map(([key, href, label]) =>
+      `<a href="${href}" class="admin-tab${key === active ? " active" : ""}"${key === active ? ' aria-current="page"' : ""}>${label}</a>`
+    ).join("");
+  }
+
+  window.SIEM = { api, me, logout, renderUserMenu, renderAdminTabs, redirectToLogin };
 })();

@@ -355,7 +355,7 @@ A prompt (`app/llm_engine.py`) a 2026-10 közepi éles mérés (57 címkézett �
 
 ## Környezet: hostok és ismert hálózatok
 
-A **Környezet** oldal (`/ui/hosts.html`) adja a triázs környezeti tudását:
+Az **Admin → Környezet** fül (`/ui/hosts.html`) adja a triázs környezeti tudását. Az admin panelen az admin a „Felhasználók” és a „Környezet” fület látja; az L2 az Admin menüpontból csak a Környezetet:
 
 - **Hostok:** a Wazuh API-ból (`HOST_SYNC_INTERVAL_MINUTES`, alapból óránként, és kézzel a „Frissítés a Wazuh-ból” gombbal) jönnek: OS, IP, agent-csoportok, státusz, és aktív agentnél a figyelő portok a folyamat nevével (syscollector). Az új hostok maguktól megjelennek, a Wazuh-ból eltűntek „Nincs a Wazuh-ban” jelölést kapnak (a kézi adataik megmaradnak, és törölhetők). Minden hosthoz kézzel megadható **szerep**, **kritikusság** és **megjegyzés**; ezeket a szinkron nem írja felül. Agent nélküli eszköz (pl. tűzfal) kézzel is felvehető a riasztásokban szereplő neve szerint.
 - **Ismert IP-k és hálózatok:** IP vagy CIDR címkével (pl. `10.64.0.95` = Forgejo git szerver) és „megbízható” jelzővel. A forrás IP-hez a legszűkebb illeszkedő bejegyzés kerül a promptba; ismeretlen címnél azt kapja az LLM, hogy publikus vagy dokumentálatlan belső cím.
