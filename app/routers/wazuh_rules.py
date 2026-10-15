@@ -75,7 +75,7 @@ async def list_rules(
         items, total = await wazuh_client.list_rules(params)
     except WazuhApiError as exc:
         if exc.status_code == 403:
-            raise HTTPException(status_code=403, detail="the Wazuh API user needs the rules:read permission") from exc
+            raise HTTPException(status_code=403, detail="the Wazuh API user needs rules:read on rule:file:* (e.g. the built-in rules_read_rules policy on its role)") from exc
         raise HTTPException(status_code=502, detail=f"Wazuh API error: {exc}") from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Wazuh API unavailable: {exc}") from exc

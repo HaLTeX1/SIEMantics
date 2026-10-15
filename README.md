@@ -315,8 +315,8 @@ A riasztás részletpaneljén az admin egy kattintással blokkolhatja a támadó
 
 1. A [wazuh/ossec-active-response.xml](wazuh/ossec-active-response.xml) `<active-response>` blokkjait másold az `/var/ossec/etc/ossec.conf` `<ossec_config>` részébe, majd futtasd: `systemctl restart wazuh-manager`. A blokkok egy nem létező szabályra (110598) kötődnek, ezért automatikusan soha nem sülnek el. Csak arra kellenek, hogy az `ar.conf`-ba bekerüljenek a lejáratos parancsnevek (`firewall-drop3600`, `netsh86400`, …), amelyeket az API hívni tud. Ellenőrzés: `cat /var/ossec/etc/shared/ar.conf`.
 2. Dedikált API felhasználó szűk jogkörrel (Wazuh dashboard → Server management → Security), ne a `wazuh-wui`:
-   - **Policy** `siemantics-response`: actions `active-response:command`, `agents:read`, `syscollector:read` (ez a [host-szinkronhoz](#környezet-hostok-és-ismert-hálózatok)); resources `agent:id:*`, `agent:group:*`; effect `allow`
-   - **Policy** `siemantics-rules` a [Wazuh szabályok](#wazuh-szabályok) fülhöz: action `rules:read`; resource `rule:file:*`; effect `allow` (ugyanahhoz a role-hoz)
+   - **Policy** `siemantics-response`: actions `active-response:command`, `agent:read`, `syscollector:read` (ez a [host-szinkronhoz](#környezet-hostok-és-ismert-hálózatok)); resources `agent:id:*`, `agent:group:*`; effect `allow`
+   - A [Wazuh szabályok](#wazuh-szabályok) fülhöz ugyanahhoz a role-hoz a gyári **`rules_read_rules`** policy (action `rules:read`, resource `rule:file:*`). A `rules:read` a fenti policyba írva nem működik, mert annak erőforrásai csak agentekre vonatkoznak.
    - **Role** `siemantics-response` ezzel a policyvel
    - **User** `siemantics`, erős jelszóval, ehhez a role-hoz rendelve
 3. A SIEMantics szerver `.env` fájljában: `WAZUH_API_URL=https://<wazuh>:55000`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD`. Önaláírt tanúsítványnál `WAZUH_API_VERIFY_SSL=false`.
@@ -397,7 +397,7 @@ Az **Admin → Wazuh szabályok** fül (`/ui/rules.html`, admin és L2, csak olv
 
 - **SIEMantics-statisztika szabályonként (30 nap):** hány riasztást adott, ebből hányat eszkalált, hány ment felülvizsgálatra, hányat címkéztek TP-nek és FP-nek, mikor jött utoljára. Ha az elemzői ítéletek legalább fele FP (legalább 2-ből), a sor „zajos” jelzést kap: ezeknél érdemes Wazuh-oldali hangolással vagy elnyomó szabállyal foglalkozni.
 - **Szűrők:** keresés, minimum szint, csoport, rendezés, és alapból csak azok a szabályok, amelyek riasztása az elmúlt 30 napban bekerült a SIEMantics-be (kikapcsolva a teljes, több ezres gyári szabálykészlet lapozható). A szűrés és a lapozás a Wazuh API oldalán történik.
-- **Jogosultság:** a Wazuh API felhasználónak `rules:read` jog kell (resource `rule:file:*`); ha hiányzik, az oldal ezt írja ki.
+- **Jogosultság:** a Wazuh API felhasználó role-jához a gyári `rules_read_rules` policy kell (`rules:read` a `rule:file:*` erőforrásra; agent-erőforrással megadva nem érvényes). Ha hiányzik, az oldal ezt írja ki.
 - API: `GET /api/v1/wazuh/rules` (`search`, `level_min`, `group`, `seen_only`, `sort`, `offset`, `limit`).
 
 ## Rendszerállapot
