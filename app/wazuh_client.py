@@ -12,7 +12,9 @@ _TOKEN_TTL_SECONDS = 600
 
 
 class WazuhApiError(Exception):
-    pass
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class WazuhClient:
@@ -51,7 +53,8 @@ class WazuhClient:
                     self._token = None
                     continue
                 if resp.status_code >= 400:
-                    raise WazuhApiError(f"Wazuh API {method} {path} failed: HTTP {resp.status_code} {resp.text[:300]}")
+                    raise WazuhApiError(f"Wazuh API {method} {path} failed: HTTP {resp.status_code} {resp.text[:300]}",
+                                        resp.status_code)
                 return resp.json()
         raise WazuhApiError("Wazuh API authentication failed")
 
@@ -59,6 +62,12 @@ class WazuhClient:
         # Kapcsolat teszt: hitelesites es az API verzioja.
         body = await self._request("GET", "/")
         return body.get("data") or {}
+
+    async def list_rules(self, params: dict) -> tuple[list[dict], int]:
+        # A betoltott szabalyok (szuro, lapozas a Wazuh oldalan); (elemek, osszes talalat).
+        body = await self._request("GET", "/rules", params=params)
+        data = body.get("data") or {}
+        return data.get("affected_items") or [], int(data.get("total_affected_items") or 0)
 
     async def get_agents(self, agent_ids: list[str] | None = None, *, active_only: bool = False) -> list[dict]:
         params: dict = {"select": "id,name,status,os.platform", "limit": 10000}

@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIEMantics - Admin · Wazuh szabályok</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #202020;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:    #2c2c2a;
+    --border:      rgba(255,255,255,0.10);
+    --accent:      #3987e5;
+    --accent-dim:  #1c5cab;
+    --good:        #0ca30c;
+    --serious:     #ec835a;
+    --critical:    #d03b3b;
+    --violet:      #9085e9;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  header.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand .name { font-weight: 700; font-size: 18px; color: var(--text-primary); text-decoration: none; }
+  .brand .sub { color: var(--text-muted); font-size: 13px; }
+  .admin-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; flex-wrap: wrap; }
+  .admin-tab { padding: 8px 14px; color: var(--text-secondary); text-decoration: none; font-size: 14px;
+               border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .admin-tab:hover { color: var(--text-primary); }
+  .admin-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); font-weight: 600; }
+  .admin-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .user-menu { display: flex; align-items: center; gap: 14px; font-size: 13px; }
+  .user-menu .user-name { color: var(--text-secondary); }
+  .user-menu a { color: var(--accent); text-decoration: none; }
+  .user-menu a:hover { text-decoration: underline; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  button.btn {
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    background: var(--surface);
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+  button.btn:hover { background: #262625; }
+  button.btn:disabled { opacity: 0.5; cursor: default; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.btn.primary:hover { background: var(--accent-dim); }
+  button.btn.small { padding: 4px 10px; font-size: 12px; }
+  button.btn.danger { border-color: var(--serious); color: var(--serious); background: transparent; }
+  button.btn.danger:hover { background: rgba(236,131,90,0.12); }
+
+  .msg { font-size: 13px; min-height: 18px; margin-top: 10px; }
+  .msg.error { color: var(--critical); }
+  .msg.ok { color: #7be07b; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--gridline);
+    white-space: nowrap;
+  }
+  tbody td { padding: 10px; border-bottom: 1px solid var(--gridline); vertical-align: middle; }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+  tbody tr.inactive td { color: var(--text-muted); }
+  td select { width: auto; padding: 4px 8px; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .title-main { font-weight: 600; }
+  .title-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge-fill-good  { background: rgba(12,163,12,0.16); color: #7be07b; }
+  .badge-fill-muted { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+  .scope { color: var(--text-secondary); font-size: 12px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-secondary); }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 16px 0; flex-wrap: wrap; }
+  .toolbar label { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; cursor: pointer; }
+  .toolbar h2 { margin: 0; }
+  tbody tr:target { background: rgba(57,135,229,0.12); }
+  .hint { color: var(--text-muted); font-size: 13px; margin: 0; }
+
+  .state { padding: 30px 10px; text-align: center; color: var(--text-muted); }
+  .state.error { color: var(--critical); }
+  .services { display: flex; flex-wrap: wrap; gap: 4px; max-width: 360px; }
+  .chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-secondary);
+          background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+  .host-edit { display: grid; gap: 6px; min-width: 240px; }
+  .host-edit textarea { min-height: 54px; resize: vertical; font-family: inherit; width: 100%; background: var(--surface-2);
+                        border: 1px solid var(--border); color: var(--text-primary); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  .host-edit textarea:focus { outline: none; border-color: var(--accent); }
+  .host-edit .row { display: flex; gap: 6px; align-items: center; }
+  .host-edit select { width: auto; }
+  .badge-fill-warn { background: rgba(250,178,25,0.16); color: #fdd68a; }
+  .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; align-items: end; padding: 0 16px 14px; }
+  .form-row label { display: block; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+  .check { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; }
+  .check input { width: auto; }
+  .muted { color: var(--text-muted); }
+  .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 16px 16px 4px; }
+  .filters input[type="search"] { width: 240px; max-width: 100%; }
+  .filters select, .filters input { width: auto; }
+  .lvl { display: inline-block; min-width: 30px; text-align: center; font-weight: 700; font-size: 12px; border-radius: 4px; padding: 2px 6px; }
+  .l-crit { background: rgba(208,59,59,0.18); color: #f29b9b; }
+  .l-high { background: rgba(236,131,90,0.16); color: #f3b299; }
+  .l-med { background: rgba(250,178,25,0.16); color: #fdd68a; }
+  .l-low { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+  .chip { font-size: 11px; color: var(--text-secondary); background: var(--surface-2); border: 1px solid var(--border);
+          border-radius: 4px; padding: 1px 6px; margin: 2px 4px 0 0; display: inline-block; }
+  .num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .noisy { color: #fdd68a; font-size: 11px; font-weight: 600; }
+  tr.rule-row { cursor: pointer; }
+  tr.rule-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  tr.detail-row td { background: var(--surface-2); }
+  .detail-grid { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 12.5px; }
+  .detail-grid dt { color: var(--text-muted); }
+  .detail-grid dd { margin: 0; overflow-wrap: anywhere; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .pager { display: flex; align-items: center; gap: 10px; justify-content: flex-end; padding: 10px 16px 14px; }
+  .muted { color: var(--text-muted); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <a class="name" href="./">SIEMantics</a>
+        <span class="sub">Admin panel</span>
+      </div>
+      <div class="user-menu" id="userMenu"></div>
+    </header>
+    <nav class="admin-tabs" id="adminTabs" aria-label="Admin panel"></nav>
+
+    <div class="card" style="padding:0; overflow-x:auto;">
+      <div class="toolbar">
+        <h2>Wazuh szabályok</h2>
+        <span class="muted" id="totalInfo"></span>
+      </div>
+      <div class="filters">
+        <input type="search" id="search" placeholder="Keresés: leírás, ID, csoport..." aria-label="Keresés" />
+        <select id="levelMin" aria-label="Minimum szint">
+          <option value="0">Minden szint</option>
+          <option value="3">3+</option><option value="5">5+</option><option value="8">8+</option>
+          <option value="10">10+</option><option value="12">12+</option>
+        </select>
+        <input id="group" placeholder="Csoport, pl. sshd" aria-label="Csoport" style="width:150px" />
+        <select id="sort" aria-label="Rendezés">
+          <option value="id">ID szerint</option>
+          <option value="-level">Szint (csökkenő)</option>
+          <option value="level">Szint (növekvő)</option>
+        </select>
+        <label class="check"><input type="checkbox" id="seenOnly" checked /> Csak ami a SIEMantics-be bekerült (30 nap)</label>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>Szint</th><th>Leírás</th><th>Fájl</th>
+            <th class="num" title="SIEMantics riasztások az elmúlt 30 napban">Riasztás</th>
+            <th class="num">Eszkalált</th><th class="num" title="Elemzői ítélet">TP / FP</th><th>Utoljára</th>
+          </tr>
+        </thead>
+        <tbody id="rulesBody"></tbody>
+      </table>
+      <div id="rulesState" class="state" hidden></div>
+      <div class="pager">
+        <span class="muted" id="pageInfo"></span>
+        <button type="button" class="btn small" id="prevBtn">Előző</button>
+        <button type="button" class="btn small" id="nextBtn">Következő</button>
+      </div>
+    </div>
+  </div>
+
+<script src="auth.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const el = (id) => document.getElementById(id);
+  const PAGE = 50;
+  let offset = 0;
+  let total = 0;
+  let items = [];
+  const open = new Set();
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return "-";
+    const d = new Date(iso + (iso.endsWith("Z") ? "" : "Z"));
+    return isNaN(d.getTime()) ? iso : d.toLocaleString("hu-HU", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function levelClass(level) {
+    if (level >= 12) return "l-crit";
+    if (level >= 8) return "l-high";
+    if (level >= 5) return "l-med";
+    return "l-low";
+  }
+
+  function detailsHtml(r) {
+    const rows = [["Fájl", `<span class="mono">${escapeHtml((r.relative_dirname ? r.relative_dirname + "/" : "") + (r.filename || "-"))}</span>`],
+                  ["Állapot", escapeHtml(r.status || "-")]];
+    Object.entries(r.details || {}).forEach(([k, v]) => {
+      const value = typeof v === "object" ? JSON.stringify(v) : String(v);
+      rows.push([k, `<span class="mono">${escapeHtml(value)}</span>`]);
+    });
+    if (r.mitre.length) rows.push(["MITRE", r.mitre.map(escapeHtml).join(", ")]);
+    Object.entries(r.compliance || {}).forEach(([k, v]) => rows.push([k.toUpperCase(), escapeHtml([].concat(v).join(", "))]));
+    const s = r.siemantics;
+    if (s) rows.push(["SIEMantics (30 nap)", `${s.alerts} riasztás, ${s.escalated} eszkalált, ${s.needs_review} felülvizsgálatra, elemzői ítélet: ${s.true_positive} TP / ${s.false_positive} FP`]);
+    return `<dl class="detail-grid">${rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${v}</dd>`).join("")}</dl>`;
+  }
+
+  function render() {
+    el("rulesState").hidden = items.length > 0;
+    el("rulesState").className = "state";
+    el("rulesState").textContent = el("seenOnly").checked
+      ? "Nincs a szűrésnek megfelelő szabály a SIEMantics elmúlt 30 napos riasztásai között."
+      : "Nincs a szűrésnek megfelelő szabály.";
+    el("rulesBody").innerHTML = items.map((r) => {
+      const s = r.siemantics;
+      const labeled = s ? s.true_positive + s.false_positive : 0;
+      // Zajos: az elemzoi iteletek legalabb fele FP (legalabb 2 iteletbol).
+      const noisy = s && labeled >= 2 && s.false_positive / labeled >= 0.5;
+      const row = `<tr class="rule-row" data-id="${r.id}" tabindex="0" aria-expanded="${open.has(r.id)}">
+          <td class="mono">${escapeHtml(r.id)}</td>
+          <td><span class="lvl ${levelClass(r.level || 0)}">${escapeHtml(r.level ?? "-")}</span></td>
+          <td><div class="title-main">${escapeHtml(r.description || "-")}</div>
+            <div>${r.groups.slice(0, 5).map((g) => `<span class="chip">${escapeHtml(g)}</span>`).join("")}${noisy ? ' <span class="noisy">zajos</span>' : ""}</div></td>
+          <td class="mono">${escapeHtml(r.filename || "-")}</td>
+          <td class="num">${s ? s.alerts : '<span class="muted">-</span>'}</td>
+          <td class="num">${s ? s.escalated : '<span class="muted">-</span>'}</td>
+          <td class="num">${s ? `${s.true_positive} / ${s.false_positive}` : '<span class="muted">-</span>'}</td>
+          <td>${s ? fmtTime(s.last_seen) : '<span class="muted">-</span>'}</td>
+        </tr>`;
+      return row + (open.has(r.id) ? `<tr class="detail-row"><td colspan="8">${detailsHtml(r)}</td></tr>` : "");
+    }).join("");
+    document.querySelectorAll(".rule-row").forEach((tr) => {
+      const toggle = () => {
+        const id = Number(tr.dataset.id);
+        if (open.has(id)) open.delete(id); else open.add(id);
+        render();
+      };
+      tr.addEventListener("click", toggle);
+      tr.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); toggle(); } });
+    });
+    const from = total ? offset + 1 : 0;
+    el("pageInfo").textContent = `${from}–${Math.min(offset + PAGE, total)} / ${total}`;
+    el("totalInfo").textContent = `${total} szabály`;
+    el("prevBtn").disabled = offset === 0;
+    el("nextBtn").disabled = offset + PAGE >= total;
+  }
+
+  async function load() {
+    const params = new URLSearchParams({
+      search: el("search").value.trim(), level_min: el("levelMin").value, group: el("group").value.trim(),
+      seen_only: el("seenOnly").checked ? "true" : "false", sort: el("sort").value, offset, limit: PAGE,
+    });
+    try {
+      const res = await SIEM.api(`/api/v1/wazuh/rules?${params}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : `HTTP ${res.status}`);
+      items = body.items;
+      total = body.total;
+      render();
+    } catch (err) {
+      items = [];
+      total = 0;
+      render();
+      el("rulesState").hidden = false;
+      el("rulesState").className = "state error";
+      el("rulesState").textContent = "Nem sikerült lekérni a szabályokat: " + err.message;
+    }
+  }
+
+  function reload() {
+    offset = 0;
+    open.clear();
+    load();
+  }
+
+  let debounce = null;
+  el("search").addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(reload, 300); });
+  el("group").addEventListener("input", () => { clearTimeout(debounce); debounce = setTimeout(reload, 300); });
+  ["levelMin", "sort", "seenOnly"].forEach((id) => el(id).addEventListener("change", reload));
+  el("prevBtn").addEventListener("click", () => { offset = Math.max(0, offset - PAGE); load(); });
+  el("nextBtn").addEventListener("click", () => { offset += PAGE; load(); });
+
+  SIEM.me().then((user) => {
+    SIEM.renderUserMenu(el("userMenu"), user);
+    SIEM.renderAdminTabs(el("adminTabs"), user, "rules");
+  }).catch(() => {});
+  load();
+})();
+</script>
+</body>
+</html>

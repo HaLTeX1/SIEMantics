@@ -54,6 +54,7 @@ app/
     ├── auth.py            # login/logout/me/jelszócsere
     ├── cases.py           # IRIS case-ek felhasználóhoz rendelése
     ├── suppressions.py    # elnyomó szabályok létrehozása / listázása / kikapcsolása
+    ├── wazuh_rules.py     # a Wazuh szabályok listája SIEMantics-statisztikával (Admin fül)
     └── users.py           # admin: felhasználók listázása/létrehozása/módosítása
 tests/                   # pytest tesztek (lásd Tesztek)
 wazuh/
@@ -315,6 +316,7 @@ A riasztás részletpaneljén az admin egy kattintással blokkolhatja a támadó
 1. A [wazuh/ossec-active-response.xml](wazuh/ossec-active-response.xml) `<active-response>` blokkjait másold az `/var/ossec/etc/ossec.conf` `<ossec_config>` részébe, majd futtasd: `systemctl restart wazuh-manager`. A blokkok egy nem létező szabályra (110598) kötődnek, ezért automatikusan soha nem sülnek el. Csak arra kellenek, hogy az `ar.conf`-ba bekerüljenek a lejáratos parancsnevek (`firewall-drop3600`, `netsh86400`, …), amelyeket az API hívni tud. Ellenőrzés: `cat /var/ossec/etc/shared/ar.conf`.
 2. Dedikált API felhasználó szűk jogkörrel (Wazuh dashboard → Server management → Security), ne a `wazuh-wui`:
    - **Policy** `siemantics-response`: actions `active-response:command`, `agents:read`, `syscollector:read` (ez a [host-szinkronhoz](#környezet-hostok-és-ismert-hálózatok)); resources `agent:id:*`, `agent:group:*`; effect `allow`
+   - **Policy** `siemantics-rules` a [Wazuh szabályok](#wazuh-szabályok) fülhöz: action `rules:read`; resource `rule:file:*`; effect `allow` (ugyanahhoz a role-hoz)
    - **Role** `siemantics-response` ezzel a policyvel
    - **User** `siemantics`, erős jelszóval, ehhez a role-hoz rendelve
 3. A SIEMantics szerver `.env` fájljában: `WAZUH_API_URL=https://<wazuh>:55000`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD`. Önaláírt tanúsítványnál `WAZUH_API_VERIFY_SSL=false`.
@@ -388,6 +390,15 @@ A triázs és az elemző a riasztás mellett látja, mi történt még ugyanazon
    - A tűzfalon a portot csak a SIEMantics szerver (10.64.0.127) érje el.
 2. **Csak olvasásra jogosult felhasználó** (Wazuh dashboard → Indexer management → Security): role `siemantics_read` (cluster permission `cluster_composite_ops_ro`; index permission a `wazuh-alerts-*` mintára: `read`), egy `siemantics` internal user, a role-hoz rendelve. Ne az `admin` felhasználót add meg.
 3. **A SIEMantics `.env`-jében:** `WAZUH_INDEXER_URL=https://10.64.0.82` és `WAZUH_INDEXER_VIA_DASHBOARD=true` (az A változatnál; közvetlen elérésnél a port is kell, pl. `:9200`), `WAZUH_INDEXER_USER`, `WAZUH_INDEXER_PASSWORD`, és mivel az indexer tanúsítványa a belső nevére szól, `WAZUH_INDEXER_VERIFY_SSL=false`. A Rendszerállapot fül „Kapcsolat tesztelése” gombja ellenőrzi.
+
+## Wazuh szabályok
+
+Az **Admin → Wazuh szabályok** fül (`/ui/rules.html`, admin és L2, csak olvasható) a Wazuh API-ból (`GET /rules`) listázza a managerre betöltött szabályokat: ID, szint, leírás, csoportok, forrásfájl; a sor kinyitásával a feltételek (`if_sid`, `match`, `frequency` stb.), a MITRE és a compliance-adatok is.
+
+- **SIEMantics-statisztika szabályonként (30 nap):** hány riasztást adott, ebből hányat eszkalált, hány ment felülvizsgálatra, hányat címkéztek TP-nek és FP-nek, mikor jött utoljára. Ha az elemzői ítéletek legalább fele FP (legalább 2-ből), a sor „zajos” jelzést kap: ezeknél érdemes Wazuh-oldali hangolással vagy elnyomó szabállyal foglalkozni.
+- **Szűrők:** keresés, minimum szint, csoport, rendezés, és alapból csak azok a szabályok, amelyek riasztása az elmúlt 30 napban bekerült a SIEMantics-be (kikapcsolva a teljes, több ezres gyári szabálykészlet lapozható). A szűrés és a lapozás a Wazuh API oldalán történik.
+- **Jogosultság:** a Wazuh API felhasználónak `rules:read` jog kell (resource `rule:file:*`); ha hiányzik, az oldal ezt írja ki.
+- API: `GET /api/v1/wazuh/rules` (`search`, `level_min`, `group`, `seen_only`, `sort`, `offset`, `limit`).
 
 ## Rendszerállapot
 
