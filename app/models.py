@@ -119,6 +119,33 @@ class User(Base):
         return self.role in (UserRole.ADMIN, UserRole.L2) or bool(self.response_allowed)
 
 
+class LoginFailure(Base):
+    # Sikertelen belepes a kliens IP-jevel, az automatikus tiltashoz.
+
+    __tablename__ = "login_failures"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ip: Mapped[str] = mapped_column(String(64), index=True)
+    username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    attempted_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class IpBan(Base):
+    # Kitiltott IP a bejelentkezesbol; a feloldott / lejart tiltasok elozmenykent maradnak.
+
+    __tablename__ = "ip_bans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ip: Mapped[str] = mapped_column(String(64), index=True)
+    reason: Mapped[str] = mapped_column(String(256))
+    failures: Mapped[int] = mapped_column(Integer)
+    usernames: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    until: Mapped[datetime] = mapped_column(DateTime, index=True)
+    lifted_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    lifted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class UserSession(Base):
     # Szerver oldali munkamenet; csak a cookie token SHA-256-ja tarolodik.
 
@@ -165,6 +192,8 @@ class ResponseAction(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     iris_case_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     iris_noted: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Automatikus blokkolas (nem elemzo inditotta); a proba futasnal status = dry_run.
+    automatic: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 class HostProfile(Base):

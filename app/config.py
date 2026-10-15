@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -74,6 +76,15 @@ class Settings(BaseSettings):
     # A triazs ennyi percet nez a riasztas elott es utan, legfeljebb ennyi esemennyel.
     surrounding_minutes: int = Field(default=10, ge=1, le=120)
     surrounding_max_events: int = Field(default=25, ge=1, le=200)
+    # Automatikus IP blokkolas eszkalalt brute force riasztasra: off, dry_run (csak naplo) vagy enforce.
+    auto_block_mode: Literal["off", "dry_run", "enforce"] = "dry_run"
+    auto_block_rule_groups: str = "authentication_failures"
+    # AbuseIPDB pontszam minimuma (0 = nem kell); hianyzo adatnal lekeri.
+    auto_block_min_abuse_score: int = Field(default=90, ge=0, le=100)
+    auto_block_duration_hours: Literal[1, 24, 168] = 1
+    # agent: a megtamadott host agentjen; all: minden aktiv agenten (a manager riasztasainal csak ez mukodik).
+    auto_block_scope: Literal["agent", "all"] = "agent"
+    auto_block_max_per_hour: int = Field(default=10, ge=1)
     # Tovabbi vedett IP-k / halozatok vesszovel, a nem publikus cimeken felul (pl. sajat publikus IP-k).
     response_protected_networks: str = ""
     # Parhuzamos triazs workerek; 1 = sorban (free rate limit, korrelacio).
@@ -89,6 +100,17 @@ class Settings(BaseSettings):
     admin_username: str = "admin"
     admin_password: str = ""
     session_ttl_hours: int = 12
+
+    # Automatikus IP tiltas sikertelen belepesek utan (0 = ki).
+    login_max_failures: int = Field(default=5, ge=0)
+    login_failure_window_minutes: int = Field(default=15, ge=1)
+    # Az elso tiltas hossza; visszaesonel duplazodik, legfeljebb a maximumig.
+    login_ban_minutes: int = Field(default=30, ge=1)
+    login_ban_max_minutes: int = Field(default=1440, ge=1)
+    # Forditott proxy / Cloudflare tunnel IP-k (vesszovel, CIDR is): csak toluk fogadjuk el a CF-Connecting-IP / X-Forwarded-For fejlecet.
+    trusted_proxy_ips: str = ""
+    # Soha ki nem tiltott IP-k / halozatok (vesszovel), pl. az admin sajat gepe.
+    login_ban_exempt: str = ""
     session_cookie_secure: bool = False
 
 

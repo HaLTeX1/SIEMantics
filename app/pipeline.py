@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
+from app.auto_block import maybe_auto_block
 from app.correlation import find_correlated_record, join_group
 from app.db import async_session
 from app.enrichment import enrich_iocs
@@ -427,6 +428,8 @@ async def _apply_duplicate(
             record.ioc_enrichment = anchor.ioc_enrichment
     record.processing_time_ms = _elapsed_ms(started)
     await save_alert_record(session, record)
+    # Flood / ismetlodes uj forras IP-rol: az atvett eszkalalas is blokkolhat.
+    await maybe_auto_block(session, record)
     logger.info("alert %s (%s) is a %s of %s -> %s", record.alert_id, record.display_id,
                 "flood repeat" if engine == "flood" else "duplicate", anchor.display_id, record.status.value)
     triage = TriageResult(
@@ -570,6 +573,7 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessO
     await _auto_group(session, record, correlated)
     record.processing_time_ms = _elapsed_ms(started)
     await save_alert_record(session, record)
+    await maybe_auto_block(session, record)
     logger.info(
         "alert %s (%s) escalated to IRIS case %s%s",
         alert.alert_id,

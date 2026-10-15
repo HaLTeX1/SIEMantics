@@ -303,6 +303,12 @@ class ResponseActionOut(BaseModel):
     expires_at: datetime
     iris_case_id: Optional[int] = None
     iris_noted: bool
+    automatic: bool = False
+
+    @field_validator("automatic", mode="before")
+    @classmethod
+    def _none_is_manual(cls, value):
+        return bool(value)
 
 
 class HostProfileOut(BaseModel):

@@ -12,6 +12,7 @@ from app.auth import (
     verify_password,
 )
 from app.db import get_session
+from app.login_guard import active_ban, clear_failures, client_ip, record_failure, retry_after_seconds
 from app.models import User
 from app.repository import delete_sessions_for_user, get_user_by_username, save_user
 from app.schemas import LoginRequest, PasswordChangeRequest, UserOut
@@ -19,11 +20,31 @@ from app.schemas import LoginRequest, PasswordChangeRequest, UserOut
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
 
+def _banned(ban) -> HTTPException:
+    seconds = retry_after_seconds(ban)
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail=f"too many failed logins from this address, try again in {max(seconds // 60, 1)} minute(s)",
+        headers={"Retry-After": str(seconds)},
+    )
+
+
 @router.post("/login", response_model=UserOut)
-async def login(body: LoginRequest, response: Response, session: AsyncSession = Depends(get_session)):
+async def login(
+    body: LoginRequest, request: Request, response: Response, session: AsyncSession = Depends(get_session)
+):
+    # Kitiltott IP-rol a jelszot sem ellenorizzuk; tul sok hiba utan automatikus tiltas.
+    ip = client_ip(request)
+    ban = await active_ban(session, ip)
+    if ban is not None:
+        raise _banned(ban)
     user = await get_user_by_username(session, body.username.strip())
     if not check_credentials(user, body.password):
+        ban = await record_failure(session, ip, body.username.strip())
+        if ban is not None:
+            raise _banned(ban)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid username or password")
+    await clear_failures(session, ip)
     await start_session(session, response, user)
     return user
 

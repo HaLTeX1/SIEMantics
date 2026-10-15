@@ -12,7 +12,7 @@ from app.db import get_session
 from app.enums import AlertStatus
 from app.iris_client import iris_client
 from app.llm_engine import configured_models, key_info, llm_configured, second_opinion_enabled
-from app.models import AlertRecord
+from app.models import AlertRecord, IpBan, LoginFailure, ResponseAction
 from app.pipeline import alert_queue
 from app.routers.alerts import ignored_counter
 from app.surrounding import indexer_client
@@ -29,6 +29,9 @@ _VISIBLE_SETTINGS = (
     "context_rule_groups", "iris_sync_interval_seconds", "host_sync_interval_minutes", "iris_base_url",
     "iris_verify_ssl", "wazuh_api_url", "wazuh_api_verify_ssl", "wazuh_indexer_url", "wazuh_indexer_indices",
     "wazuh_indexer_verify_ssl", "wazuh_indexer_via_dashboard", "surrounding_minutes", "surrounding_max_events", "enrichment_max_iocs",
+    "login_max_failures", "login_failure_window_minutes", "login_ban_minutes", "login_ban_max_minutes",
+    "trusted_proxy_ips", "login_ban_exempt", "auto_block_mode", "auto_block_rule_groups",
+    "auto_block_min_abuse_score", "auto_block_duration_hours", "auto_block_scope", "auto_block_max_per_hour",
     "session_ttl_hours",
 )
 # Titkok: csak az latszik, hogy be vannak-e allitva.
@@ -74,6 +77,23 @@ async def system_status(session: AsyncSession = Depends(get_session)):
                       **status.snapshot("host_sync")},
         "indexer": {"enabled": indexer_client.enabled, "indices": settings.wazuh_indexer_indices,
                     **status.snapshot("indexer")},
+        "login_protection": {
+            "enabled": settings.login_max_failures > 0,
+            "active_bans": await _scalar(session, select(func.count()).select_from(IpBan).where(
+                IpBan.until > now, IpBan.lifted_at.is_(None))),
+            "bans_24h": await _scalar(session, select(func.count()).select_from(IpBan).where(IpBan.created_at >= day_ago)),
+            "failures_24h": await _scalar(session, select(func.count()).select_from(LoginFailure).where(
+                LoginFailure.attempted_at >= day_ago)),
+            "trusted_proxies": bool(settings.trusted_proxy_ips.strip()),
+            **status.snapshot("login_proxy"),
+        },
+        "auto_block": {
+            "mode": settings.auto_block_mode,
+            "enabled": settings.auto_block_mode != "off" and wazuh_client.enabled,
+            "actions_24h": await _scalar(session, select(func.count()).select_from(ResponseAction).where(
+                ResponseAction.automatic.is_(True), ResponseAction.created_at >= day_ago)),
+            **status.snapshot("auto_block"),
+        },
         "settings": {name: getattr(settings, name) for name in _VISIBLE_SETTINGS},
         "secrets_set": {name: bool(getattr(settings, name)) for name in _SECRETS},
     }

@@ -304,11 +304,13 @@
   function responseHistoryHtml() {
     if (!response.actions.length) return '<div class="response-history"><span class="muted">Még nem volt válaszlépés.</span></div>';
     return `<div class="response-history">${response.actions.map((r) => {
-      const who = r.requested_by ? (r.requested_by.full_name || r.requested_by.username) : "-";
+      const who = r.automatic ? "automatikus" : (r.requested_by ? (r.requested_by.full_name || r.requested_by.username) : "-");
       const active = new Date(r.expires_at + (r.expires_at.endsWith("Z") ? "" : "Z")) > new Date();
-      const label = { sent: "blokkolva", partial: "részben blokkolva", failed: "sikertelen" }[r.status] || r.status;
+      const label = { sent: "blokkolva", partial: "részben blokkolva", failed: "sikertelen",
+                      dry_run: "próba: blokkolta volna" }[r.status] || r.status;
       const targets = (r.targets || []).map((t) => `${escapeHtml(t.name || t.id)}${t.ok ? "" : " ✗"}`).join(", ");
-      return `<div><span class="${r.status === "sent" ? "ok" : "bad"}">${escapeHtml(r.ip)} ${label}</span>
+      const cls = r.status === "sent" ? "ok" : r.status === "dry_run" ? "muted" : "bad";
+      return `<div><span class="${cls}">${escapeHtml(r.ip)} ${label}</span>
         <span class="muted">· ${escapeHtml(who)}, ${fmtTime(r.created_at)} · ${active ? "lejár: " + fmtTime(r.expires_at) : "lejárt"}
         · ${targets}${r.error_detail ? " · " + escapeHtml(r.error_detail) : ""}</span></div>`;
     }).join("")}</div>`;

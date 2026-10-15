@@ -129,6 +129,11 @@
         }),
       });
       if (res.status === 401) throw new Error("Hibás felhasználónév vagy jelszó.");
+      if (res.status === 429) {
+        // Automatikus IP tiltas tul sok sikertelen belepes utan.
+        const minutes = Math.max(1, Math.ceil(Number(res.headers.get("Retry-After") || 60) / 60));
+        throw new Error(`Túl sok sikertelen bejelentkezés erről a címről. Próbáld újra ${minutes} perc múlva.`);
+      }
       if (!res.ok) throw new Error(`Sikertelen bejelentkezés (HTTP ${res.status}).`);
       window.location.href = nextUrl();
     } catch (err) {

@@ -305,6 +305,22 @@
     return ["ok", "Elérhető", `Utolsó lekérdezés ${ago(x.last_success_at)} ezelőtt`];
   }
 
+  function loginState(p) {
+    if (!p.enabled) return ["warn", "Kikapcsolva", "LOGIN_MAX_FAILURES=0"];
+    if (newer(p.last_error_at, null) && !p.trusted_proxies) return ["warn", "Proxy-beállítás hiányzik", p.last_error];
+    if (p.active_bans > 0) return ["warn", `${p.active_bans} kitiltott cím`, `${p.failures_24h} sikertelen belépés / 24 óra`];
+    return ["ok", "Aktív", `${p.failures_24h} sikertelen belépés / 24 óra`];
+  }
+
+  function autoBlockState(a) {
+    if (a.mode === "off") return ["off", "Kikapcsolva", "AUTO_BLOCK_MODE=off"];
+    if (!a.enabled) return ["off", "Nincs Wazuh API", "A blokkoláshoz a Wazuh API kell"];
+    const last = (a.last_result || {}).decision ? `Utolsó: ${a.last_result.ip} – ${a.last_result.decision}` : "Még nem döntött";
+    if (newer(a.last_error_at, a.last_success_at)) return ["bad", "Hiba", a.last_error];
+    if (a.mode === "dry_run") return ["warn", "Próba mód", `${a.actions_24h} próba / 24 óra. ${last}`];
+    return ["ok", "Éles", `${a.actions_24h} blokk / 24 óra. ${last}`];
+  }
+
   function render(st) {
     const l = st.llm, q = st.queue, i = st.ingest, is = st.iris_sync, hs = st.host_sync, ix = st.indexer;
     const hostOff = !hs.enabled || !hs.interval_minutes;
@@ -319,6 +335,8 @@
       pill("IRIS lezárás-szinkron", ...syncState(is, irisOff && !is.last_success_at)),
       pill("Host-szinkron", ...syncState(hs, hostOff && !hs.last_success_at)),
       pill("Wazuh indexer", ...indexerState(ix)),
+      pill("Belépés-védelem", ...loginState(st.login_protection)),
+      pill("Automatikus blokkolás", ...autoBlockState(st.auto_block)),
     ].join("");
 
     const lastResult = (r) => r ? Object.entries(r).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join(", ") : "-";

@@ -236,6 +236,22 @@
       <div id="usersState" class="state" hidden></div>
       <div class="msg" id="tableMsg" role="status" style="padding: 0 16px 12px;"></div>
     </div>
+
+    <div class="card" style="padding:0; overflow-x:auto;">
+      <div style="padding:16px 16px 0; display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+        <h2 style="margin:0;">Kitiltott IP-k (sikertelen belépések)</h2>
+        <label style="display:flex; align-items:center; gap:6px; text-transform:none; letter-spacing:0; font-size:13px; color:var(--text-secondary); margin:0;">
+          <input type="checkbox" id="showAllBans" style="width:auto;" /> Lejártak és feloldottak (30 nap)
+        </label>
+      </div>
+      <p style="color:var(--text-muted); font-size:13px; padding:8px 16px 0; margin:0;">Ha egy cím túl sokszor ad meg hibás jelszót, a bejelentkezésből automatikusan kitiltódik; visszaesőnél a tiltás duplázódik.</p>
+      <table>
+        <thead><tr><th>IP</th><th>Ok</th><th>Próbált felhasználók</th><th>Kitiltva</th><th>Meddig</th><th></th></tr></thead>
+        <tbody id="bansBody"></tbody>
+      </table>
+      <div id="bansState" class="state" hidden></div>
+      <div class="msg" id="bansMsg" role="status" style="padding: 0 16px 12px;"></div>
+    </div>
   </div>
 
   <dialog id="passwordDialog">
@@ -472,7 +488,49 @@
       return;
     }
     loadUsers();
+    loadBans();
   }
+
+  async function loadBans() {
+    const state = el("bansState");
+    try {
+      const res = await SIEM.api(`/api/v1/security/bans?active_only=${!el("showAllBans").checked}`);
+      if (!res.ok) throw new Error(await errorDetail(res));
+      const bans = await res.json();
+      state.hidden = bans.length > 0;
+      state.className = "state";
+      state.textContent = "Nincs kitiltott cím.";
+      el("bansBody").innerHTML = bans.map((b) => `
+        <tr class="${b.active ? "" : "inactive"}">
+          <td class="title-main">${escapeHtml(b.ip)}</td>
+          <td>${escapeHtml(b.reason)}</td>
+          <td>${escapeHtml((b.usernames || []).join(", ") || "-")}</td>
+          <td>${fmtTime(b.created_at)}</td>
+          <td>${b.active ? fmtTime(b.until) : (b.lifted_at ? `feloldva (${escapeHtml(b.lifted_by || "-")})` : "lejárt")}</td>
+          <td>${b.active ? `<button type="button" class="btn small lift-btn" data-id="${b.id}">Feloldás</button>` : ""}</td>
+        </tr>`).join("");
+      document.querySelectorAll(".lift-btn").forEach((btn) => btn.addEventListener("click", () => liftBan(Number(btn.dataset.id))));
+    } catch (err) {
+      el("bansBody").innerHTML = "";
+      state.hidden = false;
+      state.className = "state error";
+      state.textContent = "Nem sikerült betölteni a tiltásokat: " + err.message;
+    }
+  }
+
+  async function liftBan(id) {
+    try {
+      const res = await SIEM.api(`/api/v1/security/bans/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await errorDetail(res));
+      const body = await res.json();
+      setMsg(el("bansMsg"), `${body.ip} tiltása feloldva.`, true);
+    } catch (err) {
+      setMsg(el("bansMsg"), "Sikertelen feloldás: " + err.message, false);
+    }
+    loadBans();
+  }
+
+  el("showAllBans").addEventListener("change", loadBans);
 
   init();
 })();

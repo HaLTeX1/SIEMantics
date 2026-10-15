@@ -82,12 +82,13 @@ async def _targets(record: AlertRecord, scope: str) -> list[dict]:
 
 def _note(action: ResponseAction, record: AlertRecord, username: str) -> str:
     hours = action.duration_seconds // 3600
+    who = "automatically by SIEMantics" if action.automatic else f"by **{username}** from SIEMantics"
     rows = "\n".join(
         f"| {t['name']} ({t['id']}) | `{t['command']}` | {'ok' if t['ok'] else 'failed: ' + (t.get('error') or '')} |"
         for t in action.targets or []
     )
     return (
-        f"**{action.ip}** blocked by **{username}** from SIEMantics ({record.display_id}) for {hours} h, "
+        f"**{action.ip}** blocked {who} ({record.display_id}) for {hours} h, "
         f"until {action.expires_at:%Y-%m-%d %H:%M} UTC.\n\n"
         f"| Agent | Command | Result |\n|---|---|---|\n{rows}\n\n"
         "The block is lifted automatically by the Wazuh agent when it expires."
@@ -95,8 +96,18 @@ def _note(action: ResponseAction, record: AlertRecord, username: str) -> str:
 
 
 async def block_ip(
-    session: AsyncSession, record: AlertRecord, ip: str, scope: str, duration_seconds: int, user: User
+    session: AsyncSession,
+    record: AlertRecord,
+    ip: str,
+    scope: str,
+    duration_seconds: int,
+    user: User | None,
+    *,
+    dry_run: bool = False,
+    reason: str | None = None,
 ) -> ResponseAction:
+    # user None: automatikus blokkolas; dry_run: a celpontokat kiszamolja, de nem kuld parancsot.
+    actor = user.username if user else "SIEMantics (automatic)"
     if not wazuh_client.enabled:
         raise ResponseError(503, "Wazuh API is not configured (WAZUH_API_URL / WAZUH_API_USER / WAZUH_API_PASSWORD)")
     if duration_seconds not in DURATIONS_SECONDS:
@@ -110,6 +121,10 @@ async def block_ip(
 
         targets = []
         for command, group in by_command.items():
+            if dry_run:
+                targets += [{"id": a["id"], "name": a.get("name"), "command": command, "ok": None, "error": None}
+                            for a in group]
+                continue
             ok, failed = await wazuh_client.run_command(command, [a["id"] for a in group], {"data": {"srcip": ip}})
             for agent in group:
                 error = failed.get(agent["id"]) or (None if agent["id"] in ok else "no confirmation from Wazuh")
@@ -122,6 +137,10 @@ async def block_ip(
         raise ResponseError(502, f"Wazuh API unavailable: {exc}") from exc
 
     succeeded = sum(1 for t in targets if t["ok"])
+    if dry_run:
+        status = "dry_run"
+    else:
+        status = "sent" if succeeded == len(targets) else "partial" if succeeded else "failed"
     now = datetime.utcnow()
     action = ResponseAction(
         alert_record_id=record.id,
@@ -130,9 +149,11 @@ async def block_ip(
         scope=scope,
         duration_seconds=duration_seconds,
         targets=targets,
-        status="sent" if succeeded == len(targets) else "partial" if succeeded else "failed",
-        error_detail="; ".join(f"{t['name']}: {t['error']}" for t in targets if not t["ok"]) or None,
-        requested_by_id=user.id,
+        status=status,
+        error_detail=reason if dry_run else (
+            "; ".join(f"{t['name']}: {t['error']}" for t in targets if not t["ok"]) or None),
+        requested_by_id=user.id if user else None,
+        automatic=user is None,
         created_at=now,
         expires_at=now + timedelta(seconds=duration_seconds),
         iris_case_id=record.iris_case_id,
@@ -144,14 +165,14 @@ async def block_ip(
     if record.iris_case_id and succeeded:
         try:
             await iris_client.add_case_notes(
-                record.iris_case_id, f"response ({user.username})", [(f"IP blocked: {ip}", _note(action, record, user.username))]
+                record.iris_case_id, f"response ({actor})", [(f"IP blocked: {ip}", _note(action, record, actor))]
             )
             action.iris_noted = True
         except Exception:
             logger.warning("response note to IRIS case %s failed", record.iris_case_id, exc_info=True)
     await session.commit()
-    logger.warning("%s blocked %s on %d/%d agent(s) for %d s (%s)",
-                   user.username, ip, succeeded, len(targets), duration_seconds, record.display_id)
+    logger.warning("%s %s %s on %d agent(s) for %d s (%s)", actor, "would block" if dry_run else "blocked",
+                   ip, len(targets), duration_seconds, record.display_id)
     return action
 
 
