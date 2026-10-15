@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIEMantics - Környezet</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #202020;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:    #2c2c2a;
+    --border:      rgba(255,255,255,0.10);
+    --accent:      #3987e5;
+    --accent-dim:  #1c5cab;
+    --good:        #0ca30c;
+    --serious:     #ec835a;
+    --critical:    #d03b3b;
+    --violet:      #9085e9;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  header.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand .name { font-weight: 700; font-size: 18px; color: var(--text-primary); text-decoration: none; }
+  .brand .sub { color: var(--text-muted); font-size: 13px; }
+
+  .user-menu { display: flex; align-items: center; gap: 14px; font-size: 13px; }
+  .user-menu .user-name { color: var(--text-secondary); }
+  .user-menu a { color: var(--accent); text-decoration: none; }
+  .user-menu a:hover { text-decoration: underline; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  button.btn {
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    background: var(--surface);
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+  button.btn:hover { background: #262625; }
+  button.btn:disabled { opacity: 0.5; cursor: default; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.btn.primary:hover { background: var(--accent-dim); }
+  button.btn.small { padding: 4px 10px; font-size: 12px; }
+  button.btn.danger { border-color: var(--serious); color: var(--serious); background: transparent; }
+  button.btn.danger:hover { background: rgba(236,131,90,0.12); }
+
+  .msg { font-size: 13px; min-height: 18px; margin-top: 10px; }
+  .msg.error { color: var(--critical); }
+  .msg.ok { color: #7be07b; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--gridline);
+    white-space: nowrap;
+  }
+  tbody td { padding: 10px; border-bottom: 1px solid var(--gridline); vertical-align: middle; }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+  tbody tr.inactive td { color: var(--text-muted); }
+  td select { width: auto; padding: 4px 8px; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .title-main { font-weight: 600; }
+  .title-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge-fill-good  { background: rgba(12,163,12,0.16); color: #7be07b; }
+  .badge-fill-muted { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+  .scope { color: var(--text-secondary); font-size: 12px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-secondary); }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 16px 0; flex-wrap: wrap; }
+  .toolbar label { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; cursor: pointer; }
+  .toolbar h2 { margin: 0; }
+  tbody tr:target { background: rgba(57,135,229,0.12); }
+  .hint { color: var(--text-muted); font-size: 13px; margin: 0; }
+
+  .state { padding: 30px 10px; text-align: center; color: var(--text-muted); }
+  .state.error { color: var(--critical); }
+  .services { display: flex; flex-wrap: wrap; gap: 4px; max-width: 360px; }
+  .chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-secondary);
+          background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+  .host-edit { display: grid; gap: 6px; min-width: 240px; }
+  .host-edit textarea { min-height: 54px; resize: vertical; font-family: inherit; width: 100%; background: var(--surface-2);
+                        border: 1px solid var(--border); color: var(--text-primary); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  .host-edit textarea:focus { outline: none; border-color: var(--accent); }
+  .host-edit .row { display: flex; gap: 6px; align-items: center; }
+  .host-edit select { width: auto; }
+  .badge-fill-warn { background: rgba(250,178,25,0.16); color: #fdd68a; }
+  .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; align-items: end; padding: 0 16px 14px; }
+  .form-row label { display: block; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+  .check { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; }
+  .check input { width: auto; }
+  .muted { color: var(--text-muted); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <a class="name" href="./">SIEMantics</a>
+        <span class="sub">Környezet</span>
+      </div>
+      <div class="user-menu" id="userMenu"></div>
+    </header>
+
+    <div class="card">
+      <p class="hint">Az LLM a triázsnál megkapja a riasztás hostjának adatait és szerepét, valamint azt, hogy a forrás IP egy ismert, megbízható rendszer-e. A hostok adatai (OS, IP, csoportok, figyelő szolgáltatások) óránként frissülnek a Wazuh-ból; az új hostok maguktól megjelennek. A szerepet, a kritikusságot és a megjegyzést itt adhatod meg (L2 vagy admin).</p>
+    </div>
+
+    <div class="card" style="padding:0; overflow-x:auto;">
+      <div class="toolbar">
+        <h2>Hostok</h2>
+        <div class="row-actions">
+          <span class="muted" id="syncInfo"></span>
+          <button type="button" class="btn small" id="syncBtn" hidden>Frissítés a Wazuh-ból</button>
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Host</th>
+            <th>Rendszer</th>
+            <th>Szolgáltatások</th>
+            <th>Szerep, kritikusság, megjegyzés</th>
+          </tr>
+        </thead>
+        <tbody id="hostsBody"></tbody>
+      </table>
+      <div id="hostsState" class="state" hidden></div>
+      <form id="hostForm" class="form-row" hidden autocomplete="off">
+        <div><label for="newHostName">Agent nélküli host neve</label><input id="newHostName" required maxlength="128" placeholder="pl. edge-fw01" /></div>
+        <div><label for="newHostRole">Szerep</label><input id="newHostRole" maxlength="256" placeholder="pl. határtűzfal" /></div>
+        <div><button type="submit" class="btn small">Host felvétele</button></div>
+      </form>
+      <div class="msg" id="hostsMsg" role="status" style="padding: 0 16px 12px;"></div>
+    </div>
+
+    <div class="card" style="padding:0; overflow-x:auto;">
+      <div class="toolbar"><h2>Ismert IP-k és hálózatok</h2></div>
+      <table>
+        <thead>
+          <tr><th>IP / hálózat</th><th>Mi ez</th><th>Megbízható</th><th></th></tr>
+        </thead>
+        <tbody id="netsBody"></tbody>
+      </table>
+      <div id="netsState" class="state" hidden></div>
+      <form id="netForm" class="form-row" hidden autocomplete="off">
+        <div><label for="newCidr">IP vagy CIDR</label><input id="newCidr" required maxlength="64" placeholder="pl. 10.64.0.95 vagy 10.64.0.0/24" /></div>
+        <div><label for="newLabel">Mi ez</label><input id="newLabel" required maxlength="256" placeholder="pl. Forgejo git szerver" /></div>
+        <div><label class="check"><input type="checkbox" id="newTrusted" checked /> Megbízható</label></div>
+        <div><button type="submit" class="btn small">Hozzáadás</button></div>
+      </form>
+      <div class="msg" id="netsMsg" role="status" style="padding: 0 16px 12px;"></div>
+    </div>
+  </div>
+
+<script src="auth.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const el = (id) => document.getElementById(id);
+  let hosts = [];
+  let nets = [];
+  let canEdit = false;
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return "-";
+    const d = new Date(iso + (iso.endsWith("Z") ? "" : "Z"));
+    if (isNaN(d.getTime())) return iso;
+    return d.toLocaleString("hu-HU", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+  }
+
+  async function errorDetail(res) {
+    try {
+      const body = await res.json();
+      if (typeof body.detail === "string") return body.detail;
+      if (Array.isArray(body.detail)) return body.detail.map((d) => d.msg).join("; ");
+    } catch (_) { /* nem JSON */ }
+    return `HTTP ${res.status}`;
+  }
+
+  function setMsg(id, text, ok) {
+    el(id).textContent = text;
+    el(id).className = "msg " + (ok ? "ok" : "error");
+  }
+
+  async function send(url, method, payload) {
+    const res = await SIEM.api(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: payload ? JSON.stringify(payload) : undefined,
+    });
+    if (!res.ok) throw new Error(await errorDetail(res));
+    return res.json();
+  }
+
+  function statusBadge(h) {
+    if (!h.in_wazuh) return '<span class="badge badge-fill-muted">Nincs a Wazuh-ban</span>';
+    const st = (h.wazuh || {}).status;
+    if (st === "active") return '<span class="badge badge-fill-good">Aktív</span>';
+    return `<span class="badge badge-fill-warn">${escapeHtml(st || "ismeretlen")}</span>`;
+  }
+
+  function editCell(h) {
+    if (!canEdit) {
+      const parts = [h.role, h.criticality && `kritikusság: ${h.criticality}`, h.notes].filter(Boolean);
+      return parts.length ? parts.map(escapeHtml).join("<br>") : '<span class="muted">-</span>';
+    }
+    const crit = ["", "low", "medium", "high", "critical"].map((c) =>
+      `<option value="${c}" ${(h.criticality || "") === c ? "selected" : ""}>${c || "kritikusság"}</option>`).join("");
+    const who = h.updated_by ? `${escapeHtml(h.updated_by.full_name || h.updated_by.username)}, ${fmtTime(h.updated_at)}` : "";
+    return `<div class="host-edit" data-id="${h.id}">
+        <input id="role-${h.id}" value="${escapeHtml(h.role || "")}" maxlength="256" placeholder="Szerep, pl. Zabbix monitoring szerver" />
+        <textarea id="notes-${h.id}" maxlength="4000" placeholder="Megjegyzés, pl. rendszeres karbantartás, telepített szoftverek">${escapeHtml(h.notes || "")}</textarea>
+        <div class="row">
+          <select id="crit-${h.id}">${crit}</select>
+          <button type="button" class="btn small save-btn" data-id="${h.id}">Mentés</button>
+          ${h.in_wazuh ? "" : `<button type="button" class="btn small danger del-host" data-id="${h.id}">Törlés</button>`}
+        </div>
+        ${who ? `<div class="title-sub">utoljára: ${who}</div>` : ""}
+      </div>`;
+  }
+
+  function renderHosts() {
+    el("hostsState").hidden = hosts.length > 0;
+    el("hostsState").className = "state";
+    el("hostsState").textContent = "Még nincs host. Állítsd be a Wazuh API-t, vagy vegyél fel egyet kézzel.";
+    el("hostsBody").innerHTML = hosts.map((h) => {
+      const w = h.wazuh || {};
+      const services = (w.listening_ports || []).map((p) => `<span class="chip">${escapeHtml(p)}</span>`).join("");
+      const groups = (w.groups || []).join(", ");
+      return `<tr class="${h.in_wazuh ? "" : "inactive"}">
+          <td><div class="title-main">${escapeHtml(h.agent_name)}</div>
+            <div class="title-sub">${h.agent_id ? "agent " + escapeHtml(h.agent_id) + " · " : ""}${statusBadge(h)}</div></td>
+          <td>${escapeHtml(w.os || "-")}<div class="title-sub">${escapeHtml(w.ip || "")}${groups ? " · " + escapeHtml(groups) : ""}</div></td>
+          <td><div class="services">${services || '<span class="muted">-</span>'}</div></td>
+          <td>${editCell(h)}</td>
+        </tr>`;
+    }).join("");
+    document.querySelectorAll(".save-btn").forEach((b) => b.addEventListener("click", () => saveHost(Number(b.dataset.id))));
+    document.querySelectorAll(".del-host").forEach((b) => b.addEventListener("click", () => deleteHost(Number(b.dataset.id))));
+    const synced = hosts.map((h) => h.synced_at).filter(Boolean).sort().pop();
+    el("syncInfo").textContent = synced ? `Wazuh szinkron: ${fmtTime(synced)}` : "";
+  }
+
+  function renderNets() {
+    el("netsState").hidden = nets.length > 0;
+    el("netsState").className = "state";
+    el("netsState").textContent = "Még nincs ismert IP. Vedd fel a belső rendszereidet (pl. git szerver, monitoring, admin gépek).";
+    el("netsBody").innerHTML = nets.map((n) => `<tr>
+        <td class="mono">${escapeHtml(n.cidr)}</td>
+        <td>${escapeHtml(n.label)}</td>
+        <td>${canEdit ? `<label class="check"><input type="checkbox" class="trust-check" data-id="${n.id}" ${n.trusted ? "checked" : ""} /> igen</label>`
+                      : (n.trusted ? "igen" : "nem")}</td>
+        <td>${canEdit ? `<button type="button" class="btn small danger del-net" data-id="${n.id}">Törlés</button>` : ""}</td>
+      </tr>`).join("");
+    document.querySelectorAll(".trust-check").forEach((cb) => cb.addEventListener("change", () => {
+      const n = nets.find((x) => x.id === Number(cb.dataset.id));
+      updateNet(n, cb.checked);
+    }));
+    document.querySelectorAll(".del-net").forEach((b) => b.addEventListener("click", () => deleteNet(Number(b.dataset.id))));
+  }
+
+  async function loadHosts() {
+    try {
+      const res = await SIEM.api("/api/v1/hosts");
+      if (!res.ok) throw new Error(await errorDetail(res));
+      hosts = await res.json();
+      renderHosts();
+    } catch (err) {
+      el("hostsState").hidden = false;
+      el("hostsState").className = "state error";
+      el("hostsState").textContent = "Nem sikerült betölteni a hostokat: " + err.message;
+    }
+  }
+
+  async function loadNets() {
+    try {
+      const res = await SIEM.api("/api/v1/networks");
+      if (!res.ok) throw new Error(await errorDetail(res));
+      nets = await res.json();
+      renderNets();
+    } catch (err) {
+      el("netsState").hidden = false;
+      el("netsState").className = "state error";
+      el("netsState").textContent = "Nem sikerült betölteni a hálózatokat: " + err.message;
+    }
+  }
+
+  async function saveHost(id) {
+    try {
+      const updated = await send(`/api/v1/hosts/${id}`, "PATCH", {
+        role: el(`role-${id}`).value, notes: el(`notes-${id}`).value, criticality: el(`crit-${id}`).value,
+      });
+      hosts = hosts.map((h) => (h.id === id ? updated : h));
+      renderHosts();
+      setMsg("hostsMsg", `${updated.agent_name} mentve.`, true);
+    } catch (err) {
+      setMsg("hostsMsg", "Sikertelen mentés: " + err.message, false);
+    }
+  }
+
+  async function deleteHost(id) {
+    const h = hosts.find((x) => x.id === id);
+    if (!confirm(`${h.agent_name} törlése a kontextusból?`)) return;
+    try {
+      await send(`/api/v1/hosts/${id}`, "DELETE");
+      hosts = hosts.filter((x) => x.id !== id);
+      renderHosts();
+      setMsg("hostsMsg", `${h.agent_name} törölve.`, true);
+    } catch (err) {
+      setMsg("hostsMsg", "Sikertelen törlés: " + err.message, false);
+    }
+  }
+
+  async function updateNet(n, trusted) {
+    try {
+      const updated = await send(`/api/v1/networks/${n.id}`, "PUT", { cidr: n.cidr, label: n.label, trusted });
+      nets = nets.map((x) => (x.id === n.id ? updated : x));
+      setMsg("netsMsg", `${updated.cidr} mentve.`, true);
+    } catch (err) {
+      setMsg("netsMsg", "Sikertelen mentés: " + err.message, false);
+    }
+    renderNets();
+  }
+
+  async function deleteNet(id) {
+    const n = nets.find((x) => x.id === id);
+    if (!confirm(`${n.cidr} (${n.label}) törlése?`)) return;
+    try {
+      await send(`/api/v1/networks/${id}`, "DELETE");
+      nets = nets.filter((x) => x.id !== id);
+      renderNets();
+      setMsg("netsMsg", `${n.cidr} törölve.`, true);
+    } catch (err) {
+      setMsg("netsMsg", "Sikertelen törlés: " + err.message, false);
+    }
+  }
+
+  el("syncBtn").addEventListener("click", async () => {
+    el("syncBtn").disabled = true;
+    try {
+      const r = await send("/api/v1/hosts/sync", "POST");
+      setMsg("hostsMsg", `Frissítve: ${r.hosts} host, ${r.created} új, ${r.removed} eltűnt a Wazuh-ból.`, true);
+      await loadHosts();
+    } catch (err) {
+      setMsg("hostsMsg", "Sikertelen frissítés: " + err.message, false);
+    }
+    el("syncBtn").disabled = false;
+  });
+
+  el("hostForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      const created = await send("/api/v1/hosts", "POST", { agent_name: el("newHostName").value.trim(), role: el("newHostRole").value });
+      el("hostForm").reset();
+      hosts = [...hosts, created].sort((a, b) => a.agent_name.localeCompare(b.agent_name));
+      renderHosts();
+      setMsg("hostsMsg", `${created.agent_name} felvéve.`, true);
+    } catch (err) {
+      setMsg("hostsMsg", "Sikertelen felvétel: " + err.message, false);
+    }
+  });
+
+  el("netForm").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    try {
+      const created = await send("/api/v1/networks", "POST", {
+        cidr: el("newCidr").value.trim(), label: el("newLabel").value.trim(), trusted: el("newTrusted").checked,
+      });
+      el("netForm").reset();
+      el("newTrusted").checked = true;
+      nets = [...nets, created];
+      renderNets();
+      setMsg("netsMsg", `${created.cidr} hozzáadva.`, true);
+    } catch (err) {
+      setMsg("netsMsg", "Sikertelen hozzáadás: " + err.message, false);
+    }
+  });
+
+  SIEM.me().then((user) => {
+    SIEM.renderUserMenu(el("userMenu"), user);
+    // Szerkeszteni L2 (es admin) tud, a tobbiek csak olvassak.
+    canEdit = !!user.can_edit_context;
+    el("syncBtn").hidden = !canEdit;
+    el("hostForm").hidden = !canEdit;
+    el("netForm").hidden = !canEdit;
+    renderHosts();
+    renderNets();
+  }).catch(() => {});
+  loadHosts();
+  loadNets();
+})();
+</script>
+</body>
+</html>

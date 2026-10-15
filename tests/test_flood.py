@@ -35,9 +35,9 @@ def triage_calls(monkeypatch) -> list:
     calls: list = []
     real = pipeline.triage_alert
 
-    async def spy(alert, related=None):
+    async def spy(alert, related=None, *args):
         calls.append(alert.alert_id)
-        return await real(alert, related)
+        return await real(alert, related, *args)
 
     monkeypatch.setattr(pipeline, "triage_alert", spy)
     return calls
@@ -164,11 +164,11 @@ def test_identical_burst_is_triaged_once_with_parallel_workers(logged_in, monkey
     triage_calls = []
     real = pipeline.triage_alert
 
-    async def slow(alert, related=None):
+    async def slow(alert, related=None, *args):
         # Lassu LLM hivas, hogy a workerek tenylegesen parhuzamosan fussanak.
         triage_calls.append(alert.alert_id)
         await asyncio.sleep(0.05)
-        return await real(alert, related)
+        return await real(alert, related, *args)
 
     monkeypatch.setattr(pipeline, "triage_alert", slow)
     logged_in.portal.call(alert_queue.stop)

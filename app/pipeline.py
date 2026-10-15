@@ -16,7 +16,8 @@ from app.enrichment import enrich_iocs
 from app.enums import AlertStatus, GroundTruth
 from app.guardrails import decide_status
 from app.iris_client import iris_client
-from app.llm_engine import triage_alert
+from app.hosts import host_context, ip_context
+from app.llm_engine import LlmUnavailable, triage_alert
 from app.models import AlertRecord, User
 from app.normalize import normalize_wazuh_alert, related_log_excerpt
 from app.repository import find_related_alerts, save_alert_record
@@ -47,14 +48,80 @@ def alert_from_record(record: AlertRecord) -> NormalizedAlert:
     )
 
 
+# Egy burst (pl. csomagtelepites) esemenyei a riasztas utan is erkezhetnek.
+_RELATED_AFTER = timedelta(minutes=5)
+_HISTORY_LIMIT = 6
+
+
+def _verdict_known(record: AlertRecord, as_of: datetime | None) -> bool:
+    # Visszajatszasnal csak az akkor mar meglevo elemzoi itelet latszik.
+    if record.ground_truth is None:
+        return False
+    return as_of is None or (record.labeled_at is not None and record.labeled_at <= as_of)
+
+
+async def analyst_history(session: AsyncSession, record: AlertRecord, as_of: datetime | None = None) -> list[dict]:
+    # Ugyanannak a szabalynak a korabbi, elemzo altal cimkezett riasztasai; elobb ugyanerrol a hostrol.
+    if not record.rule_id:
+        return []
+    conditions = [
+        AlertRecord.rule_id == record.rule_id,
+        AlertRecord.id != record.id,
+        AlertRecord.ground_truth.is_not(None),
+    ]
+    if as_of is not None:
+        conditions.append(AlertRecord.labeled_at <= as_of)
+    result = await session.execute(
+        select(AlertRecord)
+        .where(*conditions)
+        .order_by(AlertRecord.labeled_at.desc())
+        .limit(50)
+    )
+    labeled = list(result.scalars())
+    labeled.sort(key=lambda r: r.agent_name != record.agent_name)
+    history, seen = [], set()
+    for r in labeled:
+        # Azonos ujjlenyomatbol eleg egy, hogy egy ismetlodo esemeny ne szoritsa ki a tobbit.
+        key = r.fingerprint or r.id
+        if key in seen:
+            continue
+        seen.add(key)
+        history.append({
+            "display_id": r.display_id,
+            "received_at": r.received_at.isoformat(timespec="seconds"),
+            "same_host": r.agent_name == record.agent_name,
+            "agent_name": r.agent_name,
+            "rule": r.rule_description,
+            "analyst_verdict": r.ground_truth.value,
+            "case_closure_note": r.case_closure_note,
+            "log_excerpt": related_log_excerpt(r.raw_payload, limit=200),
+        })
+        if len(history) >= _HISTORY_LIMIT:
+            break
+    return history
+
+
+async def environment_context(session: AsyncSession, alert: NormalizedAlert) -> dict:
+    # Host profil (szerep, OS, szolgaltatasok) es a forras IP besorolasa az ismert halozatok alapjan.
+    context: dict = {}
+    host = await host_context(session, alert.agent_name if alert.agent_id != "000" else None)
+    if host:
+        context["host"] = host
+    source = await ip_context(session, alert.source_ip)
+    if source:
+        context["source_ip"] = source
+    return context
+
+
 async def related_alerts(
     session: AsyncSession,
     alert: NormalizedAlert,
     around: datetime,
     *,
     exclude_id: int | None = None,
+    as_of: datetime | None = None,
 ) -> list[RelatedAlert]:
-    # Korabbi riasztasok ugyanarrol a hostrol / IP-rol, kontextus az LLM-nek.
+    # Riasztasok ugyanarrol a hostrol / IP-rol (a burst utana jott esemenyei is), kontextus az LLM-nek.
     if settings.correlation_window_hours <= 0 or settings.correlation_max_alerts <= 0:
         return []
     window = timedelta(hours=settings.correlation_window_hours)
@@ -66,6 +133,7 @@ async def related_alerts(
         source_ip=alert.source_ip,
         around=around,
         before=window,
+        after=_RELATED_AFTER,
         exclude_id=exclude_id,
         limit=settings.correlation_max_alerts,
     )
@@ -76,7 +144,8 @@ async def related_alerts(
             rule_id=((r.raw_payload or {}).get("rule") or {}).get("id"),
             rule_description=r.rule_description,
             severity=r.severity,
-            status=r.status,
+            analyst_verdict=r.ground_truth.value if _verdict_known(r, as_of) else None,
+            case_closure_note=r.case_closure_note if _verdict_known(r, as_of) else None,
             agent_name=r.agent_name,
             source_ip=r.source_ip,
             iris_case_id=r.iris_case_id,
@@ -222,6 +291,9 @@ class ProcessOutcome:
     triage: TriageResult | None = None
     case: IrisCaseResult | None = None
     correlated: AlertRecord | None = None
+    # LLM nem elerheto: a rekord QUEUED maradt, kesobb ujra kell probalni.
+    deferred: bool = False
+    quota: bool = False
 
 
 async def _auto_group(session: AsyncSession, record: AlertRecord, correlated: AlertRecord | None) -> None:
@@ -362,6 +434,23 @@ async def _apply_duplicate(
     return ProcessOutcome(triage=triage, case=case, correlated=anchor)
 
 
+async def _defer(session: AsyncSession, record: AlertRecord, exc: LlmUnavailable, started: float) -> ProcessOutcome:
+    # A mock nem dont helyette: a rekord var, a hataridon tul elemzohoz kerul.
+    waited = datetime.utcnow() - record.received_at
+    if waited < timedelta(hours=settings.llm_retry_max_hours):
+        logger.warning("LLM unavailable for %s, will retry later: %s", record.display_id, exc)
+        return ProcessOutcome(deferred=True, quota=exc.quota)
+    record.status = AlertStatus.NEEDS_REVIEW
+    # Nem rendszer-dontes: a metrikak nem szamoljak predikcionak.
+    record.auto_status = AlertStatus.ERROR
+    record.review_reason = f"LLM unavailable for {waited.total_seconds() / 3600:.1f} h, needs manual triage"
+    record.error_detail = str(exc)[:2000]
+    record.processing_time_ms = _elapsed_ms(started)
+    await save_alert_record(session, record)
+    logger.warning("%s sent to manual review: LLM unavailable for too long", record.display_id)
+    return ProcessOutcome()
+
+
 async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessOutcome:
     # QUEUED rekord triazsa; triazs/IRIS hibat ERROR statuszkent tarol, nem dob.
     alert = alert_from_record(record)
@@ -376,9 +465,13 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessO
     if flood_anchor is not None:
         return await _apply_duplicate(session, record, flood_anchor, False, started, engine="flood")
     related = await related_alerts(session, alert, record.received_at, exclude_id=record.id)
+    environment = await environment_context(session, alert)
+    history = await analyst_history(session, record)
 
     try:
-        triage = await triage_alert(alert, related)
+        triage = await triage_alert(alert, related, environment, history)
+    except LlmUnavailable as exc:
+        return await _defer(session, record, exc, started)
     except Exception as exc:
         logger.exception("triage failed for alert %s (%s)", alert.alert_id, record.display_id)
         record.status = AlertStatus.ERROR
@@ -442,15 +535,23 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessO
     return ProcessOutcome(triage=triage, case=case, correlated=correlated)
 
 
+# LLM kieseskor ennyi mp mulva probalja ujra; kvota / rate limit eseten az egesz sor ennyit szunetel.
+RETRY_DELAY_SECONDS = 300
+QUOTA_PAUSE_SECONDS = 900
+
+
 class AlertQueue:
     def __init__(self) -> None:
         self._queue: asyncio.Queue[int] | None = None
         self._workers: list[asyncio.Task] = []
+        self._timers: set[asyncio.TimerHandle] = set()
+        # Kvotahiba utan eddig nem hivjuk az LLM-et (monotonic ido).
+        self._paused_until = 0.0
         # Ujjlenyomatonkenti zar: az azonos riasztasok sorban mennek, igy a dedup elkapja oket.
         self._locks: dict[str, asyncio.Lock] = {}
         self._lock_users: dict[str, int] = {}
 
-    async def _process_serialized(self, session: AsyncSession, record: AlertRecord) -> None:
+    async def _process_serialized(self, session: AsyncSession, record: AlertRecord) -> ProcessOutcome | None:
         key = record.fingerprint or f"id:{record.id}"
         lock = self._locks.setdefault(key, asyncio.Lock())
         self._lock_users[key] = self._lock_users.get(key, 0) + 1
@@ -458,7 +559,8 @@ class AlertQueue:
             async with lock:
                 await session.refresh(record)
                 if record.status == AlertStatus.QUEUED:
-                    await process_record(session, record)
+                    return await process_record(session, record)
+                return None
         finally:
             self._lock_users[key] -= 1
             if not self._lock_users[key]:
@@ -478,6 +580,9 @@ class AlertQueue:
             logger.info("re-queued %d alert(s) left unprocessed by the previous run", len(pending))
 
     async def stop(self) -> None:
+        for timer in self._timers:
+            timer.cancel()
+        self._timers.clear()
         for task in self._workers:
             task.cancel()
         await asyncio.gather(*self._workers, return_exceptions=True)
@@ -491,6 +596,29 @@ class AlertQueue:
             return
         self._queue.put_nowait(record_id)
 
+    def enqueue_later(self, record_id: int, delay: float) -> None:
+        # Kesleltetett ujraprobalas; ujrainditaskor a QUEUED rekordok ugyis visszakerulnek.
+        loop = asyncio.get_running_loop()
+        handle: asyncio.TimerHandle
+
+        def fire() -> None:
+            self._timers.discard(handle)
+            self.enqueue(record_id)
+
+        handle = loop.call_later(delay, fire)
+        self._timers.add(handle)
+
+    def pause_remaining(self) -> float:
+        return max(self._paused_until - time.monotonic(), 0.0)
+
+    def handle_outcome(self, record_id: int, outcome: ProcessOutcome | None) -> None:
+        if outcome is None or not outcome.deferred:
+            return
+        if outcome.quota:
+            self._paused_until = time.monotonic() + QUOTA_PAUSE_SECONDS
+            logger.warning("LLM quota / rate limit hit, pausing triage for %d s", QUOTA_PAUSE_SECONDS)
+        self.enqueue_later(record_id, max(self.pause_remaining(), RETRY_DELAY_SECONDS))
+
     def size(self) -> int:
         return self._queue.qsize() if self._queue else 0
 
@@ -498,6 +626,13 @@ class AlertQueue:
         # Megvarja a sor kiuruleset (tesztekhez).
         if self._queue is not None:
             await self._queue.join()
+
+    @staticmethod
+    async def _settle(record: AlertRecord) -> None:
+        # A burst tobbi esemenye (pl. csomagtelepites) is erkezzen meg a triazs elott.
+        age = (datetime.utcnow() - record.received_at).total_seconds()
+        if age < settings.triage_settle_seconds:
+            await asyncio.sleep(settings.triage_settle_seconds - age)
 
     async def _worker(self, index: int) -> None:
         assert self._queue is not None
@@ -509,7 +644,13 @@ class AlertQueue:
                     record = await session.get(AlertRecord, record_id)
                     if record is None or record.status != AlertStatus.QUEUED:
                         continue
-                    await self._process_serialized(session, record)
+                    paused = self.pause_remaining()
+                    if paused:
+                        # Kvota szunet: LLM hivas nelkul visszatesszuk a szunet utanra.
+                        self.enqueue_later(record_id, paused)
+                        continue
+                    await self._settle(record)
+                    self.handle_outcome(record_id, await self._process_serialized(session, record))
             except Exception as exc:
                 # A worker eletben marad, a rekord ne maradjon QUEUED (ujrainditaskor ujra elbukna).
                 logger.exception("worker %d: unexpected error while processing record %s", index, record_id)

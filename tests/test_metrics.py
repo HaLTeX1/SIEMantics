@@ -80,3 +80,15 @@ def test_alerts_closed_before_triage_are_not_predictions():
         _rec(AlertStatus.SUPPRESSED, FP, engine="analyst"),
     ])
     assert m.sample_size == 1 and m.true_negative == 1
+
+
+def test_independent_metrics_exclude_copied_decisions():
+    # Egy helyes dontes 3 dedup masolata ne fujja fel a pontossagot.
+    m = compute_metrics([
+        _rec(AlertStatus.ESCALATED, FP),
+        _rec(AlertStatus.ESCALATED, TP),
+        *[_rec(AlertStatus.ESCALATED, TP, engine="dedup") for _ in range(3)],
+    ])
+    assert m.accuracy == 0.8
+    assert m.independent.labeled_size == 2 and m.independent.accuracy == 0.5
+    assert m.by_engine["dedup"].labeled_size == 3 and m.by_engine["openrouter"].false_positive_rate == 1.0

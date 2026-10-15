@@ -52,9 +52,13 @@ def _verify_token(x_webhook_token: str | None) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook token")
 
 
+def _matching_group(payload: WazuhAlertPayload, setting: str) -> str | None:
+    groups = {g.strip().lower() for g in setting.split(",") if g.strip()}
+    return next((g for g in payload.rule.groups if str(g).lower() in groups), None)
+
+
 def _ignored_group(payload: WazuhAlertPayload) -> str | None:
-    ignored = {g.strip().lower() for g in settings.ignored_rule_groups.split(",") if g.strip()}
-    return next((g for g in payload.rule.groups if str(g).lower() in ignored), None)
+    return _matching_group(payload, settings.ignored_rule_groups)
 
 
 async def _with_assignees(session: AsyncSession, records: list[AlertRecord]) -> list[AlertRecordOut]:
@@ -93,6 +97,7 @@ async def receive_alert(
         return {"status": "ignored", "alert_id": payload.id, "reason": f"rule group '{group}' is ignored"}
 
     alert: NormalizedAlert = normalize_wazuh_alert(payload)
+    context_group = _matching_group(payload, settings.context_rule_groups)
     record = await create_alert_record(
         session,
         alert_id=alert.alert_id,
@@ -103,9 +108,15 @@ async def receive_alert(
         raw_payload=payload.model_dump(mode="json"),
         fingerprint=alert_fingerprint(payload.model_dump(mode="json")),
         rule_id=payload.rule.id,
-        status=AlertStatus.QUEUED,
+        status=AlertStatus.SUPPRESSED if context_group else AlertStatus.QUEUED,
+        # Kontextus esemeny (pl. csomagtelepites): a tobbi riasztas triazsahoz kell, onmagaban nem.
+        triage_engine="context" if context_group else None,
+        review_reason=f"context event (rule group '{context_group}'), not triaged" if context_group else None,
         processing_time_ms=0.0,
     )
+    if context_group:
+        logger.info("alert %s stored as context (%s) as %s", alert.alert_id, context_group, record.display_id)
+        return {"status": "context", "id": record.display_id, "alert_id": alert.alert_id, "record_id": record.id}
     if wait:
         return await _process_now(session, record)
 
@@ -121,6 +132,9 @@ async def receive_alert(
 
 async def _process_now(session: AsyncSession, record: AlertRecord) -> dict:
     outcome = await process_record(session, record)
+    if outcome.deferred:
+        alert_queue.handle_outcome(record.id, outcome)
+        raise HTTPException(status_code=503, detail="LLM unavailable, the alert stays queued and is retried later")
     if outcome.triage is None:
         raise HTTPException(status_code=502, detail="triage failed unexpectedly")
     if record.status == AlertStatus.ERROR:

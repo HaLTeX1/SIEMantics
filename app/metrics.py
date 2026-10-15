@@ -2,7 +2,11 @@ from statistics import mean, median
 
 from app.enums import AlertStatus, GroundTruth
 from app.models import AlertRecord
-from app.schemas import TriageMetrics
+from app.schemas import EngineMetrics, TriageMetrics
+
+
+# Elemzo altal triazs elott lezart, illetve csak kontextuskent tarolt rekordok.
+_NOT_PREDICTIONS = ("analyst", "context")
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
@@ -23,9 +27,47 @@ def _decided(record: AlertRecord) -> bool:
     return _automatic_status(record) != AlertStatus.ERROR
 
 
+# Masik riasztas dontesenek masolata vagy elemzoi szabaly: nem onallo predikcio.
+_COPIED_DECISIONS = ("dedup", "flood", "suppression")
+
+
+def _confusion(records: list[AlertRecord]) -> tuple[int, int, int, int]:
+    tp = fp = tn = fn = 0
+    for record in records:
+        if record.ground_truth is None or not _decided(record):
+            continue
+        predicted = _automatic_status(record) == AlertStatus.ESCALATED
+        actual = record.ground_truth == GroundTruth.TRUE_POSITIVE
+        if predicted and actual:
+            tp += 1
+        elif predicted:
+            fp += 1
+        elif actual:
+            fn += 1
+        else:
+            tn += 1
+    return tp, fp, tn, fn
+
+
+def _scores(records: list[AlertRecord]) -> EngineMetrics:
+    tp, fp, tn, fn = _confusion(records)
+    labeled = tp + fp + tn + fn
+    return EngineMetrics(
+        sample_size=len(records),
+        labeled_size=labeled,
+        true_positive=tp,
+        false_positive=fp,
+        true_negative=tn,
+        false_negative=fn,
+        accuracy=(tp + tn) / labeled if labeled else None,
+        false_positive_rate=fp / (fp + tn) if (fp + tn) else None,
+        recall=tp / (tp + fn) if (tp + fn) else None,
+    )
+
+
 def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
     # Meg nincs triazsolva, vagy az elemzo triazs elott lezarta: nincs mit kiertekelni.
-    records = [r for r in records if r.status != AlertStatus.QUEUED and r.triage_engine != "analyst"]
+    records = [r for r in records if r.status != AlertStatus.QUEUED and r.triage_engine not in _NOT_PREDICTIONS]
     decided = [r for r in records if _decided(r)]
     tp = fp = tn = fn = 0
     review_true_positive = 0
@@ -55,7 +97,14 @@ def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
     needs_review_count = sum(1 for r in decided if _automatic_status(r) == AlertStatus.NEEDS_REVIEW)
     manually_escalated_count = sum(1 for r in decided if r.escalated_by_id is not None)
 
+    # Az ismetlodesek (dedup, flood) felfujjak az osszesitett pontossagot, ezert kulon is.
+    engines = sorted({r.triage_engine for r in decided if r.triage_engine})
+    by_engine = {engine: _scores([r for r in decided if r.triage_engine == engine]) for engine in engines}
+    independent = _scores([r for r in decided if r.triage_engine not in _COPIED_DECISIONS])
+
     return TriageMetrics(
+        independent=independent,
+        by_engine=by_engine,
         sample_size=len(records),
         labeled_size=labeled_total,
         error_count=error_count,

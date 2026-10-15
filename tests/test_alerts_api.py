@@ -21,7 +21,7 @@ def llm_says(monkeypatch):
     # A triazs motor helyett fix, OpenRouter-szeru itelet.
 
     def _set(is_tp, confidence, model="vendor/some-model:free"):
-        async def fake_triage(alert, related=None):
+        async def fake_triage(alert, related=None, *args):
             return TriageResult(
                 is_true_positive=is_tp, confidence=confidence, reasoning="llm reasoning",
                 iocs=[alert.source_ip] if alert.source_ip else [], engine="openrouter", model=model,
@@ -40,7 +40,7 @@ def test_webhook_rejects_bad_token(client):
 
 def test_webhook_answers_before_triage(client, monkeypatch):
     # A webhook csak tarol es sorba allit, a triazs a hatterben fut.
-    async def never_called(alert, related=None):
+    async def never_called(alert, related=None, *args):
         raise AssertionError("triage must not run inside the request")
 
     monkeypatch.setattr(pipeline.alert_queue, "enqueue", lambda record_id: None)
@@ -61,7 +61,7 @@ def test_queued_alert_cannot_be_escalated_by_hand(client, logged_in, monkeypatch
 
 
 def test_triage_crash_marks_record_as_error(client, monkeypatch):
-    async def broken(alert, related=None):
+    async def broken(alert, related=None, *args):
         raise RuntimeError("boom")
 
     monkeypatch.setattr(pipeline, "triage_alert", broken)

@@ -1,10 +1,16 @@
 <!-- /var/ossec/etc/rules/ ala; a zz_ nev miatt a suricata_rules.xml (110575) utan toltodik be. -->
-<!-- A dashboard HTTP valaszaira illeszkedo riasztasok visszacsatolasat nyomja el, reszletek: README. -->
+<!-- A dashboard es a Forgejo (10.64.0.95:3000) HTTP valaszaira illeszkedo riasztasokat nyomja el, reszletek: README. -->
 <group name="suricata,siemantics,">
   <rule id="110599" level="0">
     <if_sid>110575</if_sid>
     <field name="src_ip">^10\.64\.0\.127$</field>
     <field name="src_port">^8000$</field>
     <description>Suricata: attack-response signature on SIEMantics own HTTP response (feedback loop, suppressed)</description>
+  </rule>
+  <rule id="110597" level="0">
+    <if_sid>110575</if_sid>
+    <field name="src_ip">^10\.64\.0\.95$</field>
+    <field name="src_port">^3000$</field>
+    <description>Suricata: attack-response signature on Forgejo serving repository content (suppressed)</description>
   </rule>
 </group>

@@ -28,9 +28,9 @@ def triage_calls(monkeypatch) -> list:
     calls: list = []
     real = pipeline.triage_alert
 
-    async def spy(alert, related=None):
+    async def spy(alert, related=None, *args):
         calls.append(alert.alert_id)
-        return await real(alert, related)
+        return await real(alert, related, *args)
 
     monkeypatch.setattr(pipeline, "triage_alert", spy)
     return calls

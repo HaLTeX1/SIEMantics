@@ -64,6 +64,20 @@ class WazuhClient:
         body = await self._request("GET", "/agents", params=params)
         return body["data"]["affected_items"]
 
+    async def list_agents_detailed(self) -> list[dict]:
+        # Minden agent (a nem aktivak is) a host kontextushoz.
+        params = {
+            "select": "id,name,status,ip,os.name,os.version,os.platform,group,version,lastKeepAlive",
+            "limit": 10000,
+        }
+        body = await self._request("GET", "/agents", params=params)
+        return body["data"]["affected_items"]
+
+    async def listening_ports(self, agent_id: str) -> list[dict]:
+        # Syscollector: figyelo TCP portok es UDP portok a folyamat nevevel.
+        body = await self._request("GET", f"/syscollector/{agent_id}/ports", params={"limit": 500})
+        return body["data"]["affected_items"]
+
     async def run_command(self, command: str, agent_ids: list[str], alert: dict) -> tuple[list[str], dict[str, str]]:
         # (sikeres agent ID-k, {agent ID: hiba}).
         body = await self._request(

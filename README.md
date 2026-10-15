@@ -44,6 +44,8 @@ app/
 ├── iris_sync.py         # háttérfeladat: időközönkénti IRIS lezárás szinkron
 ├── wazuh_client.py      # Wazuh manager API kliens (agentek, Active Response)
 ├── response.py          # válaszlépés: IP blokkolás, védett tartományok, napló, IRIS note
+├── hosts.py             # host kontextus: Wazuh szinkron, ismert hálózatok, prompt-környezet
+├── eval_replay.py       # visszajátszó mérés a címkézett riasztásokon (python -m app.eval_replay)
 └── routers/
     ├── alerts.py        # POST/GET /alerts, PATCH /alerts/{ref}/label, POST /alerts/{ref}/escalate
     ├── metrics.py         # GET /metrics
@@ -85,8 +87,8 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | Változó | Leírás |
 |---|---|
 | `OPENROUTER_API_KEY` | OpenRouter API kulcs a triázshoz — **opcionális**, lásd lent. Ingyenesen igényelhető: https://openrouter.ai/keys |
-| `OPENROUTER_MODEL` | alapértelmezett: `openrouter/free` — ez az OpenRouter ["Free Models Router"](https://openrouter.ai/docs/cookbook/get-started/free-models-router-playground) meta-modellje, ami mindig egy aktuálisan elérhető ingyenes modellre routol, így nem törik el, ha OpenRouter megszüntet/átáraz egy konkrét `:free` modellt (ez korábban már előfordult). Kizárólag `openrouter/free` vagy `:free` végződésű modell adható meg — az `app/llm_engine.py` ezt induláskor ellenőrzi, és nem-free modell esetén nem hív OpenRoutert (mock motorra esik vissza), így véletlenül sem keletkezhet költség |
-| `OPENROUTER_TIMEOUT_SECONDS` | alapértelmezett: `60` — egy OpenRouter hívás maximális ideje (1 újrapróbálkozással); lejárat után a mock motor dönt. Enélkül az OpenAI kliens 600 mp-es alapértéke él, ami egy lassú ingyenes modellnél percekre feltartaná a sort |
+| `OPENROUTER_MODEL` | alapértelmezett: `openrouter/free` — ez az OpenRouter ["Free Models Router"](https://openrouter.ai/docs/cookbook/get-started/free-models-router-playground) meta-modellje, ami mindig egy aktuálisan elérhető ingyenes modellre routol, így nem törik el, ha OpenRouter megszüntet/átáraz egy konkrét `:free` modellt (ez korábban már előfordult). Kizárólag `openrouter/free` vagy `:free` végződésű modell adható meg — az `app/llm_engine.py` ezt induláskor ellenőrzi, és nem-free modell esetén nem hív OpenRoutert (mock motorra esik vissza), így véletlenül sem keletkezhet költség. Vesszővel több modell is megadható (pl. `vendor/a:free,vendor/b:free`): az első az elsődleges, a többit az OpenRouter sorrendben tartaléknak használja. Az `openrouter/free` hívásonként más modellt választ, ezért a stabil minőséghez érdemes a [visszajátszó méréssel](#pontosság-mérése-visszajátszással) kiválasztott modell(eke)t rögzíteni |
+| `OPENROUTER_TIMEOUT_SECONDS` | alapértelmezett: `60` — egy OpenRouter hívás maximális ideje (1 újrapróbálkozással); lejárat után a riasztás később újra próbálkozik (lásd [LLM-kiesés](#llm-kiesés-kvóta)). Enélkül az OpenAI kliens 600 mp-es alapértéke él, ami egy lassú ingyenes modellnél percekre feltartaná a sort |
 | `LLM_MOCK_SEVERITY_THRESHOLD` | mock motor küszöbe (Wazuh severity level), alapértelmezett: `7` |
 | `REVIEW_CONFIDENCE_THRESHOLD` | alapértelmezett: `0.7` (0–1) — ha a triázs false positive-ot mond, de a confidence ez alatt van, a riasztás `needs_review` státuszt kap `suppressed` helyett (lásd [Bizonytalan döntések](#bizonytalan-döntések-needs_review)) |
 | `REVIEW_SEVERITY_FLOOR` | alapértelmezett: `12` — prompt injection védőháló: ennél a Wazuh szintnél (vagy felette) az LLM false positive ítélete nem nyomhatja el a riasztást, `needs_review` lesz belőle |
@@ -97,6 +99,10 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `CORRELATION_WINDOW_HOURS` | alapértelmezett: `24`; ennyi órán belül az azonos forrás IP-ről jövő hasonló riasztás a meglévő IRIS esetbe kerül (lásd [Korreláció](#korreláció)), és az azonos hostról / forrás IP-ről érkezett korábbi riasztások az LLM elé kerülnek (lásd [Kapcsolódó riasztások](#kapcsolódó-riasztások-az-llm-nek)); `0` = kikapcsolva |
 | `CORRELATION_HOST_WINDOW_MINUTES` | alapértelmezett: `10`; forrás IP nélküli riasztás ennyi percen belül ugyanannak a hostnak a meglévő IRIS esetébe kerül (lásd [Korreláció](#korreláció)); `0` = kikapcsolva |
 | `DEDUP_WINDOW_HOURS` | alapértelmezett: `24`; ennyi órán belül az azonos ujjlenyomatú riasztás nem megy az LLM-hez, átveszi a korábbi döntését (lásd [Ismétlődő riasztások](#ismétlődő-riasztások-duplikátum-szűrés-és-automatikus-csoportosítás)); `0` = kikapcsolva |
+| `CONTEXT_RULE_GROUPS` | alapértelmezett: `dpkg,yum`; ezek a riasztások csak kontextusként tárolódnak a többi riasztás triázsához (LLM és IRIS eset nélkül), lásd [Prompt és kontextus](#prompt-és-kontextus) |
+| `TRIAGE_SETTLE_SECONDS` | alapértelmezett: `30`; ennyit vár a triázs a beérkezés után, hogy egy burst többi eseménye is meglegyen kontextusnak |
+| `LLM_RETRY_MAX_HOURS` | alapértelmezett: `6`; LLM-kiesésnél eddig próbálkozik újra, utána `needs_review` (lásd [LLM-kiesés](#llm-kiesés-kvóta)) |
+| `HOST_SYNC_INTERVAL_MINUTES` | alapértelmezett: `60`; a hostadatok szinkronja a Wazuh API-ból (`0` = csak kézi), lásd [Környezet](#környezet-hostok-és-ismert-hálózatok) |
 | `IGNORED_RULE_GROUPS` | alapértelmezett: `sca`; az ezekbe a Wazuh szabálycsoportokba tartozó riasztásokat (vesszővel elválasztva) a webhook eldobja: nem tárolódnak, nem mennek az LLM-hez, nem nyitnak IRIS esetet. Az `sca` a konfigurációs benchmarkok (CIS stb.) csoportja; ezek eredménye a Wazuh dashboard SCA moduljában továbbra is látszik. Az eldobott riasztások száma a `/healthz` `ignored_alerts` mezőjében; üres érték = semmit nem dob el |
 | `FLOOD_THRESHOLD` / `FLOOD_WINDOW_MINUTES` | alapértelmezett: `20` / `10`; ha egy Wazuh szabály ugyanazon a hoston ennyiszer szól az ablakon belül, a további riasztások nem mennek az LLM-hez, átveszik a legutóbbi döntést (lásd [Flood kezelés](#flood-kezelés)); `0` = kikapcsolva |
 | `CORRELATION_MAX_ALERTS` | alapértelmezett: `10` — legfeljebb ennyi kapcsolódó riasztás kerül az LLM elé riasztásonként |
@@ -116,11 +122,22 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 
 ## LLM triázs motor és fallback
 
-Az OpenRouter API opcionális, és **kizárólag ingyenes modellel hívható** (`openrouter/free` auto-router vagy `:free` végű modell) — ez a korlátozás kódban van kikényszerítve (`app/llm_engine.py`), nem csak konfigurációs javaslat. Ha `OPENROUTER_API_KEY` nincs beállítva, a beállított `OPENROUTER_MODEL` nem felel meg ennek, vagy a hívás bármilyen okból hibázik (rate limit, timeout, hálózati hiba, vagy OpenRouter megszüntet egy konkrét `:free` modellt), a rendszer automatikusan átvált egy beépített, determinisztikus, szabály-alapú mock motorra (`app/mock_engine.py`) — ez ingyenes, API-kulcsot nem igényel, és CI/demó környezetben is azonnal működik.
+Az OpenRouter API opcionális, és **kizárólag ingyenes modellel hívható** (`openrouter/free` auto-router vagy `:free` végű modell) — ez a korlátozás kódban van kikényszerítve (`app/llm_engine.py`), nem csak konfigurációs javaslat. Ha `OPENROUTER_API_KEY` nincs beállítva, vagy a beállított `OPENROUTER_MODEL` nem felel meg ennek, a rendszer egy beépített, determinisztikus, szabály-alapú mock motorral (`app/mock_engine.py`) dolgozik. Ez ingyenes, API-kulcsot nem igényel, és CI/demó környezetben is azonnal működik.
+
+### LLM-kiesés, kvóta
+
+Ha az OpenRouter be van állítva, de egy hívás nem sikerül (kvóta, rate limit, timeout, hálózati hiba), **a mock motor nem dönt helyette**. Az éles mérés szerint a mock a 7-es szint fölötti riasztásokat mind eszkalálta (FPR 100%), és a döntések felét ő hozta, mert az OpenRouter ingyenes napi kvótája elfogyott. Ehelyett:
+
+- a riasztás `queued` marad, és 5 perc múlva újra próbálkozik;
+- kvóta- vagy rate-limit-hibánál (HTTP 429, 402, 403) az egész sor 15 percig szünetel, LLM-hívás nélkül;
+- ha egy riasztás `LLM_RETRY_MAX_HOURS` (alapból 6) órán túl sem jut LLM-hez, `needs_review` lesz „LLM unavailable” okkal, és elemzőhöz kerül. Ez nem számít rendszerdöntésnek a metrikákban;
+- `?wait=true` módban a webhook 503-at ad, a riasztás a sorban marad.
+
+Az OpenRouter ingyenes modelljeinek napi keretét a dokumentáció szerint egy egyszeri, legalább 10 dolláros kreditfeltöltés emeli 50-ről 1000 kérésre; az ingyenes modellek ezt a kreditet nem fogyasztják.
 
 A mock motor logikája: a Wazuh severity szint ≥ `LLM_MOCK_SEVERITY_THRESHOLD`, vagy a log snippetben gyanús minta (SQLi, XSS, path traversal, base64/powershell payload jelek stb.) egyezik → true positive, egyébként false positive. Az IoC-k a log snippetből regex-szel kinyert IP-kből és a forrás IP-ből állnak össze.
 
-Minden döntésnaplóban eltárolt rekord tartalmazza, melyik motor hozta a döntést (`triage_engine`: `openrouter` vagy `mock`) — a `GET /api/v1/alerts` végponton ez látható, így a kiértékelésnél (6.3 fejezet) tudatosan lehet szűrni vagy megkülönböztetni, ha vegyesen futott a két motor.
+Minden döntésnaplóban eltárolt rekord tartalmazza, melyik motor hozta a döntést (`triage_engine`: `openrouter`, `mock`, vagy a döntés átvételénél `dedup` / `flood` / `suppression`; csak kontextusként tárolt eseménynél `context`) — a `GET /api/v1/alerts` végponton ez látható, így a kiértékelésnél (6.3 fejezet) tudatosan lehet szűrni vagy megkülönböztetni, ha vegyesen futott a két motor.
 
 Az `openrouter/free` meta-modell hívásonként más-más ingyenes modellre routolhat, ezért a rekord a **ténylegesen válaszoló modellt** is eltárolja (`triage_model`, az OpenRouter válasz `model` mezőjéből; mock motornál üres). A dashboard részletpanelén és az IRIS note-ban is látszik — enélkül a kiértékelés nem lenne reprodukálható, mert nem tudnánk, melyik modell hozta az adott döntést.
 
@@ -289,7 +306,7 @@ A riasztás részletpaneljén az admin egy kattintással blokkolhatja a támadó
 
 1. A [wazuh/ossec-active-response.xml](wazuh/ossec-active-response.xml) `<active-response>` blokkjait másold az `/var/ossec/etc/ossec.conf` `<ossec_config>` részébe, majd futtasd: `systemctl restart wazuh-manager`. A blokkok egy nem létező szabályra (110598) kötődnek, ezért automatikusan soha nem sülnek el. Csak arra kellenek, hogy az `ar.conf`-ba bekerüljenek a lejáratos parancsnevek (`firewall-drop3600`, `netsh86400`, …), amelyeket az API hívni tud. Ellenőrzés: `cat /var/ossec/etc/shared/ar.conf`.
 2. Dedikált API felhasználó szűk jogkörrel (Wazuh dashboard → Server management → Security), ne a `wazuh-wui`:
-   - **Policy** `siemantics-response`: actions `active-response:command`, `agents:read`; resources `agent:id:*`, `agent:group:*`; effect `allow`
+   - **Policy** `siemantics-response`: actions `active-response:command`, `agents:read`, `syscollector:read` (ez a [host-szinkronhoz](#környezet-hostok-és-ismert-hálózatok)); resources `agent:id:*`, `agent:group:*`; effect `allow`
    - **Role** `siemantics-response` ezzel a policyvel
    - **User** `siemantics`, erős jelszóval, ehhez a role-hoz rendelve
 3. A SIEMantics szerver `.env` fájljában: `WAZUH_API_URL=https://<wazuh>:55000`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD`. Önaláírt tanúsítványnál `WAZUH_API_VERIFY_SSL=false`.
@@ -324,7 +341,35 @@ Egyedi IP-nkénti cap (`ENRICHMENT_MAX_IOCS`, alapértelmezett 5) védi a free-t
 
 ### Kapcsolódó riasztások az LLM-nek
 
-A triázs előtt az app lekérdezi az elmúlt `CORRELATION_WINDOW_HOURS` óra riasztásait (legfeljebb `CORRELATION_MAX_ALERTS` darabot) ugyanarról a hostról (agent név) vagy forrás IP-ről. Ezeket az LLM is látja (a promptban, a többi riasztásadattal együtt megbízhatatlan adatként kezelve), így fel tud ismerni egy támadási láncot (pl. letöltés → perzisztencia → jogosultság-emelés → malware). A Wazuh manager (agent `000`) riasztásai csak forrás IP alapján kapcsolódnak, mert minden tűzfal/felhő integráció az ő nevét viseli. A host alapú kapcsolás az `agent_name` oszlopot használja, ami csak az új verzió óta érkezett riasztásoknál van kitöltve. Ez független a [Korreláció](#korreláció) szakaszban leírt, meglévő IRIS esetbe sorolástól.
+A triázs előtt az app lekérdezi az elmúlt `CORRELATION_WINDOW_HOURS` óra riasztásait, és a riasztás utáni 5 percét is (legfeljebb `CORRELATION_MAX_ALERTS` darabot), ugyanarról a hostról (agent név) vagy forrás IP-ről. Mivel a triázs a beérkezés után `TRIAGE_SETTLE_SECONDS` (alapból 30) másodpercet vár, egy burst minden eseménye (pl. egy csomagtelepítés user-, csoport- és systemd-riasztásai, valamint maga a dpkg-esemény) már a triázs előtt megvan. A kapcsolódó riasztások **nem az automatikus státuszukkal** kerülnek a promptba (egy korábbi téves eszkaláció így nem „bizonyítja” a következőt), hanem az elemzői ítélettel (`analyst_verdict`) és a lezárási annotációval; az éles mérésben az LLM téves eszkalációinak 27/29 esete a kapcsolódó riasztások automatikus státuszára hivatkozott. Ezeket az LLM is látja (a promptban, a többi riasztásadattal együtt megbízhatatlan adatként kezelve), így fel tud ismerni egy támadási láncot (pl. letöltés → perzisztencia → jogosultság-emelés → malware). A Wazuh manager (agent `000`) riasztásai csak forrás IP alapján kapcsolódnak, mert minden tűzfal/felhő integráció az ő nevét viseli. A host alapú kapcsolás az `agent_name` oszlopot használja, ami csak az új verzió óta érkezett riasztásoknál van kitöltve. Ez független a [Korreláció](#korreláció) szakaszban leírt, meglévő IRIS esetbe sorolástól.
+
+### Prompt és kontextus
+
+A prompt (`app/llm_engine.py`) a 2026-10 közepi éles mérés (57 címkézett önálló döntés, 23% pontosság, 85% FPR) alapján készült:
+
+- **Kiegyensúlyozott:** mindkét irányú tévedést költségként kezeli, és felsorolja a környezet tipikus ártalmatlan mintázatait: csomagtelepítés (passwd/shadow/group/gshadow együtt, új szolgáltatásuser, csomagnevű systemd unit), SYSTEM-fiók általi fiókmódosítás Windowson, aláírt gyártói frissítés (pl. `Add-AppxPackage`), saját rendszerek forgalma.
+- **Az ítélet a végén:** a JSON-válasz kulcsai előbb az indoklást és az ártalmatlan magyarázatokat, utolsóként az `is_true_positive`-ot és a `confidence`-t kérik. Ha az indoklás legitimnek mondja a tevékenységet, az ítélet false positive kell legyen (a mérésben 10 téves eszkalációnál az indoklás maga mondta, hogy legitim).
+- **`environment`:** a host profilja (szerep, kritikusság, megjegyzés, OS, IP, csoportok, figyelő szolgáltatások) és a forrás IP besorolása, lásd [Környezet](#környezet-hostok-és-ismert-hálózatok).
+- **`analyst_history`:** ugyanannak a Wazuh szabálynak legfeljebb 6 korábbi, elemző által címkézett riasztása (előbb ugyanerről a hostról), az ítélettel és a lezárási annotációval. Az azonos ujjlenyomatúakból csak egy kerül be.
+- **Kontextus-események:** a `CONTEXT_RULE_GROUPS` (alapból `dpkg,yum`) csoportba tartozó riasztások (pl. „New dpkg package installed”) nem mennek LLM-hez és nem nyitnak esetet, csak eltárolódnak (`suppressed`, `triage_engine = context`), hogy a többi riasztás kapcsolódó riasztásai között ott legyenek.
+
+## Környezet: hostok és ismert hálózatok
+
+A **Környezet** oldal (`/ui/hosts.html`) adja a triázs környezeti tudását:
+
+- **Hostok:** a Wazuh API-ból (`HOST_SYNC_INTERVAL_MINUTES`, alapból óránként, és kézzel a „Frissítés a Wazuh-ból” gombbal) jönnek: OS, IP, agent-csoportok, státusz, és aktív agentnél a figyelő portok a folyamat nevével (syscollector). Az új hostok maguktól megjelennek, a Wazuh-ból eltűntek „Nincs a Wazuh-ban” jelölést kapnak (a kézi adataik megmaradnak, és törölhetők). Minden hosthoz kézzel megadható **szerep**, **kritikusság** és **megjegyzés**; ezeket a szinkron nem írja felül. Agent nélküli eszköz (pl. tűzfal) kézzel is felvehető a riasztásokban szereplő neve szerint.
+- **Ismert IP-k és hálózatok:** IP vagy CIDR címkével (pl. `10.64.0.95` = Forgejo git szerver) és „megbízható” jelzővel. A forrás IP-hez a legszűkebb illeszkedő bejegyzés kerül a promptba; ismeretlen címnél azt kapja az LLM, hogy publikus vagy dokumentálatlan belső cím.
+- **Jogosultság:** megtekinteni mindenki, szerkeszteni L2 és admin tud (`can_edit_context`), mert a triázs döntéseit befolyásolja.
+- **Wazuh API:** a [válaszlépésnél](#válaszlépés-ip-blokkolása-wazuh-active-response) beállított API-felhasználó policyjéhez a host-szinkronhoz a `syscollector:read` action is kell (resource `agent:id:*`).
+
+## Pontosság mérése visszajátszással
+
+A `python -m app.eval_replay` a címkézett, önálló döntésű (nem dedup/flood/elnyomás) riasztásokat újra lefuttatja a jelenlegi prompttal és kontextussal, és összeveti az elemzői ítélettel. Az adatbázist nem módosítja. Dockerben: `docker-compose exec siemantics python -m app.eval_replay --limit 50 --out /tmp/replay.json`.
+
+- A riasztás idején még nem létező elemzői ítéletek (kapcsolódó riasztásoknál és az előzményeknél) rejtve maradnak, különben a mérés túl optimista lenne. A host-profilok a mostani állapotukban kerülnek be.
+- Kimenet: a régi és az új konfúziós mátrix, pontosság, FPR és recall, modellenként is, valamint riasztásonként a változás („fixed” / „BROKE”). `--out` fájlba a részletek is kiíródnak.
+- A hívások között `--delay` (alapból 4) másodpercet vár; kvótahibánál megáll, és a részeredményt adja.
+- A `GET /api/v1/metrics` válaszában az `independent` mező mutatja az önálló döntések pontosságát (a dedup-, flood- és elnyomás-másolatok nélkül, amelyek az összesített pontosságot felfújják), a `by_engine` pedig motoronként bontja.
 
 ## Felhasználókezelés
 
@@ -376,6 +421,10 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `DELETE` | `/api/v1/suppressions/{id}` | elnyomó szabály kikapcsolása |
 | `POST` | `/api/v1/alerts/{ref}/block-ip` | **L2 / engedélyezett:** IP blokkolása Wazuh Active Response-szal (`ip`, `scope`: `agent`/`all`, `duration_hours`: 1/24/168) |
 | `GET` | `/api/v1/alerts/{ref}/responses` | a riasztásból indított válaszlépések naplója |
+| `GET` | `/api/v1/hosts` | hostok kontextusa (Wazuh adatok + kézi szerep, kritikusság, megjegyzés) |
+| `POST` | `/api/v1/hosts/sync` | **L2:** azonnali host-szinkron a Wazuh API-ból |
+| `POST` / `PATCH` / `DELETE` | `/api/v1/hosts`, `/api/v1/hosts/{id}` | **L2:** agent nélküli host felvétele, kézi mezők módosítása, Wazuh-ban nem lévő host törlése |
+| `GET` / `POST` / `PUT` / `DELETE` | `/api/v1/networks`, `/api/v1/networks/{id}` | ismert IP-k és hálózatok (írni **L2**) |
 | `GET` | `/api/v1/config` | nem-titkos konfiguráció a frontendnek (pl. `iris_base_url` az eset-linkhez) |
 | `GET` | `/api/v1/metrics` | konfúziós mátrix + feldolgozási idő statisztikák a címkézett rekordokból |
 | `POST` | `/api/v1/auth/login` | bejelentkezés (`username`, `password`), session cookie-t állít be |

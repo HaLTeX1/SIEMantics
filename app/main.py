@@ -9,9 +9,10 @@ from fastapi.staticfiles import StaticFiles
 from app.auth import ensure_initial_admin
 from app.config import settings
 from app.db import init_db
+from app.hosts import host_syncer
 from app.iris_sync import case_syncer
 from app.pipeline import alert_queue
-from app.routers import alerts, auth, cases, metrics, suppressions, users
+from app.routers import alerts, auth, cases, hosts, metrics, suppressions, users
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("siemantics")
@@ -30,10 +31,12 @@ async def lifespan(app: FastAPI):
         )
     await alert_queue.start(settings.triage_workers)
     case_syncer.start(settings.iris_sync_interval_seconds)
+    host_syncer.start(settings.host_sync_interval_minutes)
     try:
         yield
     finally:
         await case_syncer.stop()
+        await host_syncer.stop()
         await alert_queue.stop()
 
 
@@ -44,6 +47,7 @@ app.include_router(auth.router)
 app.include_router(users.router)
 app.include_router(cases.router)
 app.include_router(suppressions.router)
+app.include_router(hosts.router)
 app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
 
 

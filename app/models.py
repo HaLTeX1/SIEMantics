@@ -104,6 +104,11 @@ class User(Base):
         return self.role in (UserRole.ADMIN, UserRole.L2)
 
     @property
+    def can_edit_context(self) -> bool:
+        # Host kontextus es ismert halozatok: L2 (es admin), mert a triazst befolyasolja.
+        return self.role in (UserRole.ADMIN, UserRole.L2)
+
+    @property
     def can_block_ip(self) -> bool:
         # Valaszlepes: L2 (es admin), vagy kulon engedelyezett felhasznalo.
         return self.role in (UserRole.ADMIN, UserRole.L2) or bool(self.response_allowed)
@@ -155,6 +160,40 @@ class ResponseAction(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime)
     iris_case_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     iris_noted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class HostProfile(Base):
+    # Host kontextus az LLM-nek: Wazuh-bol szinkronizalt adatok es kezi szerep / megjegyzes.
+
+    __tablename__ = "host_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    agent_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # Kezi mezok (elemzo tolti ki).
+    role: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    criticality: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Wazuh-bol: OS, IP, csoportok, statusz, figyelo portok.
+    wazuh: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # False, ha a Wazuh-ban mar nincs ilyen agent (a kezi adatok megmaradnak).
+    in_wazuh: Mapped[bool] = mapped_column(Boolean, default=False)
+    synced_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class KnownNetwork(Base):
+    # Ismert IP / halozat cimkevel (pl. 10.64.0.95 = Forgejo), az LLM ebbol tudja, mi belso es megbizhato.
+
+    __tablename__ = "known_networks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cidr: Mapped[str] = mapped_column(String(64), unique=True)
+    label: Mapped[str] = mapped_column(String(256))
+    trusted: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class SuppressionRule(Base):

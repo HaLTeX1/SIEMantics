@@ -118,6 +118,12 @@ async def require_suppress(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+async def require_context_editor(user: User = Depends(get_current_user)) -> User:
+    if not user.can_edit_context:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="L2 role required to edit environment context")
+    return user
+
+
 async def require_block_ip(user: User = Depends(get_current_user)) -> User:
     if not user.can_block_ip:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,

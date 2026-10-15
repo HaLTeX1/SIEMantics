@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     correlation_max_alerts: int = Field(default=10, ge=0)
 
     wazuh_webhook_token: str = ""
+    # Ezek a csoportok (pl. csomagtelepites) csak kontextuskent tarolodnak, LLM es eset nelkul.
+    context_rule_groups: str = "dpkg,yum"
+    # Ennyit var a triazs a beerkezes utan, hogy egy burst minden esemenye meglegyen kontextusnak.
+    triage_settle_seconds: int = Field(default=30, ge=0)
+    # LLM kieseskor ennyi oran at probalja ujra, utana needs_review (a mock nem dont helyette).
+    llm_retry_max_hours: float = Field(default=6, ge=0)
+    # Host adatok szinkronja a Wazuh API-bol percenkent (0 = csak kezi).
+    host_sync_interval_minutes: int = Field(default=60, ge=0)
     # Ezekbe a Wazuh szabalycsoportokba tartozo riasztasokat a webhook eldobja (vesszovel; sca = benchmarkok).
     ignored_rule_groups: str = "sca"
 

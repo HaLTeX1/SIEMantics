@@ -20,6 +20,8 @@ os.environ.update(
     DEDUP_WINDOW_HOURS="0",
     # A hatter IRIS szinkront a tesztek kezzel hivjak.
     IRIS_SYNC_INTERVAL_SECONDS="0",
+    HOST_SYNC_INTERVAL_MINUTES="0",
+    TRIAGE_SETTLE_SECONDS="0",
 )
 
 import pytest  # noqa: E402

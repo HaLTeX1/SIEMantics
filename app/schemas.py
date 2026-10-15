@@ -82,7 +82,9 @@ class RelatedAlert(BaseModel):
     rule_id: Optional[str] = None
     rule_description: str
     severity: int
-    status: AlertStatus
+    # Elemzoi itelet (ground truth) es lezarasi annotacio; az automatikus dontes nem bizonyitek.
+    analyst_verdict: Optional[str] = None
+    case_closure_note: Optional[str] = None
     agent_name: Optional[str] = None
     source_ip: Optional[str] = None
     iris_case_id: Optional[int] = None
@@ -300,6 +302,50 @@ class ResponseActionOut(BaseModel):
     iris_noted: bool
 
 
+class HostProfileOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    agent_name: str
+    agent_id: Optional[str] = None
+    role: Optional[str] = None
+    criticality: Optional[str] = None
+    notes: Optional[str] = None
+    wazuh: Optional[dict] = None
+    in_wazuh: bool
+    synced_at: Optional[datetime] = None
+    updated_by: Optional[AssigneeOut] = None
+    updated_at: Optional[datetime] = None
+
+
+class HostUpdate(BaseModel):
+    # Kezi kontextus; ures szoveg torli a mezot.
+    role: Optional[str] = Field(default=None, max_length=256)
+    criticality: Optional[Literal["low", "medium", "high", "critical", ""]] = None
+    notes: Optional[str] = Field(default=None, max_length=4000)
+
+
+class HostCreate(HostUpdate):
+    # Wazuh agent nelkuli host (pl. agentless eszkoz, tuzfal), a riasztas agent neve szerint.
+    agent_name: str = Field(min_length=1, max_length=128)
+
+
+class KnownNetworkIn(BaseModel):
+    cidr: str = Field(min_length=2, max_length=64)
+    label: str = Field(min_length=1, max_length=256)
+    trusted: bool = True
+
+
+class KnownNetworkOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    cidr: str
+    label: str
+    trusted: bool
+    created_at: datetime
+
+
 class CaseInfoOut(BaseModel):
     # Az IRIS eset aktualis allapota a reszletpanelhez.
     iris_case_id: int
@@ -360,6 +406,18 @@ class FalsePositiveResult(BaseModel):
 
 # --- Triazs metrikak ---
 
+class EngineMetrics(BaseModel):
+    sample_size: int
+    labeled_size: int
+    true_positive: int
+    false_positive: int
+    true_negative: int
+    false_negative: int
+    accuracy: Optional[float] = None
+    false_positive_rate: Optional[float] = None
+    recall: Optional[float] = None
+
+
 class TriageMetrics(BaseModel):
     sample_size: int
     labeled_size: int
@@ -383,6 +441,10 @@ class TriageMetrics(BaseModel):
     median_processing_time_ms: Optional[float] = None
     p95_processing_time_ms: Optional[float] = None
 
+    # Onallo dontesek (dedup/flood/elnyomas masolatai nelkul) es motoronkenti bontas.
+    independent: Optional[EngineMetrics] = None
+    by_engine: dict[str, EngineMetrics] = Field(default_factory=dict)
+
 
 # --- Felhasznalok / auth ---
 
@@ -400,6 +462,7 @@ class UserOut(BaseModel):
     response_allowed: bool = False
     can_suppress: bool = False
     can_block_ip: bool = False
+    can_edit_context: bool = False
 
     @field_validator("response_allowed", mode="before")
     @classmethod
