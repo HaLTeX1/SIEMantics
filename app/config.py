@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     wazuh_indexer_user: str = ""
     wazuh_indexer_password: str = ""
     wazuh_indexer_verify_ssl: bool = True
+    # A Wazuh dashboard console proxyjan at (URL = a dashboard cime), ha az indexer csak 127.0.0.1-en figyel.
+    wazuh_indexer_via_dashboard: bool = False
     # wazuh-alerts-* minden szinten tartalmazza a riasztasokat; az archives csak logall_json mellett letezik.
     wazuh_indexer_indices: str = "wazuh-alerts-4.x-*"
     # A triazs ennyi percet nez a riasztas elott es utan, legfeljebb ennyi esemennyel.

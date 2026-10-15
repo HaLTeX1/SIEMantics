@@ -28,7 +28,7 @@ _VISIBLE_SETTINGS = (
     "correlation_window_hours", "correlation_host_window_minutes", "correlation_max_alerts", "ignored_rule_groups",
     "context_rule_groups", "iris_sync_interval_seconds", "host_sync_interval_minutes", "iris_base_url",
     "iris_verify_ssl", "wazuh_api_url", "wazuh_api_verify_ssl", "wazuh_indexer_url", "wazuh_indexer_indices",
-    "wazuh_indexer_verify_ssl", "surrounding_minutes", "surrounding_max_events", "enrichment_max_iocs",
+    "wazuh_indexer_verify_ssl", "wazuh_indexer_via_dashboard", "surrounding_minutes", "surrounding_max_events", "enrichment_max_iocs",
     "session_ttl_hours",
 )
 # Titkok: csak az latszik, hogy be vannak-e allitva.
@@ -101,10 +101,7 @@ async def test_connections():
     else:
         results.append({"name": "Wazuh API", "ok": None, "latency_ms": None, "detail": "not configured"})
     if indexer_client.enabled:
-        async def indexer():
-            info = await indexer_client.info()
-            return f"{info.get('cluster_name', '?')}, version {(info.get('version') or {}).get('number', '?')}"
-        results.append(await _check("Wazuh indexer", indexer))
+        results.append(await _check("Wazuh indexer", indexer_client.describe))
     else:
         results.append({"name": "Wazuh indexer", "ok": None, "latency_ms": None, "detail": "not configured"})
     if llm_configured():

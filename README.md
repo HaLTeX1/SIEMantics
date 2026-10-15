@@ -106,7 +106,7 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `CONTEXT_RULE_GROUPS` | alapértelmezett: `dpkg,yum`; ezek a riasztások csak kontextusként tárolódnak a többi riasztás triázsához (LLM és IRIS eset nélkül), lásd [Prompt és kontextus](#prompt-és-kontextus) |
 | `TRIAGE_SETTLE_SECONDS` | alapértelmezett: `30`; ennyit vár a triázs a beérkezés után, hogy egy burst többi eseménye is meglegyen kontextusnak |
 | `LLM_RETRY_MAX_HOURS` | alapértelmezett: `6`; LLM-kiesésnél eddig próbálkozik újra, utána `needs_review` (lásd [LLM-kiesés](#llm-kiesés-kvóta)) |
-| `WAZUH_INDEXER_URL` / `_USER` / `_PASSWORD` / `_VERIFY_SSL` / `_INDICES` | a Wazuh indexer elérése a környező eseményekhez (üres URL = kikapcsolva); alapindex `wazuh-alerts-4.x-*`, lásd [Környező események](#környező-események-wazuh-indexer) |
+| `WAZUH_INDEXER_URL` / `_USER` / `_PASSWORD` / `_VERIFY_SSL` / `_INDICES` / `_VIA_DASHBOARD` | a Wazuh indexer elérése a környező eseményekhez (üres URL = kikapcsolva); alapindex `wazuh-alerts-4.x-*`; `_VIA_DASHBOARD=true`: a Wazuh dashboard console proxyján keresztül, lásd [Környező események](#környező-események-wazuh-indexer) |
 | `SURROUNDING_MINUTES` / `SURROUNDING_MAX_EVENTS` | alapértelmezett: `10` / `25`; a triázs ennyi percet néz a riasztás előtt és után, legfeljebb ennyi eseménnyel |
 | `HOST_SYNC_INTERVAL_MINUTES` | alapértelmezett: `60`; a hostadatok szinkronja a Wazuh API-ból (`0` = csak kézi), lásd [Környezet](#környezet-hostok-és-ismert-hálózatok) |
 | `IGNORED_RULE_GROUPS` | alapértelmezett: `sca`; az ezekbe a Wazuh szabálycsoportokba tartozó riasztásokat (vesszővel elválasztva) a webhook eldobja: nem tárolódnak, nem mennek az LLM-hez, nem nyitnak IRIS esetet. Az `sca` a konfigurációs benchmarkok (CIS stb.) csoportja; ezek eredménye a Wazuh dashboard SCA moduljában továbbra is látszik. Az eldobott riasztások száma a `/healthz` `ignored_alerts` mezőjében; üres érték = semmit nem dob el |
@@ -380,11 +380,12 @@ A triázs és az elemző a riasztás mellett látja, mi történt még ugyanazon
 **Beállítás.** Az indexer alapból csak a Wazuh szerver saját címén (`127.0.0.1:9200`) figyel.
 
 1. **Elérhetővé tétel a SIEMantics számára** (az egyiket válaszd):
-   - **A) Proxy a Wazuh szerveren, ajánlott:** egy nginx `stream` blokk (pl. `listen 9201; proxy_pass 127.0.0.1:9200;`, `allow 10.64.0.127; deny all;`), az indexert nem kell újraindítani.
-   - **B) `network.host` módosítása** a `/etc/wazuh-indexer/opensearch.yml`-ben: `network.host: ["127.0.0.1", "10.64.0.82"]`, majd `systemctl restart wazuh-indexer`. Nem loopback címen az OpenSearch szigorúbb induló ellenőrzéseket futtat (pl. `vm.max_map_count` ≥ 262144); ha ezek nem teljesülnek, az indexer, és vele a Wazuh dashboard is, nem indul el. Előtte ellenőrizd: `sysctl vm.max_map_count`.
+   - **A) A Wazuh dashboardon keresztül, ajánlott:** a Wazuh szerveren semmit nem kell módosítani. A dashboard (443) beépített console proxy API-ja (`/api/console/proxy`) a bejelentkezett felhasználó saját jogaival továbbítja a kérést az indexernek. Beállítás: `WAZUH_INDEXER_URL=https://<wazuh-dashboard>` (port nélkül) és `WAZUH_INDEXER_VIA_DASHBOARD=true`.
+   - **Proxy a Wazuh szerveren:** egy nginx `stream` blokk (pl. `listen 9201; proxy_pass 127.0.0.1:9200;`, `allow 10.64.0.127; deny all;`), az indexert nem kell újraindítani.
+   - **`network.host` módosítása** a `/etc/wazuh-indexer/opensearch.yml`-ben: `network.host: ["127.0.0.1", "10.64.0.82"]`, majd `systemctl restart wazuh-indexer`. Nem loopback címen az OpenSearch szigorúbb induló ellenőrzéseket futtat (pl. `vm.max_map_count` ≥ 262144); ha ezek nem teljesülnek, az indexer, és vele a Wazuh dashboard is, nem indul el. Előtte ellenőrizd: `sysctl vm.max_map_count`.
    - A tűzfalon a portot csak a SIEMantics szerver (10.64.0.127) érje el.
 2. **Csak olvasásra jogosult felhasználó** (Wazuh dashboard → Indexer management → Security): role `siemantics_read` (cluster permission `cluster_composite_ops_ro`; index permission a `wazuh-alerts-*` mintára: `read`), egy `siemantics` internal user, a role-hoz rendelve. Ne az `admin` felhasználót add meg.
-3. **A SIEMantics `.env`-jében:** `WAZUH_INDEXER_URL=https://10.64.0.82:9201` (vagy `:9200` a B változatnál), `WAZUH_INDEXER_USER`, `WAZUH_INDEXER_PASSWORD`, és mivel az indexer tanúsítványa a belső nevére szól, `WAZUH_INDEXER_VERIFY_SSL=false`. A Rendszerállapot fül „Kapcsolat tesztelése” gombja ellenőrzi.
+3. **A SIEMantics `.env`-jében:** `WAZUH_INDEXER_URL=https://10.64.0.82` és `WAZUH_INDEXER_VIA_DASHBOARD=true` (az A változatnál; közvetlen elérésnél a port is kell, pl. `:9200`), `WAZUH_INDEXER_USER`, `WAZUH_INDEXER_PASSWORD`, és mivel az indexer tanúsítványa a belső nevére szól, `WAZUH_INDEXER_VERIFY_SSL=false`. A Rendszerállapot fül „Kapcsolat tesztelése” gombja ellenőrzi.
 
 ## Rendszerállapot
 

@@ -30,17 +30,26 @@ class IndexerClient:
             timeout=10,
         )
 
-    async def info(self) -> dict:
+    async def _request(self, method: str, path: str, body: dict | None = None) -> dict:
+        # Kozvetlenul az indexernek, vagy a dashboard console proxyjan at ugyanazzal a felhasznaloval.
         async with self._client() as client:
-            resp = await client.get("/")
+            if settings.wazuh_indexer_via_dashboard:
+                resp = await client.post("/api/console/proxy", params={"path": path, "method": method},
+                                         headers={"osd-xsrf": "true"}, json=body)
+            else:
+                resp = await client.request(method, f"/{path}", json=body)
             resp.raise_for_status()
             return resp.json()
 
+    async def describe(self) -> str:
+        # Kapcsolat teszt: hany riasztast lat (a dashboardon at a gyoker info nem erheto el).
+        data = await self._request("GET", f"{settings.wazuh_indexer_indices}/_count")
+        route = "via the Wazuh dashboard" if settings.wazuh_indexer_via_dashboard else "direct"
+        return f"{data.get('count', '?')} alerts readable ({route})"
+
     async def search(self, body: dict) -> list[dict]:
-        async with self._client() as client:
-            resp = await client.post(f"/{settings.wazuh_indexer_indices}/_search", json=body)
-            resp.raise_for_status()
-            return [hit["_source"] for hit in resp.json().get("hits", {}).get("hits", [])]
+        data = await self._request("POST", f"{settings.wazuh_indexer_indices}/_search", body)
+        return [hit["_source"] for hit in data.get("hits", {}).get("hits", [])]
 
 
 indexer_client = IndexerClient()

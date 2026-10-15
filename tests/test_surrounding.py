@@ -113,3 +113,32 @@ def test_surrounding_api_when_not_configured(logged_in, iris):
     record = process_alert(logged_in, user_alert())
     assert logged_in.get(f"/api/v1/alerts/{record['display_id']}/surrounding").json() == {
         "enabled": False, "window_minutes": 15, "events": []}
+
+
+@pytest.mark.parametrize("via_dashboard,expected_path,expected_params", [
+    (False, "/wazuh-alerts-4.x-*/_search", {}),
+    (True, "/api/console/proxy", {"path": "wazuh-alerts-4.x-*/_search", "method": "POST"}),
+])
+def test_indexer_request_route(monkeypatch, via_dashboard, expected_path, expected_params):
+    # Kozvetlen indexer, vagy a Wazuh dashboard console proxyja (az indexer csak 127.0.0.1-en figyel).
+    import asyncio
+
+    import httpx
+
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"hits": {"hits": [{"_source": {"id": "x"}}]}})
+
+    monkeypatch.setattr(settings, "wazuh_indexer_url", "https://10.64.0.82")
+    monkeypatch.setattr(settings, "wazuh_indexer_via_dashboard", via_dashboard)
+    monkeypatch.setattr(indexer_client, "_client", lambda: httpx.AsyncClient(
+        base_url="https://10.64.0.82", auth=("u", "p"), transport=httpx.MockTransport(handler)))
+
+    hits = asyncio.run(indexer_client.search({"size": 1}))
+    request = seen[0]
+    assert hits == [{"id": "x"}] and request.method == "POST" and request.url.path == expected_path
+    assert dict(request.url.params) == expected_params
+    assert ("osd-xsrf" in request.headers) is via_dashboard
+    assert request.headers["authorization"].startswith("Basic ")
