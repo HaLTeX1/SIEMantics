@@ -62,6 +62,16 @@ class Settings(BaseSettings):
     wazuh_api_user: str = ""
     wazuh_api_password: str = ""
     wazuh_api_verify_ssl: bool = True
+    # Wazuh indexer (OpenSearch) a riasztas koruli esemenyekhez; ures URL = kikapcsolva.
+    wazuh_indexer_url: str = ""
+    wazuh_indexer_user: str = ""
+    wazuh_indexer_password: str = ""
+    wazuh_indexer_verify_ssl: bool = True
+    # wazuh-alerts-* minden szinten tartalmazza a riasztasokat; az archives csak logall_json mellett letezik.
+    wazuh_indexer_indices: str = "wazuh-alerts-4.x-*"
+    # A triazs ennyi percet nez a riasztas elott es utan, legfeljebb ennyi esemennyel.
+    surrounding_minutes: int = Field(default=10, ge=1, le=120)
+    surrounding_max_events: int = Field(default=25, ge=1, le=200)
     # Tovabbi vedett IP-k / halozatok vesszovel, a nem publikus cimeken felul (pl. sajat publikus IP-k).
     response_protected_networks: str = ""
     # Parhuzamos triazs workerek; 1 = sorban (free rate limit, korrelacio).

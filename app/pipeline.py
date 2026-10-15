@@ -17,6 +17,7 @@ from app.enums import AlertStatus, GroundTruth
 from app.guardrails import Evidence, decide_status
 from app.iris_client import iris_client
 from app.hosts import host_context, ip_context
+from app.surrounding import surrounding_events
 from app.llm_engine import LlmUnavailable, second_opinion_enabled, triage_alert
 from app.models import AlertRecord, User
 from app.normalize import normalize_wazuh_alert, related_log_excerpt
@@ -110,6 +111,10 @@ async def environment_context(session: AsyncSession, alert: NormalizedAlert) -> 
     source = await ip_context(session, alert.source_ip)
     if source:
         context["source_ip"] = source
+    # A Wazuh indexerbol a host / IP koruli osszes esemeny, az alacsony szintuek is (a promptban kulon kulcs).
+    events = await surrounding_events(alert)
+    if events:
+        context["surrounding_events"] = events
     return context
 
 

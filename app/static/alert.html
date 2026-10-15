@@ -124,6 +124,23 @@
   .field .value.closure-note { white-space: pre-wrap; }
   .hint { color: var(--text-muted); }
 
+  .timeline { display: grid; gap: 2px; }
+  .tl-row { display: grid; grid-template-columns: 72px 44px minmax(0, 1fr); gap: 10px; padding: 7px 8px; border-radius: 6px; align-items: start; }
+  .tl-row:hover { background: rgba(255,255,255,0.03); }
+  .tl-row.self { background: rgba(57,135,229,0.12); outline: 1px solid rgba(57,135,229,0.45); }
+  .tl-time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+  .tl-level { font-size: 11px; font-weight: 700; text-align: center; border-radius: 4px; padding: 1px 0; }
+  .tl-level.l-crit { background: rgba(208,59,59,0.18); color: #f29b9b; }
+  .tl-level.l-high { background: rgba(236,131,90,0.16); color: #f3b299; }
+  .tl-level.l-med { background: rgba(250,178,25,0.16); color: #fdd68a; }
+  .tl-level.l-low { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+  .tl-main { min-width: 0; }
+  .tl-rule { font-size: 13px; }
+  .tl-meta { color: var(--text-muted); font-size: 12px; }
+  .tl-log { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--text-secondary); overflow-wrap: anywhere; margin-top: 2px; }
+  .tl-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .tl-tools select { background: var(--page); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px; font-size: 13px; }
+  .self-tag { font-size: 11px; font-weight: 600; color: #8fb8ef; margin-left: 6px; }
   h2.panel-title { font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em; margin: 22px 0 8px; }
   .response-panel { display: block; }
   .response-control { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
@@ -377,6 +394,73 @@
     rerender();
   }
 
+  // --- Kornyezo esemenyek a Wazuh indexerbol ---
+
+  const around = { state: "idle", minutes: 15, events: [], error: "", enabled: true };
+
+  function levelClass(level) {
+    if (level >= 12) return "l-crit";
+    if (level >= 8) return "l-high";
+    if (level >= 5) return "l-med";
+    return "l-low";
+  }
+
+  function tlTime(iso) {
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? escapeHtml(iso || "") : d.toLocaleTimeString("hu-HU");
+  }
+
+  function surroundingPanel() {
+    if (!around.enabled) return "";
+    const options = [5, 15, 60].map((m) => `<option value="${m}" ${m === around.minutes ? "selected" : ""}>±${m} perc</option>`).join("");
+    let body;
+    if (around.state === "loading") body = '<div class="hint">Betöltés a Wazuh indexerből...</div>';
+    else if (around.state === "error") body = `<div class="hint" style="color:#f29b9b">Nem sikerült lekérni: ${escapeHtml(around.error)}</div>`;
+    else if (!around.events.length) body = '<div class="hint">Nincs más esemény ebben az időablakban.</div>';
+    else body = `<div class="timeline">${around.events.map((e) => {
+      const meta = [e.agent, e.srcip && `forrás: ${e.srcip}`, e.user && `user: ${e.user}`, e.location].filter(Boolean).map(escapeHtml).join(" · ");
+      return `<div class="tl-row ${e.this_alert ? "self" : ""}">
+        <span class="tl-time">${tlTime(e.time)}</span>
+        <span class="tl-level ${levelClass(e.level || 0)}" title="Wazuh szint">${escapeHtml(e.level ?? "-")}</span>
+        <div class="tl-main">
+          <div class="tl-rule">${escapeHtml(e.rule || "-")} <span class="tl-meta">#${escapeHtml(e.rule_id || "-")}</span>${e.this_alert ? '<span class="self-tag">ez a riasztás</span>' : ""}</div>
+          ${meta ? `<div class="tl-meta">${meta}</div>` : ""}
+          ${e.log ? `<div class="tl-log">${escapeHtml(e.log)}</div>` : ""}
+        </div>
+      </div>`;
+    }).join("")}</div>`;
+    return `<h2 class="panel-title">Környező események</h2>
+      <div class="panel" style="display:block">
+        <div class="tl-tools">
+          <select id="aroundMinutes" aria-label="Időablak">${options}</select>
+          <span class="hint">Ugyanarról a hostról (a manager riasztásainál ugyanarról a forrás IP-ről), minden Wazuh-szinten.</span>
+        </div>
+        ${body}
+      </div>`;
+  }
+
+  async function loadSurrounding(a) {
+    around.state = "loading";
+    rerender();
+    try {
+      const res = await SIEM.api(`/api/v1/alerts/${encodeURIComponent(a.display_id)}/surrounding?minutes=${around.minutes}`);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+      around.enabled = body.enabled;
+      around.events = body.events || [];
+      around.state = "done";
+    } catch (err) {
+      around.state = "error";
+      around.error = err.message;
+    }
+    rerender();
+  }
+
+  function bindSurrounding(a) {
+    const sel = document.getElementById("aroundMinutes");
+    if (sel) sel.addEventListener("change", () => { around.minutes = Number(sel.value); loadSurrounding(a); });
+  }
+
   function rerender() {
     if (view) render(view.a, view.irisBaseUrl, view.info);
   }
@@ -458,9 +542,11 @@
         ${badge(disp.label, disp.cls)}
       </div>
       <div class="panel">${fields.join("")}</div>
+      ${surroundingPanel()}
       ${responsePanel(a)}
     `;
     bindResponse(a);
+    bindSurrounding(a);
   }
 
   async function load() {
@@ -478,6 +564,7 @@
       const configData = configRes && configRes.ok ? await configRes.json() : {};
       response.enabled = !!configData.response_enabled;
       render(alertData, configData.iris_base_url || "", null);
+      loadSurrounding(alertData);
       if (alertData.iris_case_id != null) {
         // Az IRIS eset elo allapota (annotacio) utolag, hogy a lap ne varjon az IRIS-re.
         SIEM.api(`/api/v1/cases/${encodeURIComponent(alertData.iris_case_id)}`)

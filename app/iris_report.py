@@ -20,7 +20,7 @@ _HEX_RE = re.compile(r"^[0-9a-fA-F]+$")
 _DOMAIN_RE = re.compile(r"^(?=.{4,253}$)([a-zA-Z0-9-]{1,63}\.)+[a-zA-Z]{2,63}$")
 
 # Wazuh timestamp formatumok, pl. 2026-10-01T14:20:01.512+0000.
-_WAZUH_TS_FORMATS = ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z")
+WAZUH_TS_FORMATS = ("%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z")
 
 # IRIS timeline kategoria, ha a szabalynak nincs MITRE taktikaja.
 TIMELINE_DEFAULT_CATEGORY = "Unspecified"
@@ -594,7 +594,7 @@ def asset_description(ctx: CaseContext) -> str:
 def event_time(ctx: CaseContext) -> tuple[str, str]:
     # IRIS kulon varja az idopontot (idozona nelkul) es az idozonat.
     ts = None
-    for fmt in _WAZUH_TS_FORMATS:
+    for fmt in WAZUH_TS_FORMATS:
         try:
             ts = datetime.strptime(ctx.raw.get("timestamp") or "", fmt)
             break

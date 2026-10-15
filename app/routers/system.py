@@ -15,6 +15,7 @@ from app.llm_engine import configured_models, key_info, llm_configured, second_o
 from app.models import AlertRecord
 from app.pipeline import alert_queue
 from app.routers.alerts import ignored_counter
+from app.surrounding import indexer_client
 from app.wazuh_client import wazuh_client
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"], dependencies=[Depends(require_context_editor)])
@@ -26,10 +27,12 @@ _VISIBLE_SETTINGS = (
     "triage_settle_seconds", "llm_retry_max_hours", "dedup_window_hours", "flood_threshold", "flood_window_minutes",
     "correlation_window_hours", "correlation_host_window_minutes", "correlation_max_alerts", "ignored_rule_groups",
     "context_rule_groups", "iris_sync_interval_seconds", "host_sync_interval_minutes", "iris_base_url",
-    "iris_verify_ssl", "wazuh_api_url", "wazuh_api_verify_ssl", "enrichment_max_iocs", "session_ttl_hours",
+    "iris_verify_ssl", "wazuh_api_url", "wazuh_api_verify_ssl", "wazuh_indexer_url", "wazuh_indexer_indices",
+    "wazuh_indexer_verify_ssl", "surrounding_minutes", "surrounding_max_events", "enrichment_max_iocs",
+    "session_ttl_hours",
 )
 # Titkok: csak az latszik, hogy be vannak-e allitva.
-_SECRETS = ("openrouter_api_key", "iris_api_key", "wazuh_webhook_token", "wazuh_api_password",
+_SECRETS = ("openrouter_api_key", "iris_api_key", "wazuh_webhook_token", "wazuh_api_password", "wazuh_indexer_password",
             "virustotal_api_key", "abuseipdb_api_key")
 
 
@@ -69,6 +72,8 @@ async def system_status(session: AsyncSession = Depends(get_session)):
         "iris_sync": {"interval_seconds": settings.iris_sync_interval_seconds, **status.snapshot("iris_sync")},
         "host_sync": {"interval_minutes": settings.host_sync_interval_minutes, "enabled": wazuh_client.enabled,
                       **status.snapshot("host_sync")},
+        "indexer": {"enabled": indexer_client.enabled, "indices": settings.wazuh_indexer_indices,
+                    **status.snapshot("indexer")},
         "settings": {name: getattr(settings, name) for name in _VISIBLE_SETTINGS},
         "secrets_set": {name: bool(getattr(settings, name)) for name in _SECRETS},
     }
@@ -95,6 +100,13 @@ async def test_connections():
         results.append(await _check("Wazuh API", wazuh))
     else:
         results.append({"name": "Wazuh API", "ok": None, "latency_ms": None, "detail": "not configured"})
+    if indexer_client.enabled:
+        async def indexer():
+            info = await indexer_client.info()
+            return f"{info.get('cluster_name', '?')}, version {(info.get('version') or {}).get('number', '?')}"
+        results.append(await _check("Wazuh indexer", indexer))
+    else:
+        results.append({"name": "Wazuh indexer", "ok": None, "latency_ms": None, "detail": "not configured"})
     if llm_configured():
         async def openrouter():
             info = await key_info()

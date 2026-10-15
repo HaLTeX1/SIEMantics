@@ -195,7 +195,7 @@
         <h2>Kapcsolatok</h2>
         <button type="button" class="btn small" id="testBtn">Kapcsolat tesztelése</button>
       </div>
-      <p class="hint" style="padding: 8px 16px 0;">IRIS ping, Wazuh API bejelentkezés, OpenRouter kulcs adatai. LLM-kvótát nem fogyaszt.</p>
+      <p class="hint" style="padding: 8px 16px 0;">IRIS ping, Wazuh API bejelentkezés, Wazuh indexer, OpenRouter kulcs adatai. LLM-kvótát nem fogyaszt.</p>
       <table>
         <thead><tr><th>Rendszer</th><th>Eredmény</th><th>Válaszidő</th><th>Részletek</th></tr></thead>
         <tbody id="testBody"><tr><td colspan="4" class="muted">Még nem futott.</td></tr></tbody>
@@ -298,8 +298,15 @@
     return ["ok", "Rendben", `Utolsó futás ${ago(s.last_success_at)} ezelőtt`];
   }
 
+  function indexerState(x) {
+    if (!x.enabled) return ["off", "Nincs beállítva", "Környező események nélkül"];
+    if (newer(x.last_error_at, x.last_success_at)) return ["warn", "Hiba", x.last_error];
+    if (!x.last_success_at) return ["off", "Még nem kérdezte", "Újraindítás óta nem volt lekérdezés"];
+    return ["ok", "Elérhető", `Utolsó lekérdezés ${ago(x.last_success_at)} ezelőtt`];
+  }
+
   function render(st) {
-    const l = st.llm, q = st.queue, i = st.ingest, is = st.iris_sync, hs = st.host_sync;
+    const l = st.llm, q = st.queue, i = st.ingest, is = st.iris_sync, hs = st.host_sync, ix = st.indexer;
     const hostOff = !hs.enabled || !hs.interval_minutes;
     if (!hs.enabled) hs.disabled_reason = "Nincs Wazuh API beállítva";
     else if (!hs.interval_minutes) hs.disabled_reason = "Csak kézi szinkron";
@@ -311,6 +318,7 @@
       pill("Sor", ...queueState(q)),
       pill("IRIS lezárás-szinkron", ...syncState(is, irisOff && !is.last_success_at)),
       pill("Host-szinkron", ...syncState(hs, hostOff && !hs.last_success_at)),
+      pill("Wazuh indexer", ...indexerState(ix)),
     ].join("");
 
     const lastResult = (r) => r ? Object.entries(r).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join(", ") : "-";
@@ -335,6 +343,12 @@
         ["Utolsó futás", is.last_success_at ? fmtTime(is.last_success_at) : "-"],
         ["Eredmény", lastResult(is.last_result)],
         ["Utolsó hiba", is.last_error_at ? `${fmtTime(is.last_error_at)} · ${escapeHtml(is.last_error)}` : "-", is.last_error_at ? "err" : ""],
+      ])),
+      card("Wazuh indexer (környező események)", kv([
+        ["Állapot", ix.enabled ? "beállítva" : "nincs beállítva"],
+        ["Indexek", escapeHtml(ix.indices || "-"), "mono"],
+        ["Utolsó lekérdezés", ix.last_success_at ? `${fmtTime(ix.last_success_at)} · ${escapeHtml(((ix.last_result || {}).events ?? "-"))} esemény` : "-"],
+        ["Utolsó hiba", ix.last_error_at ? `${fmtTime(ix.last_error_at)} · ${escapeHtml(ix.last_error)}` : "-", ix.last_error_at ? "err" : ""],
       ])),
       card("Host-szinkron (Wazuh)", kv([
         ["Gyakoriság", hs.enabled ? (hs.interval_minutes ? `${hs.interval_minutes} percenként` : "csak kézi") : "nincs Wazuh API"],

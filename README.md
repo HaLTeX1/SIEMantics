@@ -47,6 +47,7 @@ app/
 ├── hosts.py             # host kontextus: Wazuh szinkron, ismert hálózatok, prompt-környezet
 ├── eval_replay.py       # visszajátszó mérés a címkézett riasztásokon (python -m app.eval_replay)
 ├── status.py            # futási állapot (LLM, szinkronok) a Rendszerállapot fülhöz
+├── surrounding.py       # környező események a Wazuh indexerből (prompt és idővonal)
 └── routers/
     ├── alerts.py        # POST/GET /alerts, PATCH /alerts/{ref}/label, POST /alerts/{ref}/escalate
     ├── metrics.py         # GET /metrics
@@ -105,6 +106,8 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `CONTEXT_RULE_GROUPS` | alapértelmezett: `dpkg,yum`; ezek a riasztások csak kontextusként tárolódnak a többi riasztás triázsához (LLM és IRIS eset nélkül), lásd [Prompt és kontextus](#prompt-és-kontextus) |
 | `TRIAGE_SETTLE_SECONDS` | alapértelmezett: `30`; ennyit vár a triázs a beérkezés után, hogy egy burst többi eseménye is meglegyen kontextusnak |
 | `LLM_RETRY_MAX_HOURS` | alapértelmezett: `6`; LLM-kiesésnél eddig próbálkozik újra, utána `needs_review` (lásd [LLM-kiesés](#llm-kiesés-kvóta)) |
+| `WAZUH_INDEXER_URL` / `_USER` / `_PASSWORD` / `_VERIFY_SSL` / `_INDICES` | a Wazuh indexer elérése a környező eseményekhez (üres URL = kikapcsolva); alapindex `wazuh-alerts-4.x-*`, lásd [Környező események](#környező-események-wazuh-indexer) |
+| `SURROUNDING_MINUTES` / `SURROUNDING_MAX_EVENTS` | alapértelmezett: `10` / `25`; a triázs ennyi percet néz a riasztás előtt és után, legfeljebb ennyi eseménnyel |
 | `HOST_SYNC_INTERVAL_MINUTES` | alapértelmezett: `60`; a hostadatok szinkronja a Wazuh API-ból (`0` = csak kézi), lásd [Környezet](#környezet-hostok-és-ismert-hálózatok) |
 | `IGNORED_RULE_GROUPS` | alapértelmezett: `sca`; az ezekbe a Wazuh szabálycsoportokba tartozó riasztásokat (vesszővel elválasztva) a webhook eldobja: nem tárolódnak, nem mennek az LLM-hez, nem nyitnak IRIS esetet. Az `sca` a konfigurációs benchmarkok (CIS stb.) csoportja; ezek eredménye a Wazuh dashboard SCA moduljában továbbra is látszik. Az eldobott riasztások száma a `/healthz` `ignored_alerts` mezőjében; üres érték = semmit nem dob el |
 | `FLOOD_THRESHOLD` / `FLOOD_WINDOW_MINUTES` | alapértelmezett: `20` / `10`; ha egy Wazuh szabály ugyanazon a hoston ennyiszer szól az ablakon belül, a további riasztások nem mennek az LLM-hez, átveszik a legutóbbi döntést (lásd [Flood kezelés](#flood-kezelés)); `0` = kikapcsolva |
@@ -365,12 +368,30 @@ Az **Admin → Környezet** fül (`/ui/hosts.html`) adja a triázs környezeti t
 - **Jogosultság:** megtekinteni mindenki, szerkeszteni L2 és admin tud (`can_edit_context`), mert a triázs döntéseit befolyásolja.
 - **Wazuh API:** a [válaszlépésnél](#válaszlépés-ip-blokkolása-wazuh-active-response) beállított API-felhasználó policyjéhez a host-szinkronhoz a `syscollector:read` action is kell (resource `agent:id:*`).
 
+## Környező események (Wazuh indexer)
+
+A triázs és az elemző a riasztás mellett látja, mi történt még ugyanazon a hoston a riasztás előtt és után: a Wazuh indexer `wazuh-alerts-*` indexéből **minden szintű** eseményt (sikeres SSH-belépés, sudo, cron, dpkg/apt, szolgáltatás-újraindítás), azokat is, amelyek az integráció szintküszöbe (5) miatt nem jutnak el a SIEMantics-be. Az éles mérés téves eszkalációinak nagy része pont ezzel lett volna magyarázható (egy admin SSH-belépése és `sudo apt install` futtatása közvetlenül a user- és systemd-riasztások előtt).
+
+- **Az LLM-nek:** a riasztás körüli `SURROUNDING_MINUTES` (alapból 10) perc legfeljebb `SURROUNDING_MAX_EVENTS` (alapból 25) eseménye, időrendben, felerészt előtte, felerészt utána, a riasztás időpontjához legközelebbiek (`surrounding_events`, megbízhatatlan adatként). A triázs előtti várakozás (`TRIAGE_SETTLE_SECONDS`) miatt a riasztás utáni események is megvannak. A Wazuh manager saját riasztásainál (agent 000: tűzfal, Suricata) a forrás IP alapján keres.
+- **Az elemzőnek:** a riasztás külön ablakában „Környező események” idővonal, ±5 / ±15 / ±60 perccel, a riasztás saját sora kiemelve (`GET /api/v1/alerts/{ref}/surrounding?minutes=15`).
+- **Kiesés:** ha az indexer nem érhető el, a triázs ugyanúgy lefut, csak ez a kontextus marad ki; a hiba a Rendszerállapot fülön látszik.
+- **Archive-ok:** a riasztást nem okozó nyers logok (`wazuh-archives-*`) csak akkor léteznek, ha a manageren `logall_json` és a filebeatben az `archives` be van kapcsolva (most nincs). Ha bekapcsolod, a `WAZUH_INDEXER_INDICES=wazuh-alerts-4.x-*,wazuh-archives-4.x-*` beállítással azokat is látja; ez jelentősen több tárhelyet használ.
+
+**Beállítás.** Az indexer alapból csak a Wazuh szerver saját címén (`127.0.0.1:9200`) figyel.
+
+1. **Elérhetővé tétel a SIEMantics számára** (az egyiket válaszd):
+   - **A) Proxy a Wazuh szerveren, ajánlott:** egy nginx `stream` blokk (pl. `listen 9201; proxy_pass 127.0.0.1:9200;`, `allow 10.64.0.127; deny all;`), az indexert nem kell újraindítani.
+   - **B) `network.host` módosítása** a `/etc/wazuh-indexer/opensearch.yml`-ben: `network.host: ["127.0.0.1", "10.64.0.82"]`, majd `systemctl restart wazuh-indexer`. Nem loopback címen az OpenSearch szigorúbb induló ellenőrzéseket futtat (pl. `vm.max_map_count` ≥ 262144); ha ezek nem teljesülnek, az indexer, és vele a Wazuh dashboard is, nem indul el. Előtte ellenőrizd: `sysctl vm.max_map_count`.
+   - A tűzfalon a portot csak a SIEMantics szerver (10.64.0.127) érje el.
+2. **Csak olvasásra jogosult felhasználó** (Wazuh dashboard → Indexer management → Security): role `siemantics_read` (cluster permission `cluster_composite_ops_ro`; index permission a `wazuh-alerts-*` mintára: `read`), egy `siemantics` internal user, a role-hoz rendelve. Ne az `admin` felhasználót add meg.
+3. **A SIEMantics `.env`-jében:** `WAZUH_INDEXER_URL=https://10.64.0.82:9201` (vagy `:9200` a B változatnál), `WAZUH_INDEXER_USER`, `WAZUH_INDEXER_PASSWORD`, és mivel az indexer tanúsítványa a belső nevére szól, `WAZUH_INDEXER_VERIFY_SSL=false`. A Rendszerállapot fül „Kapcsolat tesztelése” gombja ellenőrzi.
+
 ## Rendszerállapot
 
 Az **Admin → Rendszerállapot** fül (`/ui/system.html`, admin és L2) egy helyen mutatja, ha valami csendben nem működik (az éles mérésben például a döntések fele azért esett a mock motorra, mert elfogyott az OpenRouter-kvóta, és ez sehol nem látszott). 30 másodpercenként frissül.
 
-- **Állapotjelzők:** LLM (elérhető / kvóta-szünet / utolsó hívás hibás / mock motor), beérkezés (6 óránál hosszabb csend: érdemes a Wazuh-integrációt ellenőrizni), sor (LLM-re váró vagy 30 percnél régebben várakozó riasztás), IRIS lezárás-szinkron és host-szinkron (utolsó futás, eredmény, hiba). Mindegyik szöveggel is jelzi az állapotot, nem csak színnel.
-- **Kapcsolat tesztelése:** IRIS `/api/ping`, Wazuh API bejelentkezés és verzió, OpenRouter kulcs adatai (ingyenes szint-e, használat, limit). LLM-kvótát nem fogyaszt.
+- **Állapotjelzők:** LLM (elérhető / kvóta-szünet / utolsó hívás hibás / mock motor), beérkezés (6 óránál hosszabb csend: érdemes a Wazuh-integrációt ellenőrizni), sor (LLM-re váró vagy 30 percnél régebben várakozó riasztás), IRIS lezárás-szinkron és host-szinkron (utolsó futás, eredmény, hiba), Wazuh indexer (a környező események lekérdezése). Mindegyik szöveggel is jelzi az állapotot, nem csak színnel.
+- **Kapcsolat tesztelése:** IRIS `/api/ping`, Wazuh API bejelentkezés és verzió, Wazuh indexer (cluster és verzió), OpenRouter kulcs adatai (ingyenes szint-e, használat, limit). LLM-kvótát nem fogyaszt.
 - **Érvényes beállítások:** a szerver `.env`-jéből, csak olvasható; a kulcsoknál és jelszavaknál csak az látszik, hogy be vannak-e állítva.
 - Az LLM és a szinkronok utolsó eseményei memóriában vannak, újraindítás után az első futásig üresek.
 - API: `GET /api/v1/system/status`, `POST /api/v1/system/test-connections` (L2 / admin).
@@ -444,6 +465,7 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `POST` | `/api/v1/suppressions` | elnyomó szabály a kijelölt riasztásokból (`alert_refs`, `scope`, `reason`, `duration_hours`, `apply_existing`) |
 | `DELETE` | `/api/v1/suppressions/{id}` | elnyomó szabály kikapcsolása |
 | `POST` | `/api/v1/alerts/{ref}/block-ip` | **L2 / engedélyezett:** IP blokkolása Wazuh Active Response-szal (`ip`, `scope`: `agent`/`all`, `duration_hours`: 1/24/168) |
+| `GET` | `/api/v1/alerts/{ref}/surrounding` | a riasztás körüli események a Wazuh indexerből (`minutes`, alapból 15, max. 120) |
 | `GET` | `/api/v1/alerts/{ref}/responses` | a riasztásból indított válaszlépések naplója |
 | `GET` | `/api/v1/hosts` | hostok kontextusa (Wazuh adatok + kézi szerep, kritikusság, megjegyzés) |
 | `POST` | `/api/v1/hosts/sync` | **L2:** azonnali host-szinkron a Wazuh API-ból |

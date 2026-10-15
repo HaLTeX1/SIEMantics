@@ -11,8 +11,9 @@ from app.enums import AlertStatus
 from app.fingerprint import alert_fingerprint
 from app.normalize import normalize_wazuh_alert
 from app.models import AlertRecord, User
-from app.pipeline import alert_queue, manual_escalate, process_record
+from app.pipeline import alert_from_record, alert_queue, manual_escalate, process_record
 from app.response import ResponseError, block_ip, list_actions
+from app.surrounding import fetch_surrounding, indexer_client
 from app.wazuh_client import wazuh_client
 from app.repository import (
     count_group_members,
@@ -277,3 +278,19 @@ async def get_alert_responses(alert_ref: str, session: AsyncSession = Depends(ge
     if record is None:
         raise HTTPException(status_code=404, detail="alert not found")
     return await _actions_out(session, await list_actions(session, record))
+
+
+@router.get("/alerts/{alert_ref}/surrounding", dependencies=[Depends(get_current_user)])
+async def get_surrounding_events(alert_ref: str, minutes: int = 15, session: AsyncSession = Depends(get_session)):
+    # A riasztas koruli esemenyek a Wazuh indexerbol idorendben, a riasztas sajat helyevel (this_alert).
+    record = await get_alert_record_by_ref(session, alert_ref)
+    if record is None:
+        raise HTTPException(status_code=404, detail="alert not found")
+    minutes = max(1, min(minutes, 120))
+    if not indexer_client.enabled:
+        return {"enabled": False, "window_minutes": minutes, "events": []}
+    try:
+        events = await fetch_surrounding(alert_from_record(record), minutes, 100, include_self=True)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Wazuh indexer unavailable: {exc}") from exc
+    return {"enabled": True, "window_minutes": minutes, "events": events}
