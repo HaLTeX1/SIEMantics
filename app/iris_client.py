@@ -40,6 +40,27 @@ OUTCOME_FALSE_POSITIVE = 1
 OUTCOME_TRUE_POSITIVE = (2, 4)
 OUTCOME_LEGITIMATE = 5
 
+OUTCOME_NAMES = {
+    0: "Unknown",
+    1: "False positive",
+    2: "True positive with impact",
+    3: "Not applicable",
+    4: "True positive without impact",
+    5: "Legitimate",
+}
+
+# Lezarasi annotacio: az esetek egyedi mezoje (Advanced > Custom attributes > Cases).
+CLOSURE_TAB = "Closure"
+CLOSURE_FIELD = "Closure annotation"
+
+
+def closure_annotation(case: dict | None) -> str | None:
+    field = (((case or {}).get("custom_attributes") or {}).get(CLOSURE_TAB) or {}).get(CLOSURE_FIELD) or {}
+    value = field.get("value") if isinstance(field, dict) else None
+    text = str(value).strip() if value is not None else ""
+    return text or None
+
+
 # IRIS alap severity nevek.
 _IRIS_SEVERITY = {"low": "Low", "medium": "Medium", "high": "High", "critical": "Critical"}
 
@@ -175,6 +196,22 @@ class IrisClient:
             if not name:
                 raise RuntimeError(f"IRIS case {case_id} not readable")
             await self._post(client, f"/manage/cases/update/{case_id}", json={"case_name": name, "status_id": status_id})
+
+    async def set_closure_annotation(self, case_id: int, text: str) -> bool:
+        # False, ha az IRIS-ben nincs definialva a mezo.
+        async with self._client() as client:
+            case = await self._get_case(client, case_id)
+            name = _CASE_NUMBER_PREFIX.sub("", (case or {}).get("case_name") or "")
+            if not name:
+                raise RuntimeError(f"IRIS case {case_id} not readable")
+            attributes = case.get("custom_attributes") or {}
+            field = (attributes.get(CLOSURE_TAB) or {}).get(CLOSURE_FIELD)
+            if not isinstance(field, dict):
+                return False
+            field["value"] = text
+            await self._post(client, f"/manage/cases/update/{case_id}",
+                             json={"case_name": name, "custom_attributes": attributes})
+            return True
 
     async def close_case(self, case_id: int) -> None:
         async with self._client() as client:

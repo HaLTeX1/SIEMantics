@@ -376,6 +376,7 @@
   }
   .assign-control .assign-error { color: var(--critical); font-size: 12px; }
   .alert-ref { color: var(--text-secondary); font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
+  .detail-field .value.closure-note { white-space: pre-wrap; }
   .detail-field .value.review-reason {
     background: rgba(250,178,25,0.10);
     border: 1px solid rgba(250,178,25,0.35);
@@ -885,6 +886,25 @@
     });
   }
 
+  // IRIS eset elo allapota (lezaras, kimenetel, annotacio), esetenkent egyszer lekerve.
+  const caseInfo = new Map();
+  const caseInfoLoading = new Set();
+
+  async function loadCaseInfo(caseId) {
+    if (caseInfoLoading.has(caseId)) return;
+    caseInfoLoading.add(caseId);
+    try {
+      const res = await SIEM.api(`/api/v1/cases/${encodeURIComponent(caseId)}`);
+      caseInfo.set(caseId, res.ok ? await res.json() : null);
+      if (res.ok) renderTable();
+    } catch (_) {
+      // IRIS nem elerheto: a tarolt adatok maradnak, Refresh-ig nem probaljuk ujra.
+      caseInfo.set(caseId, null);
+    } finally {
+      caseInfoLoading.delete(caseId);
+    }
+  }
+
   function detailField(label, valueHtml, opts) {
     opts = opts || {};
     const cls = "value" + (opts.mono ? " reasoning" : "") + (opts.cls ? " " + opts.cls : "");
@@ -958,7 +978,17 @@
         ? `<a class="iris-link" href="${escapeHtml(irisBaseUrl)}/case?cid=${encodeURIComponent(a.iris_case_id)}" target="_blank" rel="noopener">Case #${escapeHtml(a.iris_case_id)} megnyitása az IRIS-ben ↗</a>`
         : `Case #${escapeHtml(a.iris_case_id)}`;
       fields.push(detailField("DFIR-IRIS eset", link));
-      fields.push(detailField("Eset állapota", a.case_closed_at ? `Lezárva (${fmtTime(a.case_closed_at)})` : "Nyitott"));
+      if (!caseInfo.has(a.iris_case_id)) loadCaseInfo(a.iris_case_id);
+      const info = caseInfo.get(a.iris_case_id) || null;
+      const closed = info ? info.closed : !!a.case_closed_at;
+      let state = closed ? (a.case_closed_at ? `Lezárva (${fmtTime(a.case_closed_at)})` : "Lezárva") : "Nyitott";
+      if (info && info.closed && info.outcome) state += ` · ${info.outcome}`;
+      fields.push(detailField("Eset állapota", escapeHtml(state)));
+      const note = info ? info.closure_annotation : a.case_closure_note;
+      if (closed || note) {
+        fields.push(detailField("Lezárási annotáció", note ? escapeHtml(note) : '<span class="hint">Nincs megadva</span>',
+          { fullWidth: true, cls: "closure-note" }));
+      }
       if (a.correlated_with) {
         fields.push(detailField("Korrelálva",
           `<a class="alert-ref" href="${escapeHtml(DETAIL_PAGE(a.correlated_with))}" target="_blank" rel="noopener">${escapeHtml(a.correlated_with)}</a> esetébe került`));
@@ -1316,6 +1346,7 @@
     const btn = el("refreshBtn");
     btn.disabled = true;
     await SIEM.api("/api/v1/cases/sync", { method: "POST" }).catch(() => null);
+    caseInfo.clear();
     btn.disabled = false;
     await fetchAlerts();
   });

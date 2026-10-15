@@ -7,7 +7,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import AlertStatus, GroundTruth
-from app.iris_client import OUTCOME_FALSE_POSITIVE, OUTCOME_LEGITIMATE, OUTCOME_TRUE_POSITIVE, iris_client
+from app.iris_client import (
+    OUTCOME_FALSE_POSITIVE,
+    OUTCOME_LEGITIMATE,
+    OUTCOME_NAMES,
+    OUTCOME_TRUE_POSITIVE,
+    closure_annotation,
+    iris_client,
+)
 from app.iris_report import MergedAlert, false_positive_note, merge_note, merged_away_note
 from app.models import AlertRecord, User
 from app.normalize import related_log_excerpt
@@ -198,14 +205,23 @@ async def _close_case_fp(case_id: int, username: str, reason: str | None, displa
     await iris_client.add_case_notes(case_id, f"false positive ({username})", [("Closed as false positive", note)])
     await _best_effort(iris_client.add_case_tags(case_id, ["false-positive"]), f"tagging case {case_id}")
     await _best_effort(iris_client.set_case_outcome(case_id, OUTCOME_FALSE_POSITIVE), f"setting outcome of case {case_id}")
+    await _best_effort(iris_client.set_closure_annotation(case_id, _fp_annotation(username, reason)),
+                       f"setting closure annotation of case {case_id}")
     await iris_client.close_case(case_id)
     return True
 
 
-def _mark_case_closed(records: list[AlertRecord], case_ids: set[int], now: datetime) -> None:
+def _fp_annotation(username: str, reason: str | None) -> str:
+    return f"False positive ({username}, SIEMantics): {reason}" if reason else f"False positive ({username}, SIEMantics)"
+
+
+def _mark_case_closed(
+    records: list[AlertRecord], case_ids: set[int], now: datetime, note: str | None = None
+) -> None:
     for record in records:
         if record.iris_case_id in case_ids and record.case_closed_at is None:
             record.case_closed_at = now
+            record.case_closure_note = note
 
 
 def _label_false_positive(records: list[AlertRecord]) -> None:
@@ -230,7 +246,7 @@ async def close_as_false_positive(
             raise CaseActionError(502, "incident management backend unavailable") from exc
 
         _label_false_positive(records)
-        _mark_case_closed(records, {case_id}, datetime.utcnow())
+        _mark_case_closed(records, {case_id}, datetime.utcnow(), _fp_annotation(user.username, reason))
         await session.commit()
         logger.info("%s closed IRIS case %s as false positive (%d alert(s))", user.username, case_id, len(records))
         return records, was_open
@@ -257,7 +273,7 @@ async def _close_records_fp(
 
     labeled = sorted(records.values(), key=lambda r: r.received_at)
     _label_false_positive(labeled)
-    _mark_case_closed(labeled, set(case_ids), datetime.utcnow())
+    _mark_case_closed(labeled, set(case_ids), datetime.utcnow(), _fp_annotation(user.username, reason))
     for record in labeled:
         if record.status == AlertStatus.QUEUED:
             # Triazs elott lezarva: nem kerul LLM ele, es nem rendszer-dontes.
@@ -344,21 +360,68 @@ async def sync_closed_cases(session: AsyncSession) -> SyncOutcome:
         outcome.checked += 1
         if case is None or not case.get("close_date"):
             continue
-        async with _lock:
-            records = await get_records_in_cases(session, {case_id})
-            disposition = case_disposition(case)
-            now = datetime.utcnow()
-            for record in records:
-                if record.case_closed_at is not None:
-                    continue
-                record.case_closed_at = now
-                if disposition is not None and record.ground_truth != disposition:
-                    # A lezaras az IRIS-ben a vegso itelet, felulirja a korabbi cimket.
-                    record.ground_truth = disposition
-                    record.labeled_at = now
-                    outcome.labeled.append(record)
-            await session.commit()
+        outcome.labeled += await _apply_closed_case(session, case_id, case)
         outcome.closed_cases.append(case_id)
-        logger.info("case sync: IRIS case %s closed (outcome %s) -> %s", case_id, case.get("status_id"),
-                    disposition.value if disposition else "no disposition")
     return outcome
+
+
+async def _apply_closed_case(session: AsyncSession, case_id: int, case: dict) -> list[AlertRecord]:
+    # Lezart IRIS eset atvetele: lezaras ideje, annotacio, disposition; a frissen cimkezett rekordokat adja.
+    labeled: list[AlertRecord] = []
+    async with _lock:
+        records = await get_records_in_cases(session, {case_id})
+        disposition = case_disposition(case)
+        note = closure_annotation(case)
+        now = datetime.utcnow()
+        for record in records:
+            if record.case_closed_at is not None:
+                continue
+            record.case_closed_at = now
+            record.case_closure_note = note
+            if disposition is not None and record.ground_truth != disposition:
+                # A lezaras az IRIS-ben a vegso itelet, felulirja a korabbi cimket.
+                record.ground_truth = disposition
+                record.labeled_at = now
+                labeled.append(record)
+        await session.commit()
+    logger.info("case sync: IRIS case %s closed (outcome %s) -> %s", case_id, case.get("status_id"),
+                disposition.value if disposition else "no disposition")
+    return labeled
+
+
+async def case_info(session: AsyncSession, case_id: int) -> dict:
+    # Az IRIS eset aktualis allapota; lezart esetnel a tarolt annotacio is frissul.
+    records = await get_records_in_cases(session, {case_id})
+    if not records:
+        raise CaseActionError(404, "case not found")
+    try:
+        case = await iris_client.get_case(case_id)
+    except Exception as exc:
+        logger.warning("IRIS case %s could not be read: %s", case_id, exc)
+        raise CaseActionError(502, "incident management backend unavailable") from exc
+    if case is None:
+        raise CaseActionError(404, "case not found in IRIS")
+
+    closed = bool(case.get("close_date"))
+    note = closure_annotation(case)
+    if closed:
+        if any(r.case_closed_at is None for r in records):
+            await _apply_closed_case(session, case_id, case)
+        stale = [r for r in records if r.case_closure_note != note]
+        if stale:
+            # A lezaras utan irt vagy javitott annotacio is megjelenjen.
+            for record in stale:
+                record.case_closure_note = note
+            await session.commit()
+    try:
+        status_id = int(case.get("status_id") or 0)
+    except (TypeError, ValueError):
+        status_id = 0
+    return {
+        "iris_case_id": case_id,
+        "case_url": iris_client.case_url(case_id),
+        "closed": closed,
+        "close_date": str(case["close_date"]) if closed else None,
+        "outcome": OUTCOME_NAMES.get(status_id),
+        "closure_annotation": note,
+    }

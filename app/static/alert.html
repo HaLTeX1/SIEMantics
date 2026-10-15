@@ -121,6 +121,8 @@
   .field .value ul.analysis-list,
   .field .value ol.analysis-list { margin: 0; padding-left: 20px; }
   .field .value .analysis-list li + li { margin-top: 4px; }
+  .field .value.closure-note { white-space: pre-wrap; }
+  .hint { color: var(--text-muted); }
   .field .value.review-reason {
     background: rgba(250,178,25,0.10);
     border: 1px solid rgba(250,178,25,0.35);
@@ -241,7 +243,7 @@
     return null;
   }
 
-  function render(a, irisBaseUrl) {
+  function render(a, irisBaseUrl, info) {
     document.title = `SIEMantics - ${a.display_id}`;
     const sev = severityInfo(a.severity);
     const st = statusInfo(a.status);
@@ -280,7 +282,15 @@
         ? `<a class="iris-link" href="${escapeHtml(irisBaseUrl)}/case?cid=${encodeURIComponent(a.iris_case_id)}" target="_blank" rel="noopener">Case #${escapeHtml(a.iris_case_id)} megnyitása az IRIS-ben ↗</a>`
         : `Case #${escapeHtml(a.iris_case_id)}`;
       fields.push(field("DFIR-IRIS eset", link));
-      fields.push(field("Eset állapota", a.case_closed_at ? `Lezárva (${fmtTime(a.case_closed_at)})` : "Nyitott"));
+      const closed = info ? info.closed : !!a.case_closed_at;
+      let state = closed ? (a.case_closed_at ? `Lezárva (${fmtTime(a.case_closed_at)})` : "Lezárva") : "Nyitott";
+      if (info && info.closed && info.outcome) state += ` · ${info.outcome}`;
+      fields.push(field("Eset állapota", escapeHtml(state)));
+      const note = info ? info.closure_annotation : a.case_closure_note;
+      if (closed || note) {
+        fields.push(field("Lezárási annotáció", note ? escapeHtml(note) : '<span class="hint">Nincs megadva</span>',
+          { fullWidth: true, cls: "closure-note" }));
+      }
       if (a.correlated_with) {
         fields.push(field("Korrelálva",
           `<a href="alert.html?id=${encodeURIComponent(a.correlated_with)}">${escapeHtml(a.correlated_with)}</a> esetébe került (azonos forrás IP, hasonló riasztás)`));
@@ -325,7 +335,14 @@
       if (!alertRes.ok) throw new Error(`HTTP ${alertRes.status}`);
       const alertData = await alertRes.json();
       const configData = configRes && configRes.ok ? await configRes.json() : {};
-      render(alertData, configData.iris_base_url || "");
+      render(alertData, configData.iris_base_url || "", null);
+      if (alertData.iris_case_id != null) {
+        // Az IRIS eset elo allapota (annotacio) utolag, hogy a lap ne varjon az IRIS-re.
+        SIEM.api(`/api/v1/cases/${encodeURIComponent(alertData.iris_case_id)}`)
+          .then((r) => (r.ok ? r.json() : null))
+          .then((info) => { if (info) render(alertData, configData.iris_base_url || "", info); })
+          .catch(() => {});
+      }
     } catch (err) {
       content.innerHTML = `<div class="state error">Nem sikerült betölteni a riasztást: ${escapeHtml(err.message)}</div>`;
     }

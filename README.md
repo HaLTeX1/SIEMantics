@@ -247,6 +247,28 @@ Ha egy esetet közvetlenül az IRIS-ben zársz le, a SIEMantics átveszi a lezá
 
 Az IRIS-beli lezárás a végső ítélet: felülírja a korábbi címkét. Egy lezárt esetet a szinkron később nem kérdez le újra, így a lezárás után a SIEMantics-ben adott kézi címke megmarad. Egy IRIS-ben újranyitott esetet a szinkron nem követ. A SIEMantics-ből indított FP-lezárás az IRIS-ben is beállítja a *False positive* outcome-ot.
 
+### Lezárási annotáció
+
+Az IRIS esetek egy **Closure annotation** egyedi mezőben kapják meg, miért és hogyan zárták le őket. A mezőt egyszer kell felvenni az IRIS-ben, admin felhasználóval:
+
+1. **Advanced → Custom Attributes → Cases**, a szerkesztőbe:
+   ```json
+   {
+     "Closure": {
+       "Closure annotation": {
+         "type": "input_textfield",
+         "mandatory": false,
+         "value": ""
+       }
+     }
+   }
+   ```
+2. **Update** előtt pipáld be a *Partial overwrite* opciót, hogy a meglévő esetek is megkapják a mezőt.
+
+Ezután az eset összefoglalóján (**Summary → Edit**) megjelenik a *Closure* fül, ott írható az annotáció. A SIEMantics-ből indított false positive lezárás ide írja az indoklást (`False positive (<felhasználó>, SIEMantics): <indoklás>`).
+
+A SIEMantics a szinkronnál eltárolja az annotációt (`case_closure_note`). A riasztás részletpanelje és részletoldala élőben is lekéri az esetet (`GET /api/v1/cases/{iris_case_id}`), így a lezárás után írt vagy javított annotáció is megjelenik, az outcome-mal együtt. Ha a mező nincs felvéve az IRIS-ben, minden más ugyanúgy működik, csak annotáció nem lesz.
+
 ## Flood kezelés
 
 Egy zajos szabály vagy egy szkenner percek alatt több száz riasztást küldhet. Az alábbiak a sorrendjükben futnak le minden riasztásnál, az LLM-hívás előtt:
@@ -325,6 +347,7 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `POST` | `/api/v1/auth/logout` | kijelentkezés, a munkamenet törlése |
 | `GET` | `/api/v1/auth/me` | a bejelentkezett felhasználó adatai |
 | `POST` | `/api/v1/auth/password` | saját jelszó módosítása (`current_password`, `new_password`); a többi eszközön kijelentkeztet |
+| `GET` | `/api/v1/cases/{iris_case_id}` | az IRIS eset élő állapota: lezárva-e, outcome, lezárási annotáció |
 | `POST` | `/api/v1/cases/sync` | az IRIS-ben lezárt esetek kimenetelének azonnali átvétele, lásd [IRIS lezárás szinkron](#iris-lezárás-szinkron) |
 | `POST` | `/api/v1/cases/merge` | riasztások összevonása egy SIEMantics csoportba, nyitott IRIS eset esetén az IRIS-ben is (`alert_refs`), lásd [Case műveletek](#case-műveletek-false-positive-és-összevonás) |
 | `POST` | `/api/v1/cases/groups/{ref}/false-positive` | a riasztás csoportjának megjelölése false positive-ként, a nyitott IRIS esetek lezárása |

@@ -80,3 +80,62 @@ def test_false_positive_close_sets_iris_outcome(logged_in, iris):
     assert get(logged_in, alert["display_id"])["case_closed_at"] is not None
     # SIEMantics-bol lezarva: a szinkron mar nem kerdezi le.
     assert logged_in.post(SYNC).json()["checked"] == 0
+
+
+# --- lezarasi annotacio
+
+def test_closure_annotation_is_synced(logged_in, iris):
+    alert = escalated(logged_in, "a1")
+    case_id = alert["iris_case_id"]
+    iris.closed.add(case_id)
+    iris.outcomes[case_id] = 2
+    iris.annotations[case_id] = "  Ransomware stopped, host reimaged.  "
+    logged_in.post(SYNC)
+    assert get(logged_in, alert["display_id"])["case_closure_note"] == "Ransomware stopped, host reimaged."
+
+
+def test_case_info_is_live_and_refreshes_the_note(logged_in, iris):
+    alert = escalated(logged_in, "a2")
+    case_id = alert["iris_case_id"]
+    info = logged_in.get(f"/api/v1/cases/{case_id}").json()
+    assert info["closed"] is False and info["closure_annotation"] is None and info["outcome"] == "Unknown"
+
+    # Lezaras, majd az annotacio utolag kerul be: a szinkron mar nem nezi, a reszletpanel igen.
+    iris.closed.add(case_id)
+    iris.outcomes[case_id] = 5
+    logged_in.post(SYNC)
+    iris.annotations[case_id] = "Admin maintenance window"
+    info = logged_in.get(f"/api/v1/cases/{case_id}").json()
+    assert info["closed"] is True and info["outcome"] == "Legitimate"
+    assert info["closure_annotation"] == "Admin maintenance window"
+    record = get(logged_in, alert["display_id"])
+    assert record["case_closure_note"] == "Admin maintenance window" and record["ground_truth"] == "false_positive"
+
+
+def test_case_info_unknown_case(logged_in, iris):
+    assert logged_in.get("/api/v1/cases/987654").status_code == 404
+
+
+def test_case_info_closes_unsynced_case(logged_in, iris):
+    alert = escalated(logged_in, "a3")
+    iris.closed.add(alert["iris_case_id"])
+    iris.outcomes[alert["iris_case_id"]] = 4
+    logged_in.get(f"/api/v1/cases/{alert['iris_case_id']}")
+    record = get(logged_in, alert["display_id"])
+    assert record["case_closed_at"] is not None and record["ground_truth"] == "true_positive"
+
+
+def test_false_positive_close_writes_annotation(logged_in, iris):
+    alert = escalated(logged_in, "a4")
+    case_id = alert["iris_case_id"]
+    logged_in.post(f"/api/v1/cases/{case_id}/false-positive", json={"reason": "vulnerability scanner"})
+    assert iris.annotations[case_id] == "False positive (admin, SIEMantics): vulnerability scanner"
+    assert get(logged_in, alert["display_id"])["case_closure_note"] == iris.annotations[case_id]
+
+
+def test_false_positive_close_without_closure_field(logged_in, iris):
+    # Ha az IRIS-ben nincs felveve a mezo, a lezaras attol meg sikeres.
+    iris.has_closure_field = False
+    alert = escalated(logged_in, "a5")
+    res = logged_in.post(f"/api/v1/cases/{alert['iris_case_id']}/false-positive", json={})
+    assert res.status_code == 200 and alert["iris_case_id"] in iris.closed

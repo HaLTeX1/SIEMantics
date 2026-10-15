@@ -225,6 +225,8 @@ class AlertRecordOut(BaseModel):
     suppression_rule_id: Optional[int] = None
     # Az IRIS eset lezarasa (IRIS-ben vagy SIEMantics-bol).
     case_closed_at: Optional[datetime] = None
+    # Az IRIS eset lezarasi annotacioja.
+    case_closure_note: Optional[str] = None
 
 
 class LabelRequest(BaseModel):
@@ -271,6 +273,16 @@ class BulkFalsePositiveResult(BaseModel):
 
 class BulkDeleteResult(BaseModel):
     deleted: list[str]
+
+
+class CaseInfoOut(BaseModel):
+    # Az IRIS eset aktualis allapota a reszletpanelhez.
+    iris_case_id: int
+    case_url: str
+    closed: bool
+    close_date: Optional[str] = None
+    outcome: Optional[str] = None
+    closure_annotation: Optional[str] = None
 
 
 class CaseSyncResult(BaseModel):

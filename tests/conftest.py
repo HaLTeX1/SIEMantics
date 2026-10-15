@@ -57,6 +57,9 @@ class FakeIris:
         self.fail_notes = False
         # IRIS kimenetel (status_id) esetenkent.
         self.outcomes: dict[int, int] = {}
+        # Lezarasi annotacio esetenkent; False: a mezo nincs definialva az IRIS-ben.
+        self.annotations: dict[int, str] = {}
+        self.has_closure_field = True
 
     async def create_case_from_alert(self, alert: NormalizedAlert, triage, enrichment=None, **kwargs):
         if self.fail:
@@ -98,7 +101,16 @@ class FakeIris:
             "close_date": "2026-10-14" if case_id in self.closed else None,
             "status_id": self.outcomes.get(case_id, 0),
             "case_tags": ",".join(self.tags.get(case_id, [])),
+            "custom_attributes": {"Closure": {"Closure annotation": {
+                "type": "input_textfield", "value": self.annotations.get(case_id, "")}}}
+            if self.has_closure_field else {},
         }
+
+    async def set_closure_annotation(self, case_id: int, text: str) -> bool:
+        if not self.has_closure_field:
+            return False
+        self.annotations[case_id] = text
+        return True
 
     async def set_case_outcome(self, case_id: int, status_id: int) -> None:
         self.outcomes[case_id] = status_id
@@ -109,7 +121,8 @@ def iris(monkeypatch) -> FakeIris:
     fake = FakeIris()
     monkeypatch.setattr(iris_client, "create_case_from_alert", fake.create_case_from_alert)
     monkeypatch.setattr(iris_client, "add_alert_to_case", fake.add_alert_to_case)
-    for name in ("is_open", "add_case_notes", "add_case_tags", "close_case", "get_case", "set_case_outcome"):
+    for name in ("is_open", "add_case_notes", "add_case_tags", "close_case", "get_case", "set_case_outcome",
+                 "set_closure_annotation"):
         monkeypatch.setattr(iris_client, name, getattr(fake, name))
     return fake
 

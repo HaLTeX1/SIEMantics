@@ -64,6 +64,8 @@ class AlertRecord(Base):
     suppression_rule_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     # Mikor latta a SIEMantics lezartnak az IRIS esetet; utana nem kerdezi le ujra.
     case_closed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # Az IRIS eset "Closure annotation" egyedi mezoje (lezarasi annotacio).
+    case_closure_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     @property
     def display_id(self) -> str:

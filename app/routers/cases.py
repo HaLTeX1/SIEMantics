@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import get_current_user
 from app.case_actions import (
     CaseActionError,
+    case_info,
     close_as_false_positive,
     close_group_as_false_positive,
     merge_alerts,
@@ -24,6 +25,7 @@ from app.iris_client import iris_client
 from app.schemas import (
     AssigneeOut,
     CaseAssignmentOut,
+    CaseInfoOut,
     CaseSyncResult,
     CaseAssignRequest,
     FalsePositiveRequest,
@@ -91,6 +93,15 @@ async def sync_cases(session: AsyncSession = Depends(get_session)):
         closed_cases=outcome.closed_cases,
         labeled=[r.display_id for r in outcome.labeled],
     )
+
+
+@router.get("/{iris_case_id}", response_model=CaseInfoOut, dependencies=[Depends(get_current_user)])
+async def get_case_info(iris_case_id: int, session: AsyncSession = Depends(get_session)):
+    # Az IRIS eset elo allapota: lezaras, kimenetel, lezarasi annotacio.
+    try:
+        return await case_info(session, iris_case_id)
+    except CaseActionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.post("/merge", response_model=MergeResult)
