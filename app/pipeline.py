@@ -14,10 +14,10 @@ from app.correlation import find_correlated_record, join_group
 from app.db import async_session
 from app.enrichment import enrich_iocs
 from app.enums import AlertStatus, GroundTruth
-from app.guardrails import decide_status
+from app.guardrails import Evidence, decide_status
 from app.iris_client import iris_client
 from app.hosts import host_context, ip_context
-from app.llm_engine import LlmUnavailable, triage_alert
+from app.llm_engine import LlmUnavailable, second_opinion_enabled, triage_alert
 from app.models import AlertRecord, User
 from app.normalize import normalize_wazuh_alert, related_log_excerpt
 from app.repository import find_related_alerts, save_alert_record
@@ -434,6 +434,31 @@ async def _apply_duplicate(
     return ProcessOutcome(triage=triage, case=case, correlated=anchor)
 
 
+def needs_second_opinion(triage: TriageResult, evidence: Evidence) -> bool:
+    # Csak megerosites nelkuli FP iteletnel kerdezunk masik modellt (kvotat fogyaszt).
+    return (
+        not triage.is_true_positive
+        and triage.engine == "openrouter"
+        and settings.require_fp_corroboration
+        and not evidence.fp_corroborated()
+        and second_opinion_enabled()
+    )
+
+
+async def second_opinion(alert, related, environment, history) -> tuple[bool | None, str]:
+    # (True, ha a masodik modell is FP-t mond; None, ha nem elerheto) es egy sor az indoklashoz.
+    model = settings.second_opinion_model.strip()
+    try:
+        other = await triage_alert(alert, related, environment, history, model=model)
+    except LlmUnavailable as exc:
+        logger.warning("second opinion unavailable: %s", exc)
+        return None, f"Second opinion ({model}): unavailable."
+    verdict = "true positive" if other.is_true_positive else "false positive"
+    return not other.is_true_positive, (
+        f"Second opinion ({other.model or model}): {verdict}, confidence {other.confidence:.2f}. {other.summary or ''}".strip()
+    )
+
+
 async def _defer(session: AsyncSession, record: AlertRecord, exc: LlmUnavailable, started: float) -> ProcessOutcome:
     # A mock nem dont helyette: a rekord var; magas szintu vagy tul regota varo riasztas elemzohoz kerul.
     waited = datetime.utcnow() - record.received_at
@@ -495,7 +520,11 @@ async def process_record(session: AsyncSession, record: AlertRecord) -> ProcessO
     record.triage_engine = triage.engine
     record.triage_model = triage.model
     record.llm_analysis = triage.analysis() or None
-    alert_status, review_reason = decide_status(alert, triage)
+    evidence = Evidence.from_history(history)
+    if needs_second_opinion(triage, evidence):
+        evidence.second_opinion_fp, note = await second_opinion(alert, related, environment, history)
+        record.llm_reasoning = f"{record.llm_reasoning}\n\n{note}"
+    alert_status, review_reason = decide_status(alert, triage, evidence)
     record.auto_status = alert_status
 
     if alert_status != AlertStatus.ESCALATED:

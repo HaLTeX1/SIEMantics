@@ -68,6 +68,11 @@ class AlertRecord(Base):
     case_closure_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     @property
+    def is_closed(self) -> bool:
+        # Ugyanaz, mint a repository.closed_condition, a valaszban.
+        return self.case_closed_at is not None or (self.iris_case_id is None and self.ground_truth is not None)
+
+    @property
     def display_id(self) -> str:
         # Egyedi riasztas azonosito (a Wazuh alert_id nem egyedi).
         return f"ID-{self.id}"

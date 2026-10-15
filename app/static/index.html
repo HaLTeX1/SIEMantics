@@ -222,6 +222,8 @@
   }
   tbody tr:hover { background: rgba(255,255,255,0.03); }
   tbody tr.selected { background: rgba(57,135,229,0.08); }
+  tbody tr.closed-row td { opacity: 0.6; }
+  tbody tr.closed-row.selected td, tbody tr.closed-row:hover td { opacity: 0.85; }
 
   .title-main { font-weight: 600; color: var(--text-primary); }
   .title-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
@@ -439,6 +441,7 @@
         <option value="none">Nincs felelős</option>
       </select>
       <label class="group-toggle"><input type="checkbox" id="collapseGroups" checked /> Csoportok összecsukása</label>
+      <label class="group-toggle" title="Lezárt: az IRIS esete lezárult, vagy eset nélkül már kapott TP/FP ítéletet"><input type="checkbox" id="showClosed" /> Lezártak megjelenítése</label>
     </div>
 
     <div class="card">
@@ -532,6 +535,10 @@
   "use strict";
 
   const API_ALERTS = "/api/v1/alerts?limit=500";
+  // Lezartak csak keresre: a szerver szur, igy a nyitott riasztasok nem szorulnak ki az 500-as limitbol.
+  const API_ALERTS_OPEN = API_ALERTS + "&include_closed=false";
+  const SHOW_CLOSED_KEY = "siemantics.showClosed";
+  let loadedWithClosed = null;
   // Regi # elotag levagasa, URL fragmentet kezdene.
   const refOf = (displayId) => displayId.replace(/^#/, "");
   const API_LABEL = (displayId) => `/api/v1/alerts/${encodeURIComponent(refOf(displayId))}/label`;
@@ -562,6 +569,7 @@
 
   const el = (id) => document.getElementById(id);
   const collapseGroups = el("collapseGroups");
+  const showClosed = el("showClosed");
   const searchInput = el("searchInput");
   const statusFilter = el("statusFilter");
   const dispositionFilter = el("dispositionFilter");
@@ -1036,9 +1044,11 @@
     const auto = !!(opts && opts.auto);
     if (!auto) errorState.hidden = true;
     try {
-      const res = await SIEM.api(API_ALERTS);
+      const withClosed = wantClosed();
+      const res = await SIEM.api(withClosed ? API_ALERTS : API_ALERTS_OPEN);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       allAlerts = await res.json();
+      loadedWithClosed = withClosed;
       lastFetchAt = Date.now();
       errorState.hidden = true;
       lastUpdatedEl.textContent = "Frissítve: " + new Date().toLocaleTimeString("hu-HU");
@@ -1088,7 +1098,16 @@
     if (!document.hidden) autoRefresh();
   });
 
+  function wantClosed() {
+    // TP/FP disposition szuresnel a lezartak is kellenek, kulonben ures lenne a lista.
+    return showClosed.checked || ["true_positive", "false_positive"].includes(dispositionFilter.value);
+  }
+
   function applyFilters() {
+    if (loadedWithClosed !== null && wantClosed() !== loadedWithClosed) {
+      fetchAlerts();
+      return;
+    }
     const q = searchInput.value.trim().toLowerCase();
     const status = statusFilter.value;
     const disposition = dispositionFilter.value;
@@ -1163,6 +1182,10 @@
     return Array.from(out);
   }
 
+  function closedBadge(a) {
+    return a.is_closed ? '<span class="badge badge-outline">Lezárva</span>' : "";
+  }
+
   function groupBadge(a) {
     return inGroup(a) ? `<span class="badge badge-outline group-badge">Csoport · ${a.group_size} riasztás</span>` : "";
   }
@@ -1170,6 +1193,9 @@
   function renderTable() {
     if (filtered.length === 0) {
       tableBody.innerHTML = "";
+      emptyState.textContent = wantClosed()
+        ? "Nincs a szűrésnek megfelelő riasztás."
+        : "Nincs a szűrésnek megfelelő nyitott riasztás. A lezártakat a „Lezártak megjelenítése” kapcsolóval láthatod.";
       emptyState.hidden = false;
       rowCountEl.textContent = "";
       return;
@@ -1191,11 +1217,11 @@
       const confidence = a.llm_confidence != null ? Math.round(a.llm_confidence * 100) + "%" : "-";
 
       const mainRow = `
-        <tr class="data-row ${isSelected ? "selected" : ""}" data-id="${rowId}">
+        <tr class="data-row ${isSelected ? "selected" : ""} ${a.is_closed ? "closed-row" : ""}" data-id="${rowId}">
           <td><input type="checkbox" class="row-check" data-id="${rowId}" ${isSelected ? "checked" : ""} /></td>
           <td>
             <div class="title-main">${escapeHtml(a.rule_description)}</div>
-            <div class="title-sub"><span class="alert-ref">${rowId}</span> · ${escapeHtml(a.alert_id)}${groupBadge(a)}</div>
+            <div class="title-sub"><span class="alert-ref">${rowId}</span> · ${escapeHtml(a.alert_id)}${groupBadge(a)}${closedBadge(a)}</div>
           </td>
           <td>${badge(sev.label, sev.cls)}</td>
           <td>${escapeHtml(a.source_ip || "-")}</td>
@@ -1325,6 +1351,11 @@
     submitSuppress();
   });
   collapseGroups.addEventListener("change", applyFilters);
+  try { showClosed.checked = localStorage.getItem(SHOW_CLOSED_KEY) === "1"; } catch (_) { /* nincs tarolo */ }
+  showClosed.addEventListener("change", () => {
+    try { localStorage.setItem(SHOW_CLOSED_KEY, showClosed.checked ? "1" : "0"); } catch (_) { /* nincs tarolo */ }
+    applyFilters();
+  });
   el("clearSelectionBtn").addEventListener("click", () => {
     selected.clear();
     renderTable();

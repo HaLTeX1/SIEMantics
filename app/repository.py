@@ -1,7 +1,7 @@
 import re
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import GroundTruth
@@ -17,10 +17,21 @@ async def create_alert_record(session: AsyncSession, **fields) -> AlertRecord:
     return record
 
 
-async def list_alert_records(session: AsyncSession, limit: int = 100, offset: int = 0) -> list[AlertRecord]:
-    result = await session.execute(
-        select(AlertRecord).order_by(AlertRecord.received_at.desc()).limit(limit).offset(offset)
+def closed_condition():
+    # Lezart: az IRIS esete lezarult, vagy eset nelkul mar elemzoi itelete van (nyitott esetnel meg folyik a munka).
+    return or_(
+        AlertRecord.case_closed_at.is_not(None),
+        and_(AlertRecord.iris_case_id.is_(None), AlertRecord.ground_truth.is_not(None)),
     )
+
+
+async def list_alert_records(
+    session: AsyncSession, limit: int = 100, offset: int = 0, include_closed: bool = True
+) -> list[AlertRecord]:
+    stmt = select(AlertRecord)
+    if not include_closed:
+        stmt = stmt.where(~closed_condition())
+    result = await session.execute(stmt.order_by(AlertRecord.received_at.desc()).limit(limit).offset(offset))
     return list(result.scalars().all())
 
 

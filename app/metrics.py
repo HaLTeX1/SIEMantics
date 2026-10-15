@@ -2,7 +2,8 @@ from statistics import mean, median
 
 from app.enums import AlertStatus, GroundTruth
 from app.models import AlertRecord
-from app.schemas import EngineMetrics, TriageMetrics
+from app.config import settings
+from app.schemas import Calibration, CalibrationBucket, EngineMetrics, TriageMetrics
 
 
 # Elemzo altal triazs elott lezart, illetve csak kontextuskent tarolt rekordok.
@@ -65,6 +66,43 @@ def _scores(records: list[AlertRecord]) -> EngineMetrics:
     )
 
 
+_BUCKETS = ((0.0, 0.5), (0.5, 0.7), (0.7, 0.8), (0.8, 0.9), (0.9, 1.01))
+_THRESHOLD_PRECISION = 0.95
+_THRESHOLD_MIN_SAMPLES = 5
+
+
+def calibration(samples: list[tuple[float, bool, bool]]) -> Calibration:
+    # samples: (confidence, LLM TP-t mondott, valojaban TP); a confidence az itelet helyessegere vonatkozik.
+    buckets = []
+    for low, high in _BUCKETS:
+        hits = [verdict == truth for conf, verdict, truth in samples if low <= conf < high]
+        label = f"{low:.1f}-{min(high, 1.0):.1f}"
+        buckets.append(CalibrationBucket(range=label, n=len(hits), correct=sum(hits),
+                                         accuracy=round(sum(hits) / len(hits), 3) if hits else None))
+    correct = [c for c, verdict, truth in samples if verdict == truth]
+    wrong = [c for c, verdict, truth in samples if verdict != truth]
+
+    # FP iteletek: a legkisebb kuszob, ami felett az elnyomas eleg biztos lenne.
+    fp_verdicts = sorted((c, not truth) for c, verdict, truth in samples if not verdict)
+    suggested, suggested_samples = None, 0
+    for threshold in sorted({c for c, _ in fp_verdicts}):
+        above = [ok for c, ok in fp_verdicts if c >= threshold]
+        if len(above) < _THRESHOLD_MIN_SAMPLES:
+            break
+        if sum(above) / len(above) >= _THRESHOLD_PRECISION:
+            suggested, suggested_samples = threshold, len(above)
+            break
+    return Calibration(
+        sample_size=len(samples),
+        buckets=buckets,
+        mean_confidence_correct=round(mean(correct), 3) if correct else None,
+        mean_confidence_wrong=round(mean(wrong), 3) if wrong else None,
+        suggested_fp_threshold=suggested,
+        suggested_fp_threshold_samples=suggested_samples,
+        current_threshold=settings.review_confidence_threshold,
+    )
+
+
 def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
     # Meg nincs triazsolva, vagy az elemzo triazs elott lezarta: nincs mit kiertekelni.
     records = [r for r in records if r.status != AlertStatus.QUEUED and r.triage_engine not in _NOT_PREDICTIONS]
@@ -102,8 +140,15 @@ def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
     by_engine = {engine: _scores([r for r in decided if r.triage_engine == engine]) for engine in engines}
     independent = _scores([r for r in decided if r.triage_engine not in _COPIED_DECISIONS])
 
+    llm_samples = [
+        (r.llm_confidence, bool(r.llm_is_true_positive), r.ground_truth == GroundTruth.TRUE_POSITIVE)
+        for r in decided
+        if r.triage_engine == "openrouter" and r.ground_truth is not None and r.llm_confidence is not None
+    ]
+
     return TriageMetrics(
         independent=independent,
+        calibration=calibration(llm_samples),
         by_engine=by_engine,
         sample_size=len(records),
         labeled_size=labeled_total,

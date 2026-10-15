@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     review_confidence_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
     # Prompt injection vedohalo: ettol a szinttol az LLM FP itelete NEEDS_REVIEW.
     review_severity_floor: int = 12
+    # Az LLM FP itelete csak megerositessel (elemzoi elozmeny vagy masodik velemeny) nyom el, kulonben NEEDS_REVIEW.
+    require_fp_corroboration: bool = True
+    # Ennyi egyezo elemzoi itelet (es egy ellentetes sem) kell ugyanarra a szabalyra a megerositeshez.
+    history_min_agreement: int = Field(default=2, ge=1)
+    # Masodik velemeny megerosites nelkuli FP iteletnel, egy masik ingyenes modellel (ures = ki).
+    second_opinion_model: str = ""
 
     # DFIR-IRIS
     iris_base_url: str

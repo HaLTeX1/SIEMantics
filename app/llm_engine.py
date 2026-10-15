@@ -179,10 +179,15 @@ def build_user_prompt(
     return f"Triage this alert.\n<alert_data>\n{encoded}\n</alert_data>"
 
 
-async def _openrouter_triage(alert: NormalizedAlert, user_prompt: str) -> TriageResult:
-    extra = {"models": _models} if len(_models) > 1 else None
+def _is_free(model: str) -> bool:
+    return model == "openrouter/free" or model.endswith(":free")
+
+
+async def _openrouter_triage(alert: NormalizedAlert, user_prompt: str, model: str | None = None) -> TriageResult:
+    models = [model] if model else _models
+    extra = {"models": models} if len(models) > 1 else None
     response = await _client.chat.completions.create(
-        model=_models[0],
+        model=models[0],
         messages=[
             {"role": "system", "content": _SYSTEM_PROMPT},
             {"role": "user", "content": user_prompt},
@@ -203,13 +208,26 @@ def llm_configured() -> bool:
     return _client is not None
 
 
+def second_opinion_enabled() -> bool:
+    model = settings.second_opinion_model.strip()
+    if not model or _client is None:
+        return False
+    if not _is_free(model):
+        logger.error("SECOND_OPINION_MODEL=%s is not a free model, second opinions are disabled", model)
+        return False
+    return True
+
+
 async def triage_alert(
     alert: NormalizedAlert,
     related: list[RelatedAlert] | None = None,
     environment: dict | None = None,
     analyst_history: list[dict] | None = None,
+    *,
+    model: str | None = None,
 ) -> TriageResult:
     # Triazs OpenRouterrel (csak free); kulcs nelkul a mock motor dont, hibanal LlmUnavailable (kesobb ujra).
+    # model: masik (ingyenes) modell, pl. masodik velemenyhez.
 
     if _client is None:
         logger.warning("OpenRouter not configured/available, using mock triage engine for alert %s", alert.alert_id)
@@ -217,7 +235,7 @@ async def triage_alert(
 
     user_prompt = build_user_prompt(alert, related, environment, analyst_history)
     try:
-        return await _openrouter_triage(alert, user_prompt)
+        return await _openrouter_triage(alert, user_prompt, model)
     except (RateLimitError, PermissionDeniedError) as exc:
         raise LlmUnavailable(f"OpenRouter quota or rate limit: {exc}", quota=True) from exc
     except APIStatusError as exc:

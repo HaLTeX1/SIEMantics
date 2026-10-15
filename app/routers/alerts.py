@@ -152,8 +152,12 @@ async def _process_now(session: AsyncSession, record: AlertRecord) -> dict:
 
 
 @router.get("/alerts", response_model=list[AlertRecordOut], dependencies=[Depends(get_current_user)])
-async def list_alerts(limit: int = 100, offset: int = 0, session: AsyncSession = Depends(get_session)):
-    return await _with_assignees(session, await list_alert_records(session, limit=limit, offset=offset))
+async def list_alerts(
+    limit: int = 100, offset: int = 0, include_closed: bool = True, session: AsyncSession = Depends(get_session)
+):
+    # include_closed=false: csak a nyitott riasztasok (a dashboard alapnezete).
+    records = await list_alert_records(session, limit=limit, offset=offset, include_closed=include_closed)
+    return await _with_assignees(session, records)
 
 
 @router.get("/alerts/{alert_ref}", response_model=AlertRecordOut, dependencies=[Depends(get_current_user)])

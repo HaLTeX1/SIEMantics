@@ -91,6 +91,8 @@ Az app induláskor (`lifespan`) automatikusan létrehozza a táblákat a `DATABA
 | `OPENROUTER_TIMEOUT_SECONDS` | alapértelmezett: `60` — egy OpenRouter hívás maximális ideje (1 újrapróbálkozással); lejárat után a riasztás később újra próbálkozik (lásd [LLM-kiesés](#llm-kiesés-kvóta)). Enélkül az OpenAI kliens 600 mp-es alapértéke él, ami egy lassú ingyenes modellnél percekre feltartaná a sort |
 | `LLM_MOCK_SEVERITY_THRESHOLD` | mock motor küszöbe (Wazuh severity level), alapértelmezett: `7` |
 | `REVIEW_CONFIDENCE_THRESHOLD` | alapértelmezett: `0.7` (0–1) — ha a triázs false positive-ot mond, de a confidence ez alatt van, a riasztás `needs_review` státuszt kap `suppressed` helyett (lásd [Bizonytalan döntések](#bizonytalan-döntések-needs_review)) |
+| `REQUIRE_FP_CORROBORATION` / `HISTORY_MIN_AGREEMENT` | alapértelmezett: `true` / `2`; az LLM FP-ítélete csak elemzői előzménnyel vagy második véleménnyel nyom el automatikusan, lásd [Confidence és megerősítés](#confidence-és-megerősítés) |
+| `SECOND_OPINION_MODEL` | alapértelmezett: üres (ki); egy másik ingyenes (`:free`) modell, ami a megerősítés nélküli FP-ítéleteket ellenőrzi |
 | `REVIEW_SEVERITY_FLOOR` | alapértelmezett: `12` — prompt injection védőháló: ennél a Wazuh szintnél (vagy felette) az LLM false positive ítélete nem nyomhatja el a riasztást, `needs_review` lesz belőle |
 | `IRIS_BASE_URL` | DFIR-IRIS instancia URL-je |
 | `IRIS_API_KEY` | DFIR-IRIS API kulcs |
@@ -371,6 +373,16 @@ A `python -m app.eval_replay` a címkézett, önálló döntésű (nem dedup/flo
 - A hívások között `--delay` (alapból 4) másodpercet vár; kvótahibánál megáll, és a részeredményt adja.
 - A `GET /api/v1/metrics` válaszában az `independent` mező mutatja az önálló döntések pontosságát (a dedup-, flood- és elnyomás-másolatok nélkül, amelyek az összesített pontosságot felfújják), a `by_engine` pedig motoronként bontja.
 
+### Confidence és megerősítés
+
+Az LLM saját bevallott confidence-e az éles mérésben nem jelezte, hogy az ítélete helyes-e: a hibás döntések átlaga 0,884, a helyeseké 0,851, a 0,9 feletti sávban a döntések 27%-a volt helyes. Ezért az automatikus elnyomás és az esetnyitás már nem csak erre épül:
+
+- **FP-ítélet:** csak akkor nyom el automatikusan, ha **megerősített**: az elemzők ugyanerre a Wazuh szabályra legalább `HISTORY_MIN_AGREEMENT` (alapból 2) riasztást FP-ként címkéztek, és egyet sem TP-ként, vagy a második vélemény is FP-t mond. Különben `needs_review` („not corroborated”). Ez tanuló kör: amíg egy riasztástípusról nincs elemzői ítélet, emberhez kerül; utána az ismétlődései automatikusan elnyomódnak. Kikapcsolható: `REQUIRE_FP_CORROBORATION=false`.
+- **TP-ítélet, amelynek az elemzők ellentmondanak:** ha az LLM TP-t mond, de az elemzők ugyanerre a szabályra rendre FP-t mondtak, a riasztás nem nyit IRIS esetet, hanem `needs_review` lesz. A `REVIEW_SEVERITY_FLOOR` (12) szint fölött, és ha a riasztás prompt injectionre utal, továbbra is eszkalál.
+- **Második vélemény (opcionális):** ha a `SECOND_OPINION_MODEL` egy másik ingyenes modell, akkor a megerősítés nélküli FP-ítéleteket ez is megnézi; ha egyetért, a riasztás elnyomódik, ha nem, `needs_review`. A válasza az indoklás végére kerül. Kvótát fogyaszt, ezért alapból ki van kapcsolva.
+- **`REVIEW_CONFIDENCE_THRESHOLD`:** kiegészítő szűrő marad (az ez alatti FP-ítélet mindig `needs_review`).
+- **Mérés:** a `GET /api/v1/metrics` `calibration` mezője a címkézett LLM-döntésekből mutatja, mennyire jelzi a confidence a helyességet: sávonkénti pontosság, a helyes és a hibás döntések átlagos confidence-e, és egy javasolt FP-küszöb, ha van olyan érték, amely felett az FP-ítéletek legalább 95%-a helyes. Ehhez legalább 5 ítélet kell; a `suggested_fp_threshold_samples` mutatja, hányra épül. Ha nincs ilyen érték, a confidence-re nem érdemes építeni. A visszajátszó mérés (`--second-opinion` kapcsolóval a második véleményt is) ugyanezt kiírja az új ítéletekre.
+
 ## Felhasználókezelés
 
 A dashboard és az olvasó/címkéző API végpontok (`GET /alerts`, `GET /alerts/{id}`, `PATCH /alerts/{id}/label`, `GET /metrics`, `GET /config`) bejelentkezést igényelnek. A Wazuh webhook (`POST /api/v1/alerts`) továbbra is az `X-Webhook-Token` headerrel hitelesít, a `/healthz` nyitott.
@@ -398,6 +410,7 @@ A `/` a `/ui/`-ra irányít (bejelentkezés nélkül a `/ui/login.html`-re dob),
 
 - **Timeline** — riasztások száma időbucketenként (óránként vagy naponta, a szűrt időtartománytól függően), hover tooltippel.
 - **Szűrők** — szabadszavas keresés (`ID`/rule/Wazuh alert ID/forrás IP), státusz (escalated/needs review/suppressed/error/queued), disposition (confirmed TP/FP/undetermined), időtartomány.
+- **Lezártak elrejtése** — alapból csak a nyitott riasztások látszanak. Lezártnak számít, aminek az IRIS esete lezárult, vagy aminek nincs esete, de már kapott TP/FP ítéletet; ami nyitott esethez tartozik, címkével együtt is látszik, mert azon még dolgoznak. A „Lezártak megjelenítése” kapcsolóval (a böngésző megjegyzi) halványítva, „Lezárva” jelzéssel megjelennek; „Confirmed TP/FP” disposition-szűrésnél maguktól is. A szűrés a szerveren történik (`GET /api/v1/alerts?include_closed=false`), így a sok lezárt riasztás nem szorítja ki a nyitottakat a betöltött 500-ból; a rekordok `is_closed` mezője jelzi az állapotot.
 - **Tábla** — minden riasztás egyedi `ID`-ja, severity, entity (forrás IP), triázs motor (openrouter/mock), confidence, státusz és disposition badge-ekkel, időbélyeggel.
 - **Felelős** — escalated riasztásoknál (van IRIS case) a case felelőse; szűrhető, és a részletpanelen hozzárendelhető (lásd [Felhasználókezelés](#felhasználókezelés)).
 - **Riasztás részletei** — egy sorra kattintva (vagy a ▸ gombbal) a sor alatt kinyílik egy panel a teljes LLM indoklással, a döntést hozó modellel, kinyert IoC-kkel (VirusTotal/AbuseIPDB enrichmenttel, ha van), hibaüzenettel (ha volt) és a DFIR-IRIS eset linkjével. `needs_review` riasztásnál kiemelve látszik a felülvizsgálat oka, nem eszkalált riasztásnál pedig az „Eszkalálás IRIS esetté” gomb (lásd [Kézi eszkaláció](#kézi-eszkaláció)). A ⧉ gombbal ugyanez a részletnézet önálló (popup) ablakban is megnyitható (`app/static/alert.html`, a `GET /api/v1/alerts/{ref}` végpontot hívja).
@@ -410,7 +423,7 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | Metódus | Útvonal | Leírás |
 |---|---|---|
 | `POST` | `/api/v1/alerts` | Wazuh riasztás fogadása: eltárolja `queued` státusszal és sorba teszi, a triázs és az esetleges IRIS eset a háttérben fut; azonnal `202`-t ad, a válaszban az egyedi `id` (`ID-42`). `?wait=true`: a triázs a kérésen belül fut, és a teljes eredményt adja vissza (státusz, triázs, IRIS eset, `correlated_with`; hibánál `502`) — tesztelésre (Postman, `test_requests.sh`) |
-| `GET` | `/api/v1/alerts` | eltárolt riasztás-rekordok listázása (`limit`, `offset`) |
+| `GET` | `/api/v1/alerts` | eltárolt riasztás-rekordok listázása (`limit`, `offset`; `include_closed=false`: csak a nyitottak) |
 | `GET` | `/api/v1/alerts/{ref}` | egy riasztás-rekord teljes részlete; `ref` = `ID-42` vagy Wazuh `alert_id` (legutóbbi) |
 | `PATCH` | `/api/v1/alerts/{ref}/label` | ground truth címkézés (`true_positive` / `false_positive`) |
 | `POST` | `/api/v1/alerts/{ref}/escalate` | kézi eszkaláció IRIS esetté (`needs_review`/`suppressed`/`error` riasztásnál), lásd [Kézi eszkaláció](#kézi-eszkaláció) |

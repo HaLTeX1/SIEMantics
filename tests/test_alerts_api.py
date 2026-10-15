@@ -244,3 +244,28 @@ def test_ignored_groups_are_configurable(logged_in, iris, monkeypatch):
     payload = wazuh_alert(alert_id="sca-2")
     payload["rule"]["groups"] = ["sca"]
     assert logged_in.post("/api/v1/alerts", json=payload, headers=WEBHOOK_HEADERS).json()["status"] == "queued"
+
+
+# --- lezart riasztasok elrejtese
+
+def test_closed_alerts_can_be_hidden(logged_in, iris):
+    from conftest import process_alert, wazuh_alert
+
+    open_case = process_alert(logged_in, wazuh_alert(alert_id="c-open", level=13, data={"srcip": "198.51.100.1"}))
+    closed_case = process_alert(logged_in, wazuh_alert(alert_id="c-closed", level=13, agent={"id": "002", "name": "db01"},
+                                                       data={"srcip": "198.51.100.2"}))
+    labeled = process_alert(logged_in, wazuh_alert(alert_id="c-labeled", level=2, agent={"id": "003", "name": "x"},
+                                                   data={"srcip": "198.51.100.3"}))
+    untouched = process_alert(logged_in, wazuh_alert(alert_id="c-new", level=2, agent={"id": "004", "name": "y"},
+                                                     data={"srcip": "198.51.100.4"}))
+    # Nyitott eset cimkevel: meg dolgoznak rajta, latszik.
+    logged_in.patch(f"/api/v1/alerts/{open_case['display_id']}/label", json={"ground_truth": "true_positive"})
+    logged_in.patch(f"/api/v1/alerts/{labeled['display_id']}/label", json={"ground_truth": "false_positive"})
+    iris.closed.add(closed_case["iris_case_id"])
+    logged_in.post("/api/v1/cases/sync")
+
+    visible = {a["display_id"] for a in logged_in.get("/api/v1/alerts?include_closed=false").json()}
+    assert visible == {open_case["display_id"], untouched["display_id"]}
+    everything = {a["display_id"]: a["is_closed"] for a in logged_in.get("/api/v1/alerts").json()}
+    assert len(everything) == 4 and everything[closed_case["display_id"]] and everything[labeled["display_id"]]
+    assert not everything[open_case["display_id"]]

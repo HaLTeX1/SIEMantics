@@ -229,6 +229,8 @@ class AlertRecordOut(BaseModel):
     case_closed_at: Optional[datetime] = None
     # Az IRIS eset lezarasi annotacioja.
     case_closure_note: Optional[str] = None
+    # Lezart riasztas (lezart eset, vagy eset nelkul elemzoi itelettel); a dashboard alapbol elrejti.
+    is_closed: bool = False
 
 
 class LabelRequest(BaseModel):
@@ -418,6 +420,26 @@ class EngineMetrics(BaseModel):
     recall: Optional[float] = None
 
 
+class CalibrationBucket(BaseModel):
+    range: str
+    n: int
+    correct: int
+    accuracy: Optional[float] = None
+
+
+class Calibration(BaseModel):
+    # Mennyire jelzi az LLM onbevallott confidence-e, hogy az itelete helyes (cimkezett LLM dontesekbol).
+    sample_size: int
+    buckets: list[CalibrationBucket]
+    mean_confidence_correct: Optional[float] = None
+    mean_confidence_wrong: Optional[float] = None
+    # A legkisebb kuszob, ami felett az FP iteletek legalabb 95%-a helyes (legalabb 5 iteletbol); None, ha nincs.
+    suggested_fp_threshold: Optional[float] = None
+    # Hany FP itelet van a javasolt kuszob felett: kis mintanal csak irany.
+    suggested_fp_threshold_samples: int = 0
+    current_threshold: float
+
+
 class TriageMetrics(BaseModel):
     sample_size: int
     labeled_size: int
@@ -444,6 +466,7 @@ class TriageMetrics(BaseModel):
     # Onallo dontesek (dedup/flood/elnyomas masolatai nelkul) es motoronkenti bontas.
     independent: Optional[EngineMetrics] = None
     by_engine: dict[str, EngineMetrics] = Field(default_factory=dict)
+    calibration: Optional[Calibration] = None
 
 
 # --- Felhasznalok / auth ---

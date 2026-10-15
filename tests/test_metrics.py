@@ -6,10 +6,12 @@ from app.metrics import compute_metrics
 TP, FP = GroundTruth.TRUE_POSITIVE, GroundTruth.FALSE_POSITIVE
 
 
-def _rec(status, ground_truth=None, auto_status=None, escalated_by_id=None, ms=10.0, engine="openrouter"):
+def _rec(status, ground_truth=None, auto_status=None, escalated_by_id=None, ms=10.0, engine="openrouter",
+         confidence=None, llm_tp=None):
     return SimpleNamespace(
         status=status, auto_status=auto_status, ground_truth=ground_truth,
         escalated_by_id=escalated_by_id, processing_time_ms=ms, triage_engine=engine,
+        llm_confidence=confidence, llm_is_true_positive=llm_tp,
     )
 
 
@@ -92,3 +94,30 @@ def test_independent_metrics_exclude_copied_decisions():
     assert m.accuracy == 0.8
     assert m.independent.labeled_size == 2 and m.independent.accuracy == 0.5
     assert m.by_engine["dedup"].labeled_size == 3 and m.by_engine["openrouter"].false_positive_rate == 1.0
+
+
+def test_calibration_reports_buckets_and_a_threshold_only_when_it_separates():
+    from app.metrics import calibration
+
+    # Informativ confidence: 0.9 felett minden FP itelet helyes, alatta fele.
+    good = [(0.95, False, False)] * 6 + [(0.6, False, True), (0.6, False, False)]
+    report = calibration(good)
+    assert report.suggested_fp_threshold == 0.95
+    assert next(b for b in report.buckets if b.range == "0.9-1.0").accuracy == 1.0
+
+    # Az eles mintahoz hasonlo: a teves es a helyes itelet ugyanott van, nincs hasznalhato kuszob.
+    flat = [(0.9, True, False)] * 5 + [(0.9, True, True)] * 2 + [(0.9, False, True)] * 3 + [(0.9, False, False)] * 3
+    report = calibration(flat)
+    assert report.suggested_fp_threshold is None
+    assert report.mean_confidence_correct == report.mean_confidence_wrong == 0.9
+
+
+def test_metrics_include_calibration_of_labeled_llm_decisions():
+    m = compute_metrics([
+        _rec(AlertStatus.ESCALATED, FP, confidence=0.9, llm_tp=True),
+        _rec(AlertStatus.ESCALATED, TP, confidence=0.9, llm_tp=True),
+        _rec(AlertStatus.ESCALATED, TP, engine="dedup", confidence=0.9, llm_tp=True),
+    ])
+    # Csak az LLM sajat, cimkezett dontesei; a dedup masolat nem.
+    assert m.calibration.sample_size == 2
+    assert m.calibration.mean_confidence_wrong == 0.9 and m.calibration.current_threshold == 0.7
