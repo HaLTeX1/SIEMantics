@@ -441,7 +441,7 @@
         <option value="none">Nincs felelős</option>
       </select>
       <label class="group-toggle"><input type="checkbox" id="collapseGroups" checked /> Csoportok összecsukása</label>
-      <label class="group-toggle" title="Lezárt: az IRIS esete lezárult, vagy eset nélkül már kapott TP/FP ítéletet"><input type="checkbox" id="showClosed" /> Lezártak megjelenítése</label>
+      <label class="group-toggle" title="Lezárt: az IRIS esete lezárult, vagy eset nélkül már kapott TP/FP ítéletet. Elnyomott: a triázs, egy elnyomó szabály vagy a dedup nyomta el."><input type="checkbox" id="showClosed" /> Lezártak és elnyomottak megjelenítése</label>
     </div>
 
     <div class="card">
@@ -1127,8 +1127,9 @@
   });
 
   function wantClosed() {
-    // TP/FP disposition szuresnel a lezartak is kellenek, kulonben ures lenne a lista.
-    return showClosed.checked || ["true_positive", "false_positive"].includes(dispositionFilter.value);
+    // TP/FP disposition vagy Suppressed statusz szuresnel ezek is kellenek, kulonben ures lenne a lista.
+    return showClosed.checked || ["true_positive", "false_positive"].includes(dispositionFilter.value)
+      || statusFilter.value === "suppressed";
   }
 
   function applyFilters() {
@@ -1223,7 +1224,7 @@
       tableBody.innerHTML = "";
       emptyState.textContent = wantClosed()
         ? "Nincs a szűrésnek megfelelő riasztás."
-        : "Nincs a szűrésnek megfelelő nyitott riasztás. A lezártakat a „Lezártak megjelenítése” kapcsolóval láthatod.";
+        : "Nincs a szűrésnek megfelelő nyitott riasztás. A lezártakat és elnyomottakat a „Lezártak és elnyomottak megjelenítése” kapcsolóval láthatod.";
       emptyState.hidden = false;
       rowCountEl.textContent = "";
       return;

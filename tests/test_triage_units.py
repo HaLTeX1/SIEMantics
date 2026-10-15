@@ -133,3 +133,40 @@ def test_ordinary_logs_are_not_flagged_as_injection():
         "Rule ignored for host db01 (previous maintenance window)",
     ):
         assert not looks_like_prompt_injection(_alert(log=log)), log
+
+
+# --- ervenytelen LLM JSON
+
+def test_llm_json_parser_tolerates_common_model_mistakes():
+    from app.llm_engine import _parse_json_response
+
+    wrapped = 'Here is the analysis:\n```json\n{"is_true_positive": false, "confidence": 0.8,}\n```\nThanks'
+    assert _parse_json_response(wrapped) == {"is_true_positive": False, "confidence": 0.8}
+    # Sortores a szoveg ertekeben es zaro vesszo listaban.
+    assert _parse_json_response('{"reasoning": "line one\nline two", "iocs": ["1.2.3.4",]}')["iocs"] == ["1.2.3.4"]
+
+
+def test_invalid_json_gets_one_repair_round(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from app import llm_engine
+    from app.schemas import NormalizedAlert
+
+    replies = ['{"summary": "cmd "rm -rf"", "is_true_positive": true}',
+               '{"summary": "cmd \\"rm -rf\\"", "reasoning": "r", "is_true_positive": true, "confidence": 0.9}']
+    calls = []
+
+    async def create(**kwargs):
+        calls.append([m["role"] for m in kwargs["messages"]])
+        assert kwargs["response_format"] == {"type": "json_object"}
+        content = replies[len(calls) - 1]
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=content))], model="m:free")
+
+    fake = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    monkeypatch.setattr(llm_engine, "_client", fake)
+    alert = NormalizedAlert(alert_id="x", rule_description="r", severity=5, log_snippet="")
+    result = asyncio.run(llm_engine.triage_alert(alert))
+    assert result.is_true_positive is True and result.summary == 'cmd "rm -rf"'
+    # A masodik korben a modell latja a sajat hibas valaszat es a hibat.
+    assert calls == [["system", "user"], ["system", "user", "assistant", "user"]]

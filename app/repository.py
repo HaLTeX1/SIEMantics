@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.enums import GroundTruth
+from app.enums import AlertStatus, GroundTruth
 from app.db import Base
 from app.models import AlertRecord, CaseAssignment, User, UserSession
 
@@ -25,12 +25,17 @@ def closed_condition():
     )
 
 
+def hidden_condition():
+    # A dashboard alapbol elrejti: a lezartakat es az elnyomottakat (triazs, szabaly, dedup, kontextus).
+    return or_(closed_condition(), AlertRecord.status == AlertStatus.SUPPRESSED)
+
+
 async def list_alert_records(
     session: AsyncSession, limit: int = 100, offset: int = 0, include_closed: bool = True
 ) -> list[AlertRecord]:
     stmt = select(AlertRecord)
     if not include_closed:
-        stmt = stmt.where(~closed_condition())
+        stmt = stmt.where(~hidden_condition())
     result = await session.execute(stmt.order_by(AlertRecord.received_at.desc()).limit(limit).offset(offset))
     return list(result.scalars().all())
 

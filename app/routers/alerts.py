@@ -156,7 +156,7 @@ async def _process_now(session: AsyncSession, record: AlertRecord) -> dict:
 async def list_alerts(
     limit: int = 100, offset: int = 0, include_closed: bool = True, session: AsyncSession = Depends(get_session)
 ):
-    # include_closed=false: csak a nyitott riasztasok (a dashboard alapnezete).
+    # include_closed=false: lezartak es elnyomottak nelkul (a dashboard alapnezete).
     records = await list_alert_records(session, limit=limit, offset=offset, include_closed=include_closed)
     return await _with_assignees(session, records)
 

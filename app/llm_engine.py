@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 
 import httpx
 
@@ -135,14 +136,20 @@ _SYSTEM_PROMPT = (
 )
 
 
+_TRAILING_COMMA = re.compile(r",\s*([}\]])")
+
+
 def _parse_json_response(raw: str) -> dict:
-    raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.strip("`")
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-    return json.loads(raw)
+    # Az ingyenes modellek gyakori hibai: szoveg / kodblokk a JSON korul, zaro vesszo, sortores a szovegben.
+    text = (raw or "").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        raise ValueError("no JSON object in the model response")
+    text = text[start:end + 1]
+    try:
+        return json.loads(text, strict=False)
+    except json.JSONDecodeError:
+        return json.loads(_TRAILING_COMMA.sub(r"\1", text), strict=False)
 
 
 def build_user_prompt(
@@ -197,18 +204,33 @@ def _is_free(model: str) -> bool:
 async def _openrouter_triage(alert: NormalizedAlert, user_prompt: str, model: str | None = None) -> TriageResult:
     models = [model] if model else _models
     extra = {"models": models} if len(models) > 1 else None
-    response = await _client.chat.completions.create(
-        model=models[0],
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0,
-        extra_body=extra,
-    )
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": user_prompt},
+    ]
 
+    async def ask():
+        # JSON mod: a tamogato modellek ervenyes JSON-t adnak, a tobbinel hatastalan.
+        return await _client.chat.completions.create(
+            model=models[0], messages=messages, temperature=0, extra_body=extra,
+            response_format={"type": "json_object"},
+        )
+
+    response = await ask()
     raw = response.choices[0].message.content
-    data = _parse_json_response(raw)
+    try:
+        data = _parse_json_response(raw)
+    except ValueError as exc:
+        # Egy javito kor: a modell visszakapja a sajat valaszat a hibaval.
+        logger.info("LLM returned invalid JSON for %s (%s), asking it to fix the reply", alert.alert_id, exc)
+        messages += [
+            {"role": "assistant", "content": raw or ""},
+            {"role": "user", "content": f"That reply was not valid JSON ({exc}). Return the same analysis again as "
+                                        "one valid JSON object only, with every quote inside strings escaped."},
+        ]
+        response = await ask()
+        raw = response.choices[0].message.content
+        data = _parse_json_response(raw)
     # Az engine/model mezot mi toltjuk ki, nem a modell.
     data.pop("engine", None)
     data.pop("model", None)

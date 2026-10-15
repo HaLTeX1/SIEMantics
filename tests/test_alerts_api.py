@@ -264,10 +264,15 @@ def test_closed_alerts_can_be_hidden(logged_in, iris):
     iris.closed.add(closed_case["iris_case_id"])
     logged_in.post("/api/v1/cases/sync")
 
+    review = process_alert(logged_in, wazuh_alert(alert_id="c-review", level=6, agent={"id": "005", "name": "z"},
+                                                  data={"srcip": "198.51.100.5"}))
+    assert untouched["status"] == "suppressed" and review["status"] == "needs_review"
+
+    # Alapnezet: a lezartak es az elnyomottak (untouched) nelkul.
     visible = {a["display_id"] for a in logged_in.get("/api/v1/alerts?include_closed=false").json()}
-    assert visible == {open_case["display_id"], untouched["display_id"]}
+    assert visible == {open_case["display_id"], review["display_id"]}
     everything = {a["display_id"]: a["is_closed"] for a in logged_in.get("/api/v1/alerts").json()}
-    assert len(everything) == 4 and everything[closed_case["display_id"]] and everything[labeled["display_id"]]
+    assert len(everything) == 5 and everything[closed_case["display_id"]] and everything[labeled["display_id"]]
     assert not everything[open_case["display_id"]]
 
 
