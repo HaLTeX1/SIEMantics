@@ -328,6 +328,7 @@
             <div class="row-actions">
               <button type="button" class="btn small pw-btn" data-id="${u.id}">Jelszó</button>
               ${isSelf ? "" : `<button type="button" class="btn small ${u.is_active ? "danger" : ""} toggle-btn" data-id="${u.id}">${u.is_active ? "Letiltás" : "Engedélyezés"}</button>`}
+              ${isSelf ? "" : `<button type="button" class="btn small danger delete-btn" data-id="${u.id}">Törlés</button>`}
             </div>
           </td>
         </tr>`;
@@ -346,9 +347,29 @@
         updateUser(u.id, { is_active: !u.is_active });
       });
     });
+    document.querySelectorAll(".delete-btn").forEach((btn) => {
+      btn.addEventListener("click", () => deleteUser(users.find((x) => x.id === Number(btn.dataset.id))));
+    });
     document.querySelectorAll(".pw-btn").forEach((btn) => {
       btn.addEventListener("click", () => openPasswordDialog(Number(btn.dataset.id)));
     });
+  }
+
+  async function deleteUser(u) {
+    if (!confirm(`${u.username} VÉGLEGES törlése?\n\nA hozzá rendelt case-ek felelős nélküliek lesznek, a naplóban (eszkaláció, elnyomás, válaszlépés) a neve helyett üres érték marad. Ha a nyomot meg akarod tartani, inkább tiltsd le.`)) return;
+    const msg = el("tableMsg");
+    msg.textContent = "";
+    try {
+      const res = await SIEM.api(`${API_USERS}/${u.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(await errorDetail(res));
+      const body = await res.json();
+      users = users.filter((x) => x.id !== u.id);
+      renderUsers();
+      setMsg(msg, `${body.deleted} törölve.` + (body.released_cases.length
+        ? ` Felelős nélküli case-ek: ${body.released_cases.map((c) => "#" + c).join(", ")}.` : ""), true);
+    } catch (err) {
+      setMsg(msg, "Sikertelen törlés: " + err.message, false);
+    }
   }
 
   async function updateUser(id, patch) {

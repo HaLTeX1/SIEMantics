@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -5,8 +7,18 @@ from app.auth import hash_password, require_admin
 from app.db import get_session
 from app.enums import UserRole
 from app.models import User
-from app.repository import create_user, delete_sessions_for_user, get_user, get_user_by_username, list_users, save_user
+from app.repository import (
+    create_user,
+    delete_sessions_for_user,
+    delete_user,
+    get_user,
+    get_user_by_username,
+    list_users,
+    save_user,
+)
 from app.schemas import UserCreate, UserOut, UserUpdate
+
+logger = logging.getLogger("siemantics.users")
 
 router = APIRouter(prefix="/api/v1/users", tags=["users"], dependencies=[Depends(require_admin)])
 
@@ -60,3 +72,21 @@ async def update_user(
     if body.is_active is False or body.password is not None:
         await delete_sessions_for_user(session, user.id)
     return user
+
+
+@router.delete("/{user_id}")
+async def remove_user(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    # Vegleges torles; az admin a sajat fiokjat nem torolheti (igy nem maradhat admin nelkul a rendszer).
+    user = await get_user(session, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    if user.id == admin.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="cannot delete yourself")
+    username = user.username
+    released = await delete_user(session, user)
+    logger.warning("%s deleted user %s (released cases: %s)", admin.username, username, released)
+    return {"deleted": username, "released_cases": released}

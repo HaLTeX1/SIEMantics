@@ -1,11 +1,11 @@
 import re
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import GroundTruth
-from app.models import AlertRecord, CaseAssignment, User, UserSession
+from app.models import AlertRecord, CaseAssignment, ResponseAction, SuppressionRule, User, UserSession
 
 
 async def create_alert_record(session: AsyncSession, **fields) -> AlertRecord:
@@ -184,6 +184,19 @@ async def save_user(session: AsyncSession, user: User) -> User:
     await session.commit()
     await session.refresh(user)
     return user
+
+
+async def delete_user(session: AsyncSession, user: User) -> list[int]:
+    # Vegleges torles; az esetei felelos nelkuliek lesznek, a naplo-hivatkozasok NULL-ra allnak.
+    released = list(await session.scalars(select(CaseAssignment.iris_case_id).where(CaseAssignment.user_id == user.id)))
+    await session.execute(delete(UserSession).where(UserSession.user_id == user.id))
+    await session.execute(delete(CaseAssignment).where(CaseAssignment.user_id == user.id))
+    for column in (CaseAssignment.assigned_by_id, AlertRecord.escalated_by_id,
+                   ResponseAction.requested_by_id, SuppressionRule.created_by_id):
+        await session.execute(update(column.class_).where(column == user.id).values({column.key: None}))
+    await session.delete(user)
+    await session.commit()
+    return sorted(released)
 
 
 async def create_user_session(session: AsyncSession, user: User, token_hash: str, expires_at: datetime) -> None:
