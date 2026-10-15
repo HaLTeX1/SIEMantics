@@ -121,6 +121,30 @@ class CaseAssignment(Base):
     assigned_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class ResponseAction(Base):
+    # Wazuh Active Response lepes (IP blokkolas) naplozasa.
+
+    __tablename__ = "response_actions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    alert_record_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(32))
+    ip: Mapped[str] = mapped_column(String(64))
+    # agent: a riasztas agentje, all: minden aktiv agent.
+    scope: Mapped[str] = mapped_column(String(16))
+    duration_seconds: Mapped[int] = mapped_column(Integer)
+    # Agentenkent: {"id", "name", "command", "ok", "error"}.
+    targets: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # sent, partial, failed
+    status: Mapped[str] = mapped_column(String(16))
+    error_detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    requested_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    iris_case_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    iris_noted: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
 class SuppressionRule(Base):
     # Elemzo altal felvett elnyomas: az egyezo riasztasok LLM nelkul SUPPRESSED-ek.
 

@@ -1,0 +1,43 @@
+<!--
+  SIEMantics valaszlepesek: az /var/ossec/etc/ossec.conf <ossec_config> blokkjaba, a meglevo <command>-ok utan.
+  A blokkok csak az ar.conf parancsneveit hozzak letre (pl. firewall-drop3600), hogy a SIEMantics a Wazuh API-n
+  at, lejarattal blokkolhasson. A 110598-as szabaly szandekosan nem letezik: automatikusan soha nem sulnek el.
+  Ne hozz letre 110598-as szabalyt. Alkalmazas: systemctl restart wazuh-manager
+-->
+  <active-response>
+    <command>firewall-drop</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>3600</timeout>
+  </active-response>
+  <active-response>
+    <command>firewall-drop</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>86400</timeout>
+  </active-response>
+  <active-response>
+    <command>firewall-drop</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>604800</timeout>
+  </active-response>
+
+  <active-response>
+    <command>netsh</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>3600</timeout>
+  </active-response>
+  <active-response>
+    <command>netsh</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>86400</timeout>
+  </active-response>
+  <active-response>
+    <command>netsh</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>604800</timeout>
+  </active-response>

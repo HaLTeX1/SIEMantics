@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     correlation_max_alerts: int = Field(default=10, ge=0)
 
     wazuh_webhook_token: str = ""
+
+    # Wazuh manager API a valaszlepesekhez (IP blokkolas); ures URL = kikapcsolva.
+    wazuh_api_url: str = ""
+    wazuh_api_user: str = ""
+    wazuh_api_password: str = ""
+    wazuh_api_verify_ssl: bool = True
+    # Tovabbi vedett IP-k / halozatok vesszovel, a nem publikus cimeken felul (pl. sajat publikus IP-k).
+    response_protected_networks: str = ""
     # Parhuzamos triazs workerek; 1 = sorban (free rate limit, korrelacio).
     triage_workers: int = Field(default=1, ge=1)
 

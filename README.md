@@ -42,6 +42,8 @@ app/
 ├── suppression.py       # elemzői elnyomó szabályok (illesztés, utólagos alkalmazás)
 ├── case_actions.py      # FP lezárás (eset / csoport / tömeges), összevonás, tömeges törlés, IRIS lezárás szinkron
 ├── iris_sync.py         # háttérfeladat: időközönkénti IRIS lezárás szinkron
+├── wazuh_client.py      # Wazuh manager API kliens (agentek, Active Response)
+├── response.py          # válaszlépés: IP blokkolás, védett tartományok, napló, IRIS note
 └── routers/
     ├── alerts.py        # POST/GET /alerts, PATCH /alerts/{ref}/label, POST /alerts/{ref}/escalate
     ├── metrics.py         # GET /metrics
@@ -269,6 +271,23 @@ Ezután az eset összefoglalóján (**Summary → Edit**) megjelenik a *Closure*
 
 A SIEMantics a szinkronnál eltárolja az annotációt (`case_closure_note`). A riasztás részletpanelje és részletoldala élőben is lekéri az esetet (`GET /api/v1/cases/{iris_case_id}`), így a lezárás után írt vagy javított annotáció is megjelenik, az outcome-mal együtt. Ha a mező nincs felvéve az IRIS-ben, minden más ugyanúgy működik, csak annotáció nem lesz.
 
+## Válaszlépés: IP blokkolása (Wazuh Active Response)
+
+A riasztás részletpaneljén az admin egy kattintással blokkolhatja a támadó IP-t. Választható az érintett host agentje vagy minden aktív agent, 1 óra, 24 óra vagy 7 nap lejárattal. A SIEMantics a Wazuh manager API-ján keresztül futtatja a válaszlépést: Linux agenten `firewall-drop`, Windowson `netsh`, az agent operációs rendszere alapján. A blokkot a lejáratkor maga az agent oldja fel. Lejárat előtti kézi feloldást a Wazuh API nem tud, ezért végleges blokk nincs.
+
+- **Védőkorlátok:** csak publikus IP blokkolható. A privát, loopback, link-local és dokumentációs tartományt, valamint az IRIS, a Wazuh és a SIEMantics saját címét a backend elutasítja. További védett címek a `RESPONSE_PROTECTED_NETWORKS` beállításban adhatók meg (pl. saját publikus IP-k). A Wazuh manager saját riasztásainál (agent 000: tűzfal-, felhő- és Suricata-integrációk) csak „Minden aktív agent” választható.
+- **Napló:** minden lépés bekerül a `response_actions` táblába (ki, mikor, melyik IP, mely agenteken, milyen eredménnyel), és megjelenik a részletpanelen. Ha a riasztásnak van IRIS esete, az eset egy „IP blocked” note-ot kap.
+- **Jogosultság:** csak admin indíthat blokkolást; a naplót mindenki látja.
+
+**Beállítás a Wazuh manageren (egyszeri):**
+
+1. A [wazuh/ossec-active-response.xml](wazuh/ossec-active-response.xml) `<active-response>` blokkjait másold az `/var/ossec/etc/ossec.conf` `<ossec_config>` részébe, majd futtasd: `systemctl restart wazuh-manager`. A blokkok egy nem létező szabályra (110598) kötődnek, ezért automatikusan soha nem sülnek el. Csak arra kellenek, hogy az `ar.conf`-ba bekerüljenek a lejáratos parancsnevek (`firewall-drop3600`, `netsh86400`, …), amelyeket az API hívni tud. Ellenőrzés: `cat /var/ossec/etc/shared/ar.conf`.
+2. Dedikált API felhasználó szűk jogkörrel (Wazuh dashboard → Server management → Security), ne a `wazuh-wui`:
+   - **Policy** `siemantics-response`: actions `active-response:command`, `agents:read`; resources `agent:id:*`, `agent:group:*`; effect `allow`
+   - **Role** `siemantics-response` ezzel a policyvel
+   - **User** `siemantics`, erős jelszóval, ehhez a role-hoz rendelve
+3. A SIEMantics szerver `.env` fájljában: `WAZUH_API_URL=https://<wazuh>:55000`, `WAZUH_API_USER`, `WAZUH_API_PASSWORD`. Önaláírt tanúsítványnál `WAZUH_API_VERIFY_SSL=false`.
+
 ## Flood kezelés
 
 Egy zajos szabály vagy egy szkenner percek alatt több száz riasztást küldhet. Az alábbiak a sorrendjükben futnak le minden riasztásnál, az LLM-hívás előtt:
@@ -341,6 +360,8 @@ Az oldal közvetlenül a saját API-jából táplálkozik (`GET /api/v1/alerts`,
 | `GET` | `/api/v1/suppressions` | elnyomó szabályok (`include_inactive=true`: a lejártak és kikapcsoltak is) |
 | `POST` | `/api/v1/suppressions` | elnyomó szabály a kijelölt riasztásokból (`alert_refs`, `scope`, `reason`, `duration_hours`, `apply_existing`) |
 | `DELETE` | `/api/v1/suppressions/{id}` | elnyomó szabály kikapcsolása |
+| `POST` | `/api/v1/alerts/{ref}/block-ip` | **admin:** IP blokkolása Wazuh Active Response-szal (`ip`, `scope`: `agent`/`all`, `duration_hours`: 1/24/168) |
+| `GET` | `/api/v1/alerts/{ref}/responses` | a riasztásból indított válaszlépések naplója |
 | `GET` | `/api/v1/config` | nem-titkos konfiguráció a frontendnek (pl. `iris_base_url` az eset-linkhez) |
 | `GET` | `/api/v1/metrics` | konfúziós mátrix + feldolgozási idő statisztikák a címkézett rekordokból |
 | `POST` | `/api/v1/auth/login` | bejelentkezés (`username`, `password`), session cookie-t állít be |

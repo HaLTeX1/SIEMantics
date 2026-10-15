@@ -12,6 +12,8 @@ from app.fingerprint import alert_fingerprint
 from app.normalize import normalize_wazuh_alert
 from app.models import AlertRecord, User
 from app.pipeline import alert_queue, manual_escalate, process_record
+from app.response import ResponseError, block_ip, list_actions
+from app.wazuh_client import wazuh_client
 from app.repository import (
     count_group_members,
     create_alert_record,
@@ -24,11 +26,13 @@ from app.repository import (
 from app.schemas import (
     AlertRecordOut,
     AssigneeOut,
+    BlockIpRequest,
     BulkDeleteResult,
     BulkFalsePositiveResult,
     BulkRequest,
     LabelRequest,
     NormalizedAlert,
+    ResponseActionOut,
     WazuhAlertPayload,
 )
 
@@ -135,7 +139,7 @@ async def get_alert(alert_ref: str, session: AsyncSession = Depends(get_session)
 @router.get("/config", dependencies=[Depends(get_current_user)])
 async def get_public_config():
     # Nem titkos beallitasok a frontendnek (pl. IRIS link).
-    return {"iris_base_url": settings.iris_base_url.rstrip("/")}
+    return {"iris_base_url": settings.iris_base_url.rstrip("/"), "response_enabled": wazuh_client.enabled}
 
 
 @router.patch("/alerts/{alert_ref}/label", response_model=AlertRecordOut, dependencies=[Depends(get_current_user)])
@@ -202,3 +206,41 @@ async def bulk_delete(
     except CaseActionError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     return BulkDeleteResult(deleted=deleted)
+
+
+async def _actions_out(session: AsyncSession, actions) -> list[ResponseActionOut]:
+    users = await get_users_by_ids(session, [a.requested_by_id for a in actions if a.requested_by_id is not None])
+    out = []
+    for action in actions:
+        item = ResponseActionOut.model_validate(action)
+        if action.requested_by_id in users:
+            item.requested_by = AssigneeOut.model_validate(users[action.requested_by_id])
+        out.append(item)
+    return out
+
+
+@router.post("/alerts/{alert_ref}/block-ip", response_model=ResponseActionOut)
+async def block_alert_ip(
+    alert_ref: str,
+    body: BlockIpRequest,
+    user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_session),
+):
+    # Csak admin: IP blokkolas Wazuh Active Response-szal, lejarattal; IRIS note az esetbe.
+    record = await get_alert_record_by_ref(session, alert_ref)
+    if record is None:
+        raise HTTPException(status_code=404, detail="alert not found")
+    try:
+        action = await block_ip(session, record, body.ip, body.scope, body.duration_hours * 3600, user)
+    except ResponseError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return (await _actions_out(session, [action]))[0]
+
+
+@router.get("/alerts/{alert_ref}/responses", response_model=list[ResponseActionOut],
+            dependencies=[Depends(get_current_user)])
+async def get_alert_responses(alert_ref: str, session: AsyncSession = Depends(get_session)):
+    record = await get_alert_record_by_ref(session, alert_ref)
+    if record is None:
+        raise HTTPException(status_code=404, detail="alert not found")
+    return await _actions_out(session, await list_actions(session, record))

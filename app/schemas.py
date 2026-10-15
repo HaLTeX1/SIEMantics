@@ -275,6 +275,31 @@ class BulkDeleteResult(BaseModel):
     deleted: list[str]
 
 
+class BlockIpRequest(BaseModel):
+    ip: str = Field(min_length=2, max_length=64)
+    # agent: a riasztas agentje, all: minden aktiv agent.
+    scope: Literal["agent", "all"] = "agent"
+    duration_hours: Literal[1, 24, 168] = 24
+
+
+class ResponseActionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    action: str
+    ip: str
+    scope: str
+    duration_seconds: int
+    targets: Optional[list[dict]] = None
+    status: str
+    error_detail: Optional[str] = None
+    requested_by: Optional[AssigneeOut] = None
+    created_at: datetime
+    expires_at: datetime
+    iris_case_id: Optional[int] = None
+    iris_noted: bool
+
+
 class CaseInfoOut(BaseModel):
     # Az IRIS eset aktualis allapota a reszletpanelhez.
     iris_case_id: int
