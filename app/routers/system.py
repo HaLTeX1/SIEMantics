@@ -1,0 +1,106 @@
+import time
+from datetime import datetime, timedelta
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app import status
+from app.auth import require_context_editor
+from app.config import settings
+from app.db import get_session
+from app.enums import AlertStatus
+from app.iris_client import iris_client
+from app.llm_engine import configured_models, key_info, llm_configured, second_opinion_enabled
+from app.models import AlertRecord
+from app.pipeline import alert_queue
+from app.routers.alerts import ignored_counter
+from app.wazuh_client import wazuh_client
+
+router = APIRouter(prefix="/api/v1/system", tags=["system"], dependencies=[Depends(require_context_editor)])
+
+# A Rendszerallapot fulon latszo, nem titkos beallitasok.
+_VISIBLE_SETTINGS = (
+    "openrouter_model", "openrouter_timeout_seconds", "second_opinion_model", "require_fp_corroboration",
+    "history_min_agreement", "review_confidence_threshold", "review_severity_floor", "triage_workers",
+    "triage_settle_seconds", "llm_retry_max_hours", "dedup_window_hours", "flood_threshold", "flood_window_minutes",
+    "correlation_window_hours", "correlation_host_window_minutes", "correlation_max_alerts", "ignored_rule_groups",
+    "context_rule_groups", "iris_sync_interval_seconds", "host_sync_interval_minutes", "iris_base_url",
+    "iris_verify_ssl", "wazuh_api_url", "wazuh_api_verify_ssl", "enrichment_max_iocs", "session_ttl_hours",
+)
+# Titkok: csak az latszik, hogy be vannak-e allitva.
+_SECRETS = ("openrouter_api_key", "iris_api_key", "wazuh_webhook_token", "wazuh_api_password",
+            "virustotal_api_key", "abuseipdb_api_key")
+
+
+async def _scalar(session: AsyncSession, stmt):
+    return (await session.execute(stmt)).scalar()
+
+
+@router.get("/status")
+async def system_status(session: AsyncSession = Depends(get_session)):
+    now = datetime.utcnow()
+    queued = AlertRecord.status == AlertStatus.QUEUED
+    day_ago = now - timedelta(hours=24)
+    return {
+        "generated_at": now,
+        "llm": {
+            "configured": llm_configured(),
+            "models": configured_models(),
+            "second_opinion": settings.second_opinion_model if second_opinion_enabled() else None,
+            "paused_seconds": round(alert_queue.pause_remaining()),
+            **status.snapshot("llm"),
+        },
+        "queue": {
+            "queued": await _scalar(session, select(func.count()).where(queued)),
+            "waiting_for_llm": await _scalar(session, select(func.count()).where(
+                queued, AlertRecord.error_detail.like("waiting for the LLM%"))),
+            "oldest_queued_at": await _scalar(session, select(func.min(AlertRecord.received_at)).where(queued)),
+            "in_memory": alert_queue.size(),
+            "workers": settings.triage_workers,
+        },
+        "ingest": {
+            "last_alert_at": await _scalar(session, select(func.max(AlertRecord.received_at))),
+            "alerts_24h": await _scalar(session, select(func.count()).where(AlertRecord.received_at >= day_ago)),
+            "context_24h": await _scalar(session, select(func.count()).where(
+                AlertRecord.received_at >= day_ago, AlertRecord.triage_engine == "context")),
+            "ignored_since_start": ignored_counter["count"],
+        },
+        "iris_sync": {"interval_seconds": settings.iris_sync_interval_seconds, **status.snapshot("iris_sync")},
+        "host_sync": {"interval_minutes": settings.host_sync_interval_minutes, "enabled": wazuh_client.enabled,
+                      **status.snapshot("host_sync")},
+        "settings": {name: getattr(settings, name) for name in _VISIBLE_SETTINGS},
+        "secrets_set": {name: bool(getattr(settings, name)) for name in _SECRETS},
+    }
+
+
+async def _check(name: str, coro_factory) -> dict:
+    started = time.perf_counter()
+    try:
+        detail = await coro_factory()
+        ok = True
+    except Exception as exc:
+        detail, ok = str(exc)[:300], False
+    return {"name": name, "ok": ok, "latency_ms": round((time.perf_counter() - started) * 1000), "detail": detail}
+
+
+@router.post("/test-connections")
+async def test_connections():
+    # IRIS ping, Wazuh API bejelentkezes, OpenRouter kulcs adatai; egyik sem fogyaszt LLM kvotat.
+    results = [await _check("DFIR-IRIS", iris_client.ping)]
+    if wazuh_client.enabled:
+        async def wazuh():
+            info = await wazuh_client.api_info()
+            return f"API {info.get('api_version', '?')} @ {info.get('hostname', '?')}"
+        results.append(await _check("Wazuh API", wazuh))
+    else:
+        results.append({"name": "Wazuh API", "ok": None, "latency_ms": None, "detail": "not configured"})
+    if llm_configured():
+        async def openrouter():
+            info = await key_info()
+            tier = "free tier (no credits)" if info.get("is_free_tier") else "credits purchased"
+            return f"{tier}, usage {info.get('usage')}, limit {info.get('limit')}"
+        results.append(await _check("OpenRouter", openrouter))
+    else:
+        results.append({"name": "OpenRouter", "ok": None, "latency_ms": None, "detail": "not configured (mock engine)"})
+    return results

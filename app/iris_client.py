@@ -179,6 +179,12 @@ class IrisClient:
             payload = {"case_name": name, "case_tags": ",".join(dict.fromkeys(old + tags))}
             await self._post(client, f"/manage/cases/update/{case_id}", json=payload)
 
+    async def ping(self) -> str:
+        # Kapcsolat teszt a Rendszerallapot fulhoz.
+        async with self._client() as client:
+            resp = await self._get(client, "/api/ping")
+            return str(resp.json().get("message") or "ok")
+
     async def get_case(self, case_id: int) -> dict | None:
         # Az eset adatai (close_date, status_id, case_tags); None, ha nem letezik.
         async with self._client() as client:

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import AlertStatus, GroundTruth
+from app import status
 from app.iris_client import (
     OUTCOME_FALSE_POSITIVE,
     OUTCOME_LEGITIMATE,
@@ -341,10 +342,26 @@ class SyncOutcome:
     checked: int = 0
     closed_cases: list[int] = field(default_factory=list)
     labeled: list[AlertRecord] = field(default_factory=list)
+    unreadable: int = 0
 
 
 async def sync_closed_cases(session: AsyncSession) -> SyncOutcome:
-    # Az IRIS-ben lezart esetek kimenetele a riasztasok dispositionjebe; IRIS hibanal a tobbi eset megy tovabb.
+    # Az IRIS-ben lezart esetek kimenetele a riasztasok dispositionjebe; az eredmeny a Rendszerallapot fulre is.
+    try:
+        outcome = await _sync_closed_cases(session)
+    except Exception as exc:
+        status.record_failure("iris_sync", exc)
+        raise
+    info = {"checked": outcome.checked, "closed": len(outcome.closed_cases), "labeled": len(outcome.labeled),
+            "unreadable": outcome.unreadable}
+    if outcome.unreadable:
+        status.record_failure("iris_sync", f"{outcome.unreadable} case(s) could not be read from IRIS")
+    status.record_success("iris_sync", info)
+    return outcome
+
+
+async def _sync_closed_cases(session: AsyncSession) -> SyncOutcome:
+    # IRIS hibanal a tobbi eset megy tovabb.
     case_ids = await session.scalars(
         select(AlertRecord.iris_case_id)
         .where(AlertRecord.iris_case_id.is_not(None), AlertRecord.case_closed_at.is_(None))
@@ -356,6 +373,7 @@ async def sync_closed_cases(session: AsyncSession) -> SyncOutcome:
             case = await iris_client.get_case(case_id)
         except Exception as exc:
             logger.warning("case sync: IRIS case %s could not be read: %s", case_id, exc)
+            outcome.unreadable += 1
             continue
         outcome.checked += 1
         if case is None or not case.get("close_date"):

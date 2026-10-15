@@ -12,7 +12,7 @@ from app.db import init_db
 from app.hosts import host_syncer
 from app.iris_sync import case_syncer
 from app.pipeline import alert_queue
-from app.routers import alerts, auth, cases, hosts, metrics, suppressions, users
+from app.routers import alerts, auth, cases, hosts, metrics, suppressions, system, users
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("siemantics")
@@ -48,6 +48,7 @@ app.include_router(users.router)
 app.include_router(cases.router)
 app.include_router(suppressions.router)
 app.include_router(hosts.router)
+app.include_router(system.router)
 app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
 
 

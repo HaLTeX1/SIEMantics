@@ -46,6 +46,7 @@ app/
 ├── response.py          # válaszlépés: IP blokkolás, védett tartományok, napló, IRIS note
 ├── hosts.py             # host kontextus: Wazuh szinkron, ismert hálózatok, prompt-környezet
 ├── eval_replay.py       # visszajátszó mérés a címkézett riasztásokon (python -m app.eval_replay)
+├── status.py            # futási állapot (LLM, szinkronok) a Rendszerállapot fülhöz
 └── routers/
     ├── alerts.py        # POST/GET /alerts, PATCH /alerts/{ref}/label, POST /alerts/{ref}/escalate
     ├── metrics.py         # GET /metrics
@@ -357,12 +358,22 @@ A prompt (`app/llm_engine.py`) a 2026-10 közepi éles mérés (57 címkézett �
 
 ## Környezet: hostok és ismert hálózatok
 
-Az **Admin → Környezet** fül (`/ui/hosts.html`) adja a triázs környezeti tudását. Az admin panelen az admin a „Felhasználók” és a „Környezet” fület látja; az L2 az Admin menüpontból csak a Környezetet:
+Az **Admin → Környezet** fül (`/ui/hosts.html`) adja a triázs környezeti tudását. Az admin panelen az admin a „Felhasználók”, a „Környezet” és a „Rendszerállapot” fület látja; az L2 az Admin menüpontból a Környezetet és a Rendszerállapotot:
 
 - **Hostok:** a Wazuh API-ból (`HOST_SYNC_INTERVAL_MINUTES`, alapból óránként, és kézzel a „Frissítés a Wazuh-ból” gombbal) jönnek: OS, IP, agent-csoportok, státusz, és aktív agentnél a figyelő portok a folyamat nevével (syscollector). Az új hostok maguktól megjelennek, a Wazuh-ból eltűntek „Nincs a Wazuh-ban” jelölést kapnak (a kézi adataik megmaradnak, és törölhetők). Minden hosthoz kézzel megadható **szerep**, **kritikusság** és **megjegyzés**; ezeket a szinkron nem írja felül. Agent nélküli eszköz (pl. tűzfal) kézzel is felvehető a riasztásokban szereplő neve szerint.
 - **Ismert IP-k és hálózatok:** IP vagy CIDR címkével (pl. `10.64.0.95` = Forgejo git szerver) és „megbízható” jelzővel. A forrás IP-hez a legszűkebb illeszkedő bejegyzés kerül a promptba; ismeretlen címnél azt kapja az LLM, hogy publikus vagy dokumentálatlan belső cím.
 - **Jogosultság:** megtekinteni mindenki, szerkeszteni L2 és admin tud (`can_edit_context`), mert a triázs döntéseit befolyásolja.
 - **Wazuh API:** a [válaszlépésnél](#válaszlépés-ip-blokkolása-wazuh-active-response) beállított API-felhasználó policyjéhez a host-szinkronhoz a `syscollector:read` action is kell (resource `agent:id:*`).
+
+## Rendszerállapot
+
+Az **Admin → Rendszerállapot** fül (`/ui/system.html`, admin és L2) egy helyen mutatja, ha valami csendben nem működik (az éles mérésben például a döntések fele azért esett a mock motorra, mert elfogyott az OpenRouter-kvóta, és ez sehol nem látszott). 30 másodpercenként frissül.
+
+- **Állapotjelzők:** LLM (elérhető / kvóta-szünet / utolsó hívás hibás / mock motor), beérkezés (6 óránál hosszabb csend: érdemes a Wazuh-integrációt ellenőrizni), sor (LLM-re váró vagy 30 percnél régebben várakozó riasztás), IRIS lezárás-szinkron és host-szinkron (utolsó futás, eredmény, hiba). Mindegyik szöveggel is jelzi az állapotot, nem csak színnel.
+- **Kapcsolat tesztelése:** IRIS `/api/ping`, Wazuh API bejelentkezés és verzió, OpenRouter kulcs adatai (ingyenes szint-e, használat, limit). LLM-kvótát nem fogyaszt.
+- **Érvényes beállítások:** a szerver `.env`-jéből, csak olvasható; a kulcsoknál és jelszavaknál csak az látszik, hogy be vannak-e állítva.
+- Az LLM és a szinkronok utolsó eseményei memóriában vannak, újraindítás után az első futásig üresek.
+- API: `GET /api/v1/system/status`, `POST /api/v1/system/test-connections` (L2 / admin).
 
 ## Pontosság mérése visszajátszással
 

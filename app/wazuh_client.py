@@ -55,6 +55,11 @@ class WazuhClient:
                 return resp.json()
         raise WazuhApiError("Wazuh API authentication failed")
 
+    async def api_info(self) -> dict:
+        # Kapcsolat teszt: hitelesites es az API verzioja.
+        body = await self._request("GET", "/")
+        return body.get("data") or {}
+
     async def get_agents(self, agent_ids: list[str] | None = None, *, active_only: bool = False) -> list[dict]:
         params: dict = {"select": "id,name,status,os.platform", "limit": 10000}
         if agent_ids:

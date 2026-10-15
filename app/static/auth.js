@@ -53,6 +53,7 @@
     const tabs = [];
     if (user.role === "admin") tabs.push(["users", "admin.html", "Felhasználók"]);
     tabs.push(["environment", "hosts.html", "Környezet"]);
+    tabs.push(["status", "system.html", "Rendszerállapot"]);
     container.innerHTML = tabs.map(([key, href, label]) =>
       `<a href="${href}" class="admin-tab${key === active ? " active" : ""}"${key === active ? ' aria-current="page"' : ""}>${label}</a>`
     ).join("");

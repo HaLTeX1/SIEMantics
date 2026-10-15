@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SIEMantics - Admin · Rendszerállapot</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page:        #0d0d0d;
+    --surface:     #1a1a19;
+    --surface-2:   #202020;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:    #2c2c2a;
+    --border:      rgba(255,255,255,0.10);
+    --accent:      #3987e5;
+    --accent-dim:  #1c5cab;
+    --good:        #0ca30c;
+    --serious:     #ec835a;
+    --critical:    #d03b3b;
+    --violet:      #9085e9;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px;
+  }
+
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 20px 16px 48px; }
+
+  header.topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 20px;
+  }
+  .brand { display: flex; align-items: baseline; gap: 10px; }
+  .brand .name { font-weight: 700; font-size: 18px; color: var(--text-primary); text-decoration: none; }
+  .brand .sub { color: var(--text-muted); font-size: 13px; }
+  .admin-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; flex-wrap: wrap; }
+  .admin-tab { padding: 8px 14px; color: var(--text-secondary); text-decoration: none; font-size: 14px;
+               border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .admin-tab:hover { color: var(--text-primary); }
+  .admin-tab.active { color: var(--text-primary); border-bottom-color: var(--accent); font-weight: 600; }
+  .admin-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .user-menu { display: flex; align-items: center; gap: 14px; font-size: 13px; }
+  .user-menu .user-name { color: var(--text-secondary); }
+  .user-menu a { color: var(--accent); text-decoration: none; }
+  .user-menu a:hover { text-decoration: underline; }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  button.btn {
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    padding: 7px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    background: var(--surface);
+    color: var(--text-primary);
+    white-space: nowrap;
+  }
+  button.btn:hover { background: #262625; }
+  button.btn:disabled { opacity: 0.5; cursor: default; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  button.btn.primary:hover { background: var(--accent-dim); }
+  button.btn.small { padding: 4px 10px; font-size: 12px; }
+  button.btn.danger { border-color: var(--serious); color: var(--serious); background: transparent; }
+  button.btn.danger:hover { background: rgba(236,131,90,0.12); }
+
+  .msg { font-size: 13px; min-height: 18px; margin-top: 10px; }
+  .msg.error { color: var(--critical); }
+  .msg.ok { color: #7be07b; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--gridline);
+    white-space: nowrap;
+  }
+  tbody td { padding: 10px; border-bottom: 1px solid var(--gridline); vertical-align: middle; }
+  tbody tr:hover { background: rgba(255,255,255,0.03); }
+  tbody tr.inactive td { color: var(--text-muted); }
+  td select { width: auto; padding: 4px 8px; }
+  .row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .title-main { font-weight: 600; }
+  .title-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .badge-fill-good  { background: rgba(12,163,12,0.16); color: #7be07b; }
+  .badge-fill-muted { background: rgba(255,255,255,0.06); color: var(--text-secondary); }
+
+  .scope { color: var(--text-secondary); font-size: 12px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--text-secondary); }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 16px 0; flex-wrap: wrap; }
+  .toolbar label { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; cursor: pointer; }
+  .toolbar h2 { margin: 0; }
+  tbody tr:target { background: rgba(57,135,229,0.12); }
+  .hint { color: var(--text-muted); font-size: 13px; margin: 0; }
+
+  .state { padding: 30px 10px; text-align: center; color: var(--text-muted); }
+  .state.error { color: var(--critical); }
+  .services { display: flex; flex-wrap: wrap; gap: 4px; max-width: 360px; }
+  .chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--text-secondary);
+          background: var(--surface-2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 6px; white-space: nowrap; }
+  .host-edit { display: grid; gap: 6px; min-width: 240px; }
+  .host-edit textarea { min-height: 54px; resize: vertical; font-family: inherit; width: 100%; background: var(--surface-2);
+                        border: 1px solid var(--border); color: var(--text-primary); border-radius: 6px; padding: 8px 10px; font-size: 13px; }
+  .host-edit textarea:focus { outline: none; border-color: var(--accent); }
+  .host-edit .row { display: flex; gap: 6px; align-items: center; }
+  .host-edit select { width: auto; }
+  .badge-fill-warn { background: rgba(250,178,25,0.16); color: #fdd68a; }
+  .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; align-items: end; padding: 0 16px 14px; }
+  .form-row label { display: block; color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px; }
+  .check { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; }
+  .check input { width: auto; }
+  .muted { color: var(--text-muted); }
+  .pills { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 16px; }
+  .pill { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  .pill .k { color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; }
+  .pill .v { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-top: 6px; }
+  .pill .d { color: var(--text-secondary); font-size: 12px; margin-top: 4px; overflow-wrap: anywhere; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .st-ok .dot { background: var(--good); }
+  .st-warn .dot { background: #fab219; }
+  .st-bad .dot { background: var(--critical); }
+  .st-off .dot { background: var(--text-muted); }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; }
+  .grid2 .card { margin-bottom: 0; min-width: 0; }
+  dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; font-size: 13px; }
+  dl.kv dt { color: var(--text-muted); }
+  dl.kv dd { margin: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+  .err { color: #f29b9b; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .section-gap { margin-top: 16px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="topbar">
+      <div class="brand">
+        <a class="name" href="./">SIEMantics</a>
+        <span class="sub">Admin panel</span>
+      </div>
+      <div class="user-menu" id="userMenu"></div>
+    </header>
+    <nav class="admin-tabs" id="adminTabs" aria-label="Admin panel"></nav>
+
+    <div class="pills" id="pills"></div>
+    <div id="stateMsg" class="state" hidden></div>
+
+    <div class="grid2" id="details"></div>
+
+    <div class="card section-gap" style="padding:0; overflow-x:auto;">
+      <div class="toolbar">
+        <h2>Kapcsolatok</h2>
+        <button type="button" class="btn small" id="testBtn">Kapcsolat tesztelése</button>
+      </div>
+      <p class="hint" style="padding: 8px 16px 0;">IRIS ping, Wazuh API bejelentkezés, OpenRouter kulcs adatai. LLM-kvótát nem fogyaszt.</p>
+      <table>
+        <thead><tr><th>Rendszer</th><th>Eredmény</th><th>Válaszidő</th><th>Részletek</th></tr></thead>
+        <tbody id="testBody"><tr><td colspan="4" class="muted">Még nem futott.</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card section-gap" style="padding:0; overflow-x:auto;">
+      <div class="toolbar"><h2>Érvényes beállítások</h2><span class="muted" id="generatedAt"></span></div>
+      <p class="hint" style="padding: 8px 16px 0;">A szerver .env fájljából, csak olvasható. A kulcsoknál csak az látszik, hogy be vannak-e állítva.</p>
+      <table>
+        <thead><tr><th>Beállítás</th><th>Érték</th></tr></thead>
+        <tbody id="settingsBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+<script src="auth.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  const el = (id) => document.getElementById(id);
+  const REFRESH_MS = 30 * 1000;
+  const STATE_LABEL = { ok: "Rendben", warn: "Figyelmeztetés", bad: "Hiba", off: "Nincs adat" };
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  function parse(iso) {
+    return iso ? new Date(iso + (iso.endsWith("Z") ? "" : "Z")) : null;
+  }
+
+  function fmtTime(iso) {
+    const d = parse(iso);
+    if (!d || isNaN(d.getTime())) return "-";
+    return d.toLocaleString("hu-HU", { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+
+  function ago(iso) {
+    const d = parse(iso);
+    if (!d) return null;
+    const s = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+    if (s < 90) return `${s} mp`;
+    if (s < 5400) return `${Math.round(s / 60)} perc`;
+    if (s < 172800) return `${Math.round(s / 3600)} óra`;
+    return `${Math.round(s / 86400)} nap`;
+  }
+
+  function newer(a, b) {
+    const da = parse(a), db = parse(b);
+    return !!da && (!db || da > db);
+  }
+
+  function pill(title, state, value, detail) {
+    return `<div class="pill st-${state}" role="status">
+      <div class="k">${escapeHtml(title)}</div>
+      <div class="v"><span class="dot" aria-hidden="true"></span>${escapeHtml(value)}<span class="muted" style="font-weight:400">· ${STATE_LABEL[state]}</span></div>
+      ${detail ? `<div class="d">${escapeHtml(detail)}</div>` : ""}
+    </div>`;
+  }
+
+  function kv(rows) {
+    return `<dl class="kv">${rows.filter(Boolean).map(([k, v, cls]) =>
+      `<dt>${escapeHtml(k)}</dt><dd class="${cls || ""}">${v}</dd>`).join("")}</dl>`;
+  }
+
+  function card(title, body) {
+    return `<div class="card"><h2>${escapeHtml(title)}</h2>${body}</div>`;
+  }
+
+  function llmState(l) {
+    if (!l.configured) return ["warn", "Mock motor", "Nincs OpenRouter kulcs: szabály-alapú döntés"];
+    if (l.paused_seconds > 0) return ["bad", "Kvóta-szünet", `Még ${Math.ceil(l.paused_seconds / 60)} percig nem hív LLM-et`];
+    if (newer(l.last_error_at, l.last_success_at)) return ["warn", "Utolsó hívás hibás", l.last_error];
+    if (!l.last_success_at) return ["off", "Még nem hívta", "Újraindítás óta nem volt LLM-hívás"];
+    return ["ok", "Elérhető", `Utolsó válasz ${ago(l.last_success_at)} ezelőtt`];
+  }
+
+  function ingestState(i) {
+    if (!i.last_alert_at) return ["warn", "Nincs riasztás", "Még egy riasztás sem érkezett"];
+    const hours = (Date.now() - parse(i.last_alert_at).getTime()) / 3600000;
+    if (hours > 6) return ["warn", `${ago(i.last_alert_at)} csend`, "Érdemes ellenőrizni a Wazuh-integrációt"];
+    return ["ok", `${i.alerts_24h} / 24 óra`, `Utolsó: ${ago(i.last_alert_at)} ezelőtt`];
+  }
+
+  function queueState(q) {
+    const old = q.oldest_queued_at && (Date.now() - parse(q.oldest_queued_at).getTime()) > 30 * 60000;
+    if (q.waiting_for_llm > 0) return ["warn", `${q.waiting_for_llm} vár LLM-re`, `Összesen ${q.queued} a sorban`];
+    if (old) return ["warn", `${q.queued} a sorban`, `A legrégebbi ${ago(q.oldest_queued_at)} óta vár`];
+    return ["ok", `${q.queued} a sorban`, q.queued ? `A legrégebbi ${ago(q.oldest_queued_at)} óta` : "Nincs várakozó riasztás"];
+  }
+
+  function syncState(s, disabled) {
+    if (disabled) return ["off", "Kikapcsolva", s.disabled_reason || ""];
+    if (newer(s.last_error_at, s.last_success_at)) return ["bad", "Hiba", s.last_error];
+    if (!s.last_success_at) return ["off", "Még nem futott", "Újraindítás óta"];
+    return ["ok", "Rendben", `Utolsó futás ${ago(s.last_success_at)} ezelőtt`];
+  }
+
+  function render(st) {
+    const l = st.llm, q = st.queue, i = st.ingest, is = st.iris_sync, hs = st.host_sync;
+    const hostOff = !hs.enabled || !hs.interval_minutes;
+    if (!hs.enabled) hs.disabled_reason = "Nincs Wazuh API beállítva";
+    else if (!hs.interval_minutes) hs.disabled_reason = "Csak kézi szinkron";
+    const irisOff = !is.interval_seconds;
+    if (irisOff) is.disabled_reason = "IRIS_SYNC_INTERVAL_SECONDS=0";
+    el("pills").innerHTML = [
+      pill("LLM", ...llmState(l)),
+      pill("Beérkezés", ...ingestState(i)),
+      pill("Sor", ...queueState(q)),
+      pill("IRIS lezárás-szinkron", ...syncState(is, irisOff && !is.last_success_at)),
+      pill("Host-szinkron", ...syncState(hs, hostOff && !hs.last_success_at)),
+    ].join("");
+
+    const lastResult = (r) => r ? Object.entries(r).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join(", ") : "-";
+    el("details").innerHTML = [
+      card("LLM", kv([
+        ["Modellek", escapeHtml((l.models || []).join(", ") || "-"), "mono"],
+        ["Második vélemény", escapeHtml(l.second_opinion || "kikapcsolva"), "mono"],
+        ["Utolsó sikeres hívás", l.last_success_at ? `${fmtTime(l.last_success_at)} · ${escapeHtml((l.last_result || {}).model || "")}` : "-"],
+        ["Utolsó hiba", l.last_error_at ? `${fmtTime(l.last_error_at)} · ${escapeHtml(l.last_error)}` : "-", l.last_error_at ? "err" : ""],
+        ["Kvóta-szünet", l.paused_seconds > 0 ? `még ${l.paused_seconds} mp` : "nincs"],
+      ])),
+      card("Sor és beérkezés", kv([
+        ["Sorban áll", `${q.queued} (ebből LLM-re vár: ${q.waiting_for_llm})`],
+        ["Legrégebbi várakozó", q.oldest_queued_at ? `${fmtTime(q.oldest_queued_at)} (${ago(q.oldest_queued_at)})` : "-"],
+        ["Workerek", String(q.workers)],
+        ["Utolsó riasztás", i.last_alert_at ? `${fmtTime(i.last_alert_at)} (${ago(i.last_alert_at)} ezelőtt)` : "-"],
+        ["Elmúlt 24 óra", `${i.alerts_24h} riasztás, ebből ${i.context_24h} kontextus-esemény`],
+        ["Eldobott (pl. SCA)", `${i.ignored_since_start} az újraindítás óta`],
+      ])),
+      card("IRIS lezárás-szinkron", kv([
+        ["Gyakoriság", is.interval_seconds ? `${is.interval_seconds} mp-enként` : "kikapcsolva"],
+        ["Utolsó futás", is.last_success_at ? fmtTime(is.last_success_at) : "-"],
+        ["Eredmény", lastResult(is.last_result)],
+        ["Utolsó hiba", is.last_error_at ? `${fmtTime(is.last_error_at)} · ${escapeHtml(is.last_error)}` : "-", is.last_error_at ? "err" : ""],
+      ])),
+      card("Host-szinkron (Wazuh)", kv([
+        ["Gyakoriság", hs.enabled ? (hs.interval_minutes ? `${hs.interval_minutes} percenként` : "csak kézi") : "nincs Wazuh API"],
+        ["Utolsó futás", hs.last_success_at ? fmtTime(hs.last_success_at) : "-"],
+        ["Eredmény", lastResult(hs.last_result)],
+        ["Utolsó hiba", hs.last_error_at ? `${fmtTime(hs.last_error_at)} · ${escapeHtml(hs.last_error)}` : "-", hs.last_error_at ? "err" : ""],
+      ])),
+    ].join("");
+
+    const rows = Object.entries(st.settings).map(([k, v]) =>
+      `<tr><td class="mono">${escapeHtml(k.toUpperCase())}</td><td class="mono">${escapeHtml(v === "" || v === null ? "(üres)" : v)}</td></tr>`);
+    rows.push(...Object.entries(st.secrets_set).map(([k, v]) =>
+      `<tr><td class="mono">${escapeHtml(k.toUpperCase())}</td><td>${v ? "beállítva" : '<span class="err">nincs beállítva</span>'}</td></tr>`));
+    el("settingsBody").innerHTML = rows.join("");
+    el("generatedAt").textContent = `Frissítve: ${new Date().toLocaleTimeString("hu-HU")}`;
+  }
+
+  async function load() {
+    try {
+      const res = await SIEM.api("/api/v1/system/status");
+      if (res.status === 403) throw new Error("A Rendszerállapot fül L2 vagy admin szerepkörrel érhető el.");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      render(await res.json());
+      el("stateMsg").hidden = true;
+    } catch (err) {
+      el("stateMsg").hidden = false;
+      el("stateMsg").className = "state error";
+      el("stateMsg").textContent = "Nem sikerült betölteni az állapotot: " + err.message;
+    }
+  }
+
+  el("testBtn").addEventListener("click", async () => {
+    el("testBtn").disabled = true;
+    el("testBody").innerHTML = '<tr><td colspan="4" class="muted">Tesztelés...</td></tr>';
+    try {
+      const res = await SIEM.api("/api/v1/system/test-connections", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const results = await res.json();
+      el("testBody").innerHTML = results.map((r) => {
+        const state = r.ok === true ? "ok" : r.ok === false ? "bad" : "off";
+        const label = r.ok === true ? "Elérhető" : r.ok === false ? "Hiba" : "Nincs beállítva";
+        return `<tr><td>${escapeHtml(r.name)}</td>
+          <td><span class="pill st-${state}" style="display:inline-flex;padding:2px 8px;border-radius:999px;gap:6px;align-items:center"><span class="dot" aria-hidden="true"></span>${label}</span></td>
+          <td>${r.latency_ms != null ? r.latency_ms + " ms" : "-"}</td>
+          <td class="${r.ok === false ? "err" : ""}">${escapeHtml(r.detail || "")}</td></tr>`;
+      }).join("");
+    } catch (err) {
+      el("testBody").innerHTML = `<tr><td colspan="4" class="err">Sikertelen teszt: ${escapeHtml(err.message)}</td></tr>`;
+    }
+    el("testBtn").disabled = false;
+  });
+
+  SIEM.me().then((user) => {
+    SIEM.renderUserMenu(el("userMenu"), user);
+    SIEM.renderAdminTabs(el("adminTabs"), user, "status");
+  }).catch(() => {});
+  load();
+  setInterval(() => { if (!document.hidden) load(); }, REFRESH_MS);
+})();
+</script>
+</body>
+</html>

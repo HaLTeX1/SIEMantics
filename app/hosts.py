@@ -8,6 +8,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import status
 from app.db import async_session
 from app.models import HostProfile, KnownNetwork
 from app.wazuh_client import wazuh_client
@@ -49,6 +50,17 @@ def _wazuh_fields(agent: dict) -> dict:
 
 
 async def sync_hosts(session: AsyncSession) -> dict:
+    # Az eredmeny (vagy a hiba) a Rendszerallapot fulre is.
+    try:
+        result = await _sync_hosts(session)
+    except Exception as exc:
+        status.record_failure("host_sync", exc)
+        raise
+    status.record_success("host_sync", result)
+    return result
+
+
+async def _sync_hosts(session: AsyncSession) -> dict:
     # Wazuh agentek -> HostProfile; a kezi mezok erintetlenek, a Wazuh-bol eltunt hostok jelolest kapnak.
     agents = await wazuh_client.list_agents_detailed()
     profiles = {p.agent_name: p for p in (await session.execute(select(HostProfile))).scalars()}

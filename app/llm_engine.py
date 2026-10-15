@@ -1,9 +1,12 @@
 import json
 import logging
 
+import httpx
+
 from openai import APIStatusError, AsyncOpenAI, PermissionDeniedError, RateLimitError
 
 from app.config import settings
+from app import status
 from app.mock_engine import mock_triage
 from app.schemas import NormalizedAlert, RelatedAlert, TriageResult
 
@@ -208,6 +211,19 @@ def llm_configured() -> bool:
     return _client is not None
 
 
+def configured_models() -> list[str]:
+    return list(_models)
+
+
+async def key_info() -> dict:
+    # Az OpenRouter kulcs adatai (ingyenes szint, hasznalat, limit); nem fogyaszt kvotat.
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{OPENROUTER_BASE_URL}/key",
+                                headers={"Authorization": f"Bearer {settings.openrouter_api_key}"})
+        resp.raise_for_status()
+        return resp.json().get("data") or {}
+
+
 def second_opinion_enabled() -> bool:
     model = settings.second_opinion_model.strip()
     if not model or _client is None:
@@ -235,10 +251,15 @@ async def triage_alert(
 
     user_prompt = build_user_prompt(alert, related, environment, analyst_history)
     try:
-        return await _openrouter_triage(alert, user_prompt, model)
+        result = await _openrouter_triage(alert, user_prompt, model)
     except (RateLimitError, PermissionDeniedError) as exc:
-        raise LlmUnavailable(f"OpenRouter quota or rate limit: {exc}", quota=True) from exc
+        error = LlmUnavailable(f"OpenRouter quota or rate limit: {exc}", quota=True)
     except APIStatusError as exc:
-        raise LlmUnavailable(f"OpenRouter error {exc.status_code}: {exc}", quota=exc.status_code == 402) from exc
+        error = LlmUnavailable(f"OpenRouter error {exc.status_code}: {exc}", quota=exc.status_code == 402)
     except Exception as exc:
-        raise LlmUnavailable(f"OpenRouter triage failed: {exc}") from exc
+        error = LlmUnavailable(f"OpenRouter triage failed: {exc}")
+    else:
+        status.record_success("llm", {"model": result.model})
+        return result
+    status.record_failure("llm", error, quota=error.quota)
+    raise error
