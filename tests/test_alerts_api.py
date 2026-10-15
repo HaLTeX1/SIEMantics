@@ -269,3 +269,11 @@ def test_closed_alerts_can_be_hidden(logged_in, iris):
     everything = {a["display_id"]: a["is_closed"] for a in logged_in.get("/api/v1/alerts").json()}
     assert len(everything) == 4 and everything[closed_case["display_id"]] and everything[labeled["display_id"]]
     assert not everything[open_case["display_id"]]
+
+
+def test_ui_files_are_revalidated_after_deploys(client):
+    # no-cache: a bongeszo deploy utan nem a regi auth.js-t / oldalt hasznalja.
+    first = client.get("/ui/auth.js")
+    assert first.status_code == 200 and first.headers["cache-control"] == "no-cache"
+    again = client.get("/ui/auth.js", headers={"If-None-Match": first.headers["etag"]})
+    assert again.status_code == 304

@@ -50,7 +50,15 @@ app.include_router(suppressions.router)
 app.include_router(hosts.router)
 app.include_router(system.router)
 app.include_router(wazuh_rules.router)
-app.mount("/ui", StaticFiles(directory=STATIC_DIR, html=True), name="ui")
+class _RevalidatedStaticFiles(StaticFiles):
+    # A bongeszo minden betolteskor ellenorizze (ETag, 304), igy egy deploy utan nem marad regi felulet.
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/ui", _RevalidatedStaticFiles(directory=STATIC_DIR, html=True), name="ui")
 
 
 @app.get("/", include_in_schema=False)
