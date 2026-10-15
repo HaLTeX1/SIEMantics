@@ -224,3 +224,24 @@ def test_group_false_positive_for_alert_without_group(logged_in, iris):
     body = logged_in.post(f"/api/v1/cases/groups/{a['display_id']}/false-positive").json()
     assert body["labeled"] == [a["display_id"]]
     assert logged_in.post("/api/v1/cases/groups/ID-99999/false-positive").status_code == 404
+
+
+# --- felulvizsgalat lezarasa FP-kent
+
+def test_needs_review_alert_can_be_closed_as_false_positive(logged_in, iris):
+    record = process_alert(logged_in, alert("r1", level=6, host="x1", srcip="203.0.113.1"))
+    assert record["status"] == "needs_review" and record["iris_case_id"] is None
+
+    res = logged_in.post("/api/v1/alerts/bulk/false-positive",
+                         json={"alert_refs": [record["display_id"]], "reason": "backup job"})
+    assert res.status_code == 200 and res.json()["closed_cases"] == []
+
+    closed = get(logged_in, record["display_id"])
+    assert closed["status"] == "suppressed" and closed["ground_truth"] == "false_positive"
+    # Az automatikus dontes a metrikakhoz megmarad, az ok es a lezaro latszik.
+    assert closed["auto_status"] == "needs_review" and closed["is_closed"] is True
+    assert "False positive (admin, SIEMantics): backup job" in closed["review_reason"]
+    assert iris.calls == []
+    # Nyitott riasztasok kozott mar nem szerepel.
+    visible = {a["display_id"] for a in logged_in.get("/api/v1/alerts?include_closed=false").json()}
+    assert record["display_id"] not in visible

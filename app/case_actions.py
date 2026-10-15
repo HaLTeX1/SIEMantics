@@ -281,6 +281,13 @@ async def _close_records_fp(
             record.status = AlertStatus.SUPPRESSED
             record.triage_engine = "analyst"
             record.review_reason = f"closed as false positive by {user.username} before triage"
+        elif record.iris_case_id is None and record.status in (AlertStatus.NEEDS_REVIEW, AlertStatus.ERROR):
+            # Felulvizsgalat lezarva: lekerul a sorbol; az auto_status a metrikakhoz megmarad.
+            if record.auto_status is None:
+                record.auto_status = record.status
+            record.status = AlertStatus.SUPPRESSED
+            note = _fp_annotation(user.username, reason)
+            record.review_reason = f"{record.review_reason}; {note}" if record.review_reason else note
     await session.commit()
     return labeled, closed
 

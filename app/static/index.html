@@ -664,15 +664,43 @@
   }
 
   function escalateControl(a) {
-    const busy = escalating.has(a.display_id);
-    const err = escalateErrors.get(a.display_id);
+    const busy = escalating.has(a.display_id) || closingFp.has(a.display_id);
+    const err = escalateErrors.get(a.display_id) || fpErrors.get(a.display_id);
+    // Felulvizsgalatnal (es hibas triazsnal) a lezaras is valaszthato, nem csak az eszkalalas.
+    const canClose = ["needs_review", "error"].includes(a.status);
     return `<div class="escalate-control">
       <button type="button" class="btn primary escalate-btn" data-id="${escapeHtml(a.display_id)}" ${busy ? "disabled" : ""}>
-        ${busy ? "Eszkalálás..." : "Eszkalálás IRIS esetté"}
+        ${escalating.has(a.display_id) ? "Eszkalálás..." : "Eszkalálás IRIS esetté"}
       </button>
-      <span class="hint">Valódi incidens: IRIS esetet nyit, és True Positive-nak címkézi.</span>
+      ${canClose ? `<button type="button" class="btn outline-serious fp-alert-btn" data-id="${escapeHtml(a.display_id)}" ${busy ? "disabled" : ""}>
+        ${closingFp.has(a.display_id) ? "Lezárás..." : "Lezárás false positive-ként"}
+      </button>` : ""}
+      <span class="hint">${canClose
+        ? "Valódi incidens: IRIS esetet nyit (True Positive). Ártalmatlan: lezárja (False Positive), és a hasonló riasztások ezután maguktól elnyomódhatnak."
+        : "Valódi incidens: IRIS esetet nyit, és True Positive-nak címkézi."}</span>
       ${err ? `<span class="escalate-error">${escapeHtml(err)}</span>` : ""}
     </div>`;
+  }
+
+  async function closeAlertAsFalsePositive(displayId) {
+    const reason = window.prompt(`${displayId} lezárása false positive-ként. False Positive címkét kap, lekerül a felülvizsgálati sorból, és a hasonló riasztások ezután maguktól elnyomódhatnak.\n\nIndoklás (opcionális):`, "");
+    if (reason === null) return;
+    fpErrors.delete(displayId);
+    closingFp.add(displayId);
+    renderTable();
+    try {
+      const res = await SIEM.api("/api/v1/alerts/bulk/false-positive", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alert_refs: [refOf(displayId)], reason: reason.trim() || null }),
+      });
+      if (!res.ok) throw new Error(await errorDetail(res));
+      setActionMessage(`${displayId} lezárva false positive-ként.`);
+    } catch (err) {
+      fpErrors.set(displayId, "Sikertelen lezárás: " + err.message);
+    }
+    closingFp.delete(displayId);
+    await fetchAlerts();
   }
 
   async function escalateAlert(displayId) {
@@ -1288,6 +1316,9 @@
       btn.addEventListener("click", () => escalateAlert(btn.dataset.id));
     });
 
+    tableBody.querySelectorAll(".fp-alert-btn").forEach((btn) => {
+      btn.addEventListener("click", () => closeAlertAsFalsePositive(btn.dataset.id));
+    });
     tableBody.querySelectorAll(".fp-case-btn").forEach((btn) => {
       btn.addEventListener("click", () => closeCaseAsFalsePositive(Number(btn.dataset.case)));
     });

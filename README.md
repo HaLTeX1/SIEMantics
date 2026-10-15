@@ -168,6 +168,8 @@ Egy false positive ítélet nem minden esetben ugyanolyan megbízható: egy 0.51
 - de a dashboardon külön „Needs review” badge-dzsel és státuszszűrővel jelenik meg, a részletpanelen pedig kiemelve látszik a felülvizsgálat oka (`review_reason`),
 - az analyst címkézheti, vagy egy gombnyomással [IRIS esetté eszkalálhatja](#kézi-eszkaláció).
 
+A `needs_review` (és hibás triázsú) riasztás a részletpanelen kétféleképpen zárható: **„Eszkalálás IRIS esetté”** (valódi incidens, True Positive), vagy **„Lezárás false positive-ként”** (opcionális indoklással). Ez utóbbi `false_positive` címkét ad, a riasztás `suppressed` lesz és lekerül a felülvizsgálati sorból, az indoklás és a lezáró neve a felülvizsgálat oka mellé kerül, az automatikus döntés (`auto_status`) pedig megmarad a metrikákhoz. Az így adott FP-ítéletek a [megerősítést](#confidence-és-megerősítés) is táplálják: ugyanannak a szabálynak a következő riasztásai ezután automatikusan elnyomódhatnak. API: `POST /api/v1/alerts/bulk/false-positive` egy riasztással.
+
 A küszöb csak a false positive ágra vonatkozik: egy alacsony confidence-ű true positive ítélet továbbra is eszkalálódik, mert ott a tévedés ára (egy felesleges eset) kisebb, mint egy elnyomott valódi incidensé.
 
 A mock motor FP-confidence-e `max(0.9 - severity/20, 0.5)`, így az alapértelmezett 0.7-es küszöbbel az 5–6-os severity-jű, gyanús minta nélküli riasztások kerülnek `needs_review`-ba, a ≤4-esek `suppressed`-be.
