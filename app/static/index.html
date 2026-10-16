@@ -37,7 +37,7 @@
   }
 
   .wrap {
-    max-width: 1400px;
+    max-width: 1760px;
     margin: 0 auto;
     padding: 20px 20px 48px;
   }
@@ -225,8 +225,18 @@
   tbody tr.closed-row td { opacity: 0.6; }
   tbody tr.closed-row.selected td, tbody tr.closed-row:hover td { opacity: 0.85; }
 
-  .title-main { font-weight: 600; color: var(--text-primary); }
-  .title-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+  /* Hosszu, szokoz nelkuli cim (parancssor, utvonal) ne szelesitse ki a tablazatot. */
+  .title-main { font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+  .title-sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+  td.title-cell { min-width: 260px; }
+  td.time-cell { white-space: nowrap; }
+  /* A sor vegi gombok keskeny ablakban is latszanak. */
+  thead th:last-child, tbody tr.data-row td:last-child {
+    position: sticky;
+    right: 0;
+    background: var(--surface);
+    box-shadow: -8px 0 8px -8px rgba(0,0,0,0.6);
+  }
 
   .badge {
     display: inline-flex;
@@ -1248,7 +1258,7 @@
       const mainRow = `
         <tr class="data-row ${isSelected ? "selected" : ""} ${a.is_closed ? "closed-row" : ""}" data-id="${rowId}">
           <td><input type="checkbox" class="row-check" data-id="${rowId}" ${isSelected ? "checked" : ""} /></td>
-          <td>
+          <td class="title-cell">
             <div class="title-main">${escapeHtml(a.rule_description)}</div>
             <div class="title-sub"><span class="alert-ref">${rowId}</span> · ${escapeHtml(a.alert_id)}${groupBadge(a)}${closedBadge(a)}</div>
           </td>
@@ -1259,7 +1269,7 @@
           <td>${badge(st.label, st.cls)}</td>
           <td>${badge(disp.label, disp.cls)}</td>
           <td>${assigneeCell(a)}</td>
-          <td>${fmtTime(a.received_at)}</td>
+          <td class="time-cell">${fmtTime(a.received_at)}</td>
           <td>
             <div class="row-actions">
               <button type="button" class="icon-btn expand-btn ${isExpanded ? "expanded" : ""}" data-id="${rowId}" title="Részletek">${isExpanded ? "▾" : "▸"}</button>
