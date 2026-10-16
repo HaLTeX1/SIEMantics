@@ -124,6 +124,12 @@ async def require_context_editor(user: User = Depends(get_current_user)) -> User
     return user
 
 
+async def require_isolate(user: User = Depends(get_current_user)) -> User:
+    if not user.can_isolate:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="L2 role required to isolate hosts")
+    return user
+
+
 async def require_block_ip(user: User = Depends(get_current_user)) -> User:
     if not user.can_block_ip:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,

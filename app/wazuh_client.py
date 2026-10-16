@@ -92,11 +92,15 @@ class WazuhClient:
         body = await self._request("GET", f"/syscollector/{agent_id}/ports", params={"limit": 500})
         return body["data"]["affected_items"]
 
-    async def run_command(self, command: str, agent_ids: list[str], alert: dict) -> tuple[list[str], dict[str, str]]:
-        # (sikeres agent ID-k, {agent ID: hiba}).
+    async def run_command(
+        self, command: str, agent_ids: list[str], alert: dict, arguments: list[str] | None = None
+    ) -> tuple[list[str], dict[str, str]]:
+        # (sikeres agent ID-k, {agent ID: hiba}); az arguments az agenten extra_args-kent erkezik.
+        payload: dict = {"command": command, "alert": alert}
+        if arguments:
+            payload["arguments"] = arguments
         body = await self._request(
-            "PUT", "/active-response", params={"agents_list": ",".join(agent_ids)},
-            json={"command": command, "alert": alert},
+            "PUT", "/active-response", params={"agents_list": ",".join(agent_ids)}, json=payload,
         )
         data = body.get("data") or {}
         failed: dict[str, str] = {}

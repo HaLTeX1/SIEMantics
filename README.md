@@ -314,6 +314,27 @@ A riasztás részletpaneljén az admin egy kattintással blokkolhatja a támadó
 - **Napló:** minden lépés bekerül a `response_actions` táblába (ki, mikor, melyik IP, mely agenteken, milyen eredménnyel), és megjelenik a részletpanelen. Ha a riasztásnak van IRIS esete, az eset egy „IP blocked” note-ot kap.
 - **Jogosultság:** blokkolást L2, admin vagy külön engedélyezett felhasználó indíthat (lásd [Felhasználókezelés](#felhasználókezelés)); a naplót mindenki látja.
 
+### Gép izolálása
+
+A riasztás külön ablakának „Válaszlépés” paneljén az L2 és az admin a riasztás **saját agentjét** izolálhatja: a gép a lejáratig (1 óra, 24 óra vagy 7 nap) csak a Wazuh managerrel (és a `RESPONSE_ISOLATION_ALLOW` címeivel) kommunikálhat, minden más be- és kimenő forgalma tiltva, a már futó kapcsolatoké is. A Wazuh beépítve nem tud ilyet, ezért saját Active Response script végzi (`wazuh/active-response/`).
+
+- **Linux** (`siemantics-isolate`): saját nftables-táblát hoz létre (`inet siemantics_isolation`, ha nincs nftables: saját iptables-láncot), a meglévő tűzfalszabályokhoz nem nyúl; a feloldás csak ezt törli.
+- **Windows** (`siemantics-isolate.cmd` + `.ps1`): saját csoportban („SIEMantics isolation”) tiltó szabályokat hoz létre a megengedett címeken kívüli teljes IPv4 / IPv6 címtérre (a tiltó szabály erősebb bármely meglévő engedélyezőnél), és bekapcsolja a tűzfalat; a feloldás törli a szabályokat és visszaállítja a profilok eredeti állapotát.
+- **Biztonsági háló:** az izolálás mindig lejárattal fut; ha a gép a Wazuh managert sem érné el, a lejáratkor az agent helyben magától felold. A lejárat előtt az **„Izolálás feloldása”** gombbal is feloldható (külön, lejárat nélküli parancs). Megengedett cím nélkül a script nem izolál.
+- **Védőkorlátok:** a gép nevét be kell gépelni megerősítésként; a Wazuh manager riasztásainál (agent 000) nincs mit izolálni; a `RESPONSE_PROTECTED_HOSTS` hostjai (pl. a SIEMantics, az IRIS, a domain controller) soha nem izolálhatók; inaktív agent nem izolálható. Csak L2 és admin (`can_isolate`), az IP-blokkolásra külön engedélyezett analyst nem. Minden lépés a válaszlépés-naplóba és IRIS note-ba kerül.
+- **API:** `POST /api/v1/alerts/{ref}/isolate` (`duration_hours`: 1/24/168, `confirm_hostname`), `POST /api/v1/alerts/{ref}/release`.
+
+**Beállítás (egyszeri):**
+
+1. A scriptek kirakása **minden izolálható agentre** (a Wazuh nem terjeszti őket):
+   - Linux: `wazuh/active-response/siemantics-isolate` → `/var/ossec/active-response/bin/siemantics-isolate`, majd `chown root:wazuh` és `chmod 750`.
+   - Windows: `siemantics-isolate.cmd` és `siemantics-isolate.ps1` → `C:\Program Files (x86)\ossec-agent\active-response\bin\`.
+2. A [wazuh/ossec-active-response.xml](wazuh/ossec-active-response.xml) izolálási részét (két `<command>` és nyolc `<active-response>` blokk) az `ossec.conf`-ba, majd `systemctl restart wazuh-manager`. Ellenőrzés: `/var/ossec/etc/shared/ar.conf` alatt megjelenik a `siemantics-isolate86400` és a `win-siemantics-isolate86400`.
+3. A SIEMantics `.env`-jében: a Wazuh manager IP-je a `WAZUH_API_URL`-ből automatikusan megengedett (ha ott IP szerepel); különben, vagy további címekhez (pl. admin jump host): `RESPONSE_ISOLATION_ALLOW=10.64.0.82`. A soha nem izolálható hostok: `RESPONSE_PROTECTED_HOSTS=lab-soc-siem01,LAB-SOC-CORE01`.
+4. Első próba egy nem kritikus gépen, 1 órára; az agent oldalán a `active-responses.log` mutatja, mi történt.
+
+Az agent a managert IP-címmel érje el (az agent konfigurációjában), mert izolálva a DNS nem érhető el.
+
 ### Automatikus blokkolás
 
 A SIEMantics a triázs után magától is blokkolhat, ha a riasztás egy publikus, rossz hírű címről jövő brute force. Ugyanazokkal a védőkorlátokkal, mint a kézi blokkolás. Minden feltételnek teljesülnie kell:

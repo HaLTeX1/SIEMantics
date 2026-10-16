@@ -41,3 +41,68 @@
     <rules_id>110598</rules_id>
     <timeout>604800</timeout>
   </active-response>
+
+<!--
+  SIEMantics gep izolalas: a wazuh/active-response/ scripteket elobb ki kell rakni az agentekre
+  (Linux: /var/ossec/active-response/bin/siemantics-isolate, root:wazuh 750;
+   Windows: siemantics-isolate.cmd es .ps1 a C:\Program Files (x86)\ossec-agent\active-response\bin\ ala).
+  A lejaratos bejegyzesek izolalnak (lejaratkor az agent helyben felold), a timeout nelkuli
+  (siemantics-isolate0) a SIEMantics "Izolalas feloldasa" gombjahoz kell.
+-->
+  <command>
+    <name>siemantics-isolate</name>
+    <executable>siemantics-isolate</executable>
+    <timeout_allowed>yes</timeout_allowed>
+  </command>
+  <command>
+    <name>win-siemantics-isolate</name>
+    <executable>siemantics-isolate.cmd</executable>
+    <timeout_allowed>yes</timeout_allowed>
+  </command>
+
+  <active-response>
+    <command>siemantics-isolate</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+  </active-response>
+  <active-response>
+    <command>siemantics-isolate</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>3600</timeout>
+  </active-response>
+  <active-response>
+    <command>siemantics-isolate</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>86400</timeout>
+  </active-response>
+  <active-response>
+    <command>siemantics-isolate</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>604800</timeout>
+  </active-response>
+  <active-response>
+    <command>win-siemantics-isolate</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+  </active-response>
+  <active-response>
+    <command>win-siemantics-isolate</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>3600</timeout>
+  </active-response>
+  <active-response>
+    <command>win-siemantics-isolate</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>86400</timeout>
+  </active-response>
+  <active-response>
+    <command>win-siemantics-isolate</command>
+    <location>local</location>
+    <rules_id>110598</rules_id>
+    <timeout>604800</timeout>
+  </active-response>

@@ -53,7 +53,8 @@ async def _skip_reason(session: AsyncSession, record: AlertRecord, ip: str | Non
     # Proba modban a korabbi proba is szamit, eles modban csak a valodi blokk.
     counted = ("sent", "partial", "dry_run") if settings.auto_block_mode == "dry_run" else ("sent", "partial")
     active = await session.scalar(select(func.count()).select_from(ResponseAction).where(
-        ResponseAction.ip == ip, ResponseAction.expires_at > now, ResponseAction.status.in_(counted)))
+        ResponseAction.action == "block_ip", ResponseAction.ip == ip, ResponseAction.expires_at > now,
+        ResponseAction.status.in_(counted)))
     if active:
         return "already blocked"
     recent = await session.scalar(select(func.count()).select_from(ResponseAction).where(

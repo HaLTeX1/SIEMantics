@@ -1,0 +1,82 @@
+#!/bin/bash
+# SIEMantics gep izolalas (Wazuh active response, Linux): csak a megadott cimek (Wazuh manager) erhetok el.
+# A SIEMantics az extra_args-ban kuldi: "isolate <IP>..." vagy "release". A lejaratkor (delete) mindig felold.
+# Sajat nftables tablat / iptables lancot hasznal, a meglevo tuzfalszabalyokhoz nem nyul.
+# Helye az agenten: /var/ossec/active-response/bin/siemantics-isolate (root:wazuh, 750).
+
+LOG=${SIEMANTICS_AR_LOG:-/var/ossec/logs/active-responses.log}
+TABLE=siemantics_isolation
+CHAIN=SIEMANTICS_ISOLATION
+
+log() { echo "$(date '+%Y/%m/%d %H:%M:%S') siemantics-isolate: $*" >> "$LOG"; }
+
+read -r INPUT
+COMMAND=$(printf '%s' "$INPUT" | grep -o '"command":"[a-z_]*"' | head -n1 | cut -d'"' -f4)
+ARGS=$(printf '%s' "$INPUT" | grep -o '"extra_args":\[[^]]*\]' | head -n1 | sed 's/.*\[//; s/\]//; s/"//g; s/,/ /g')
+MODE=$(echo "$ARGS" | awk '{print $1}')
+ALLOW=""
+for a in $ARGS; do
+    # Csak ervenyes IPv4 cim kerulhet a szabalyokba.
+    if echo "$a" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then ALLOW="$ALLOW $a"; fi
+done
+
+release() {
+    if command -v nft >/dev/null 2>&1 && nft list table inet "$TABLE" >/dev/null 2>&1; then
+        nft delete table inet "$TABLE"
+    fi
+    for ipt in iptables ip6tables; do
+        command -v "$ipt" >/dev/null 2>&1 || continue
+        for hook in INPUT OUTPUT FORWARD; do
+            while "$ipt" -D "$hook" -j "$CHAIN" 2>/dev/null; do :; done
+        done
+        "$ipt" -F "$CHAIN" 2>/dev/null && "$ipt" -X "$CHAIN" 2>/dev/null
+    done
+    log "released"
+}
+
+isolate() {
+    if [ -z "$ALLOW" ]; then
+        # Kiut nelkul nem izolalunk (a Wazuh managernek elerhetonek kell maradnia).
+        log "refused: no allowed address given"
+        exit 1
+    fi
+    release
+    if command -v nft >/dev/null 2>&1; then
+        set_list=$(echo $ALLOW | sed 's/ /, /g')
+        nft -f - <<NFT
+table inet $TABLE {
+    chain input { type filter hook input priority -10; policy drop; iif "lo" accept; ip saddr { $set_list } accept; }
+    chain output { type filter hook output priority -10; policy drop; oif "lo" accept; ip daddr { $set_list } accept; }
+    chain forward { type filter hook forward priority -10; policy drop; }
+}
+NFT
+    elif command -v iptables >/dev/null 2>&1; then
+        iptables -N "$CHAIN"
+        iptables -A "$CHAIN" -i lo -j ACCEPT
+        iptables -A "$CHAIN" -o lo -j ACCEPT
+        for a in $ALLOW; do
+            iptables -A "$CHAIN" -s "$a" -j ACCEPT
+            iptables -A "$CHAIN" -d "$a" -j ACCEPT
+        done
+        iptables -A "$CHAIN" -j DROP
+        for hook in INPUT OUTPUT FORWARD; do iptables -I "$hook" 1 -j "$CHAIN"; done
+        if command -v ip6tables >/dev/null 2>&1; then
+            ip6tables -N "$CHAIN"
+            ip6tables -A "$CHAIN" -i lo -j ACCEPT
+            ip6tables -A "$CHAIN" -o lo -j ACCEPT
+            ip6tables -A "$CHAIN" -j DROP
+            for hook in INPUT OUTPUT FORWARD; do ip6tables -I "$hook" 1 -j "$CHAIN"; done
+        fi
+    else
+        log "refused: neither nft nor iptables is available"
+        exit 1
+    fi
+    log "isolated, allowed:$ALLOW"
+}
+
+case "$COMMAND" in
+    add) if [ "$MODE" = "release" ]; then release; else isolate; fi ;;
+    delete) release ;;
+    *) log "ignored command: $COMMAND" ;;
+esac
+exit 0

@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     # agent: a megtamadott host agentjen; all: minden aktiv agenten (a manager riasztasainal csak ez mukodik).
     auto_block_scope: Literal["agent", "all"] = "agent"
     auto_block_max_per_hour: int = Field(default=10, ge=1)
+    # Gep izolalasnal is elerheto cimek (vesszovel); a Wazuh manager IP-je (WAZUH_API_URL) automatikusan bekerul.
+    response_isolation_allow: str = ""
+    # Soha nem izolalhato hostok (agent nevek vesszovel), pl. a SIEMantics, az IRIS vagy a domain controller.
+    response_protected_hosts: str = ""
     # Tovabbi vedett IP-k / halozatok vesszovel, a nem publikus cimeken felul (pl. sajat publikus IP-k).
     response_protected_networks: str = ""
     # Parhuzamos triazs workerek; 1 = sorban (free rate limit, korrelacio).
