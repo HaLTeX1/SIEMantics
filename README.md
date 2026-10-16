@@ -280,9 +280,9 @@ Ha egy esetet közvetlenül az IRIS-ben zársz le, a SIEMantics átveszi a lezá
 |---|---|
 | True positive with impact / without impact | Confirmed TP |
 | False positive, Legitimate | Confirmed FP |
-| Unknown, Not applicable | nem változik (kivéve, ha az eset `false-positive` taget kapott: akkor FP) |
+| Unknown, Not applicable | a lezárási annotációból: `TP`, `TPNI`, `TPWI`, `true positive` → TP; `FP`, `false positive` → FP (ellentmondásnál nincs döntés); `false-positive` tagnél FP; különben nem változik |
 
-Az IRIS-beli lezárás a végső ítélet: felülírja a korábbi címkét. Egy lezárt esetet a szinkron később nem kérdez le újra, így a lezárás után a SIEMantics-ben adott kézi címke megmarad. Egy IRIS-ben újranyitott esetet a szinkron nem követ. A SIEMantics-ből indított FP-lezárás az IRIS-ben is beállítja a *False positive* outcome-ot.
+Ha az Outcome-ot (vagy az annotációt) csak a lezárás után töltöd ki, a szinkron azt is átveszi: a lezárt, de még ítélet nélküli eseteket 30 napig tovább figyeli, és a részletpanel élő lekérése is frissíti a dispositiont. Az IRIS-beli lezárás a végső ítélet: felülírja a korábbi címkét; a lezárás után a SIEMantics-ben adott kézi címkét viszont egy később kitöltött Outcome sem írja felül. Egy lezárt esetet a szinkron később nem kérdez le újra, így a lezárás után a SIEMantics-ben adott kézi címke megmarad. Egy IRIS-ben újranyitott esetet a szinkron nem követ. A SIEMantics-ből indított FP-lezárás az IRIS-ben is beállítja a *False positive* outcome-ot.
 
 ### Lezárási annotáció
 
