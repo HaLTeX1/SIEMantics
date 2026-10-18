@@ -139,3 +139,58 @@ def test_false_positive_close_without_closure_field(logged_in, iris):
     alert = escalated(logged_in, "a5")
     res = logged_in.post(f"/api/v1/cases/{alert['iris_case_id']}/false-positive", json={})
     assert res.status_code == 200 and alert["iris_case_id"] in iris.closed
+
+
+# --- kimaradt Outcome: annotacio es utolagos kitoltes
+
+def test_annotation_is_the_fallback_when_outcome_is_unknown():
+    def case(note, status_id=0):
+        return {"status_id": status_id,
+                "custom_attributes": {"Closure": {"Closure annotation": {"value": note}}}}
+
+    assert case_disposition(case("IP addresses blocked for 7 days. TPNI.")) == GroundTruth.TRUE_POSITIVE
+    assert case_disposition(case("true positive, host reimaged")) == GroundTruth.TRUE_POSITIVE
+    assert case_disposition(case("FP: backup job")) == GroundTruth.FALSE_POSITIVE
+    # Ellentmondas vagy jeloles nelkul nincs dontes; a kitoltott Outcome elsobbseget elvez.
+    assert case_disposition(case("not FP, it is a TP")) is None
+    assert case_disposition(case("blocked the IP")) is None
+    assert case_disposition(case("TPNI", status_id=1)) == GroundTruth.FALSE_POSITIVE
+
+
+def test_outcome_set_after_closing_is_picked_up(logged_in, iris):
+    alert = escalated(logged_in, "late1")
+    case_id = alert["iris_case_id"]
+    iris.closed.add(case_id)
+    logged_in.post(SYNC)
+    record = get(logged_in, alert["display_id"])
+    assert record["case_closed_at"] is not None and record["ground_truth"] is None
+
+    # Az Outcome csak a lezaras utan kerul ra: a kovetkezo szinkron atveszi.
+    iris.outcomes[case_id] = 2
+    body = logged_in.post(SYNC).json()
+    assert body["labeled"] == [alert["display_id"]]
+    assert get(logged_in, alert["display_id"])["ground_truth"] == "true_positive"
+    # Itelet utan mar nem figyeli tovabb.
+    assert logged_in.post(SYNC).json()["checked"] == 0
+
+
+def test_late_annotation_is_picked_up_by_the_live_view(logged_in, iris):
+    alert = escalated(logged_in, "late2")
+    case_id = alert["iris_case_id"]
+    iris.closed.add(case_id)
+    logged_in.post(SYNC)
+    iris.annotations[case_id] = "IP blocked. TPNI"
+    logged_in.get(f"/api/v1/cases/{case_id}")
+    record = get(logged_in, alert["display_id"])
+    assert record["ground_truth"] == "true_positive" and record["case_closure_note"] == "IP blocked. TPNI"
+
+
+def test_late_outcome_does_not_override_an_analyst_label(logged_in, iris):
+    alert = escalated(logged_in, "late3")
+    case_id = alert["iris_case_id"]
+    iris.closed.add(case_id)
+    logged_in.post(SYNC)
+    logged_in.patch(f"/api/v1/alerts/{alert['display_id']}/label", json={"ground_truth": "false_positive"})
+    iris.outcomes[case_id] = 2
+    logged_in.post(SYNC)
+    assert get(logged_in, alert["display_id"])["ground_truth"] == "false_positive"

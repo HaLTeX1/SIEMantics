@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user, require_admin, require_block_ip
+from app.auth import get_current_user, require_admin, require_block_ip, require_isolate
 from app.case_actions import CaseActionError, close_alerts_as_false_positive, delete_alerts
 from app.config import settings
 from app.db import get_session
@@ -12,7 +12,7 @@ from app.fingerprint import alert_fingerprint
 from app.normalize import normalize_wazuh_alert
 from app.models import AlertRecord, User
 from app.pipeline import alert_from_record, alert_queue, manual_escalate, process_record
-from app.response import ResponseError, block_ip, list_actions
+from app.response import ResponseError, block_ip, isolate_host, list_actions, release_host
 from app.surrounding import fetch_surrounding, indexer_client
 from app.wazuh_client import wazuh_client
 from app.repository import (
@@ -28,6 +28,7 @@ from app.schemas import (
     AlertRecordOut,
     AssigneeOut,
     BlockIpRequest,
+    IsolateRequest,
     BulkDeleteResult,
     BulkFalsePositiveResult,
     BulkRequest,
@@ -294,3 +295,36 @@ async def get_surrounding_events(alert_ref: str, minutes: int = 15, session: Asy
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Wazuh indexer unavailable: {exc}") from exc
     return {"enabled": True, "window_minutes": minutes, "events": events}
+
+
+@router.post("/alerts/{alert_ref}/isolate", response_model=ResponseActionOut)
+async def isolate_alert_host(
+    alert_ref: str,
+    body: IsolateRequest,
+    user: User = Depends(require_isolate),
+    session: AsyncSession = Depends(get_session),
+):
+    # Csak L2 / admin: a riasztas agentjenek izolalasa (csak a Wazuh manager marad elerheto), lejarattal.
+    record = await get_alert_record_by_ref(session, alert_ref)
+    if record is None:
+        raise HTTPException(status_code=404, detail="alert not found")
+    try:
+        action = await isolate_host(session, record, body.duration_hours * 3600, user, body.confirm_hostname)
+    except ResponseError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return (await _actions_out(session, [action]))[0]
+
+
+@router.post("/alerts/{alert_ref}/release", response_model=ResponseActionOut)
+async def release_alert_host(
+    alert_ref: str, user: User = Depends(require_isolate), session: AsyncSession = Depends(get_session)
+):
+    # Az izolalas feloldasa a lejarat elott.
+    record = await get_alert_record_by_ref(session, alert_ref)
+    if record is None:
+        raise HTTPException(status_code=404, detail="alert not found")
+    try:
+        action = await release_host(session, record, user)
+    except ResponseError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return (await _actions_out(session, [action]))[0]

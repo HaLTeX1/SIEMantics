@@ -287,6 +287,12 @@ class BlockIpRequest(BaseModel):
     duration_hours: Literal[1, 24, 168] = 24
 
 
+class IsolateRequest(BaseModel):
+    duration_hours: Literal[1, 24, 168] = 24
+    # Megerosites: a gep (agent) nevet be kell irni.
+    confirm_hostname: str = Field(min_length=1, max_length=128)
+
+
 class ResponseActionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -511,6 +517,7 @@ class UserOut(BaseModel):
     can_suppress: bool = False
     can_block_ip: bool = False
     can_edit_context: bool = False
+    can_isolate: bool = False
 
     @field_validator("response_allowed", mode="before")
     @classmethod

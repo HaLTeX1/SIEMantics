@@ -114,6 +114,11 @@ class User(Base):
         return self.role in (UserRole.ADMIN, UserRole.L2)
 
     @property
+    def can_isolate(self) -> bool:
+        # Gep izolalas: csak L2 (es admin); az IP blokkolasra kulon engedelyezettek nem.
+        return self.role in (UserRole.ADMIN, UserRole.L2)
+
+    @property
     def can_block_ip(self) -> bool:
         # Valaszlepes: L2 (es admin), vagy kulon engedelyezett felhasznalo.
         return self.role in (UserRole.ADMIN, UserRole.L2) or bool(self.response_allowed)

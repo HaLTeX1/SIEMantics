@@ -19,13 +19,15 @@ class FakeWazuh:
     def __init__(self) -> None:
         self.commands: list[tuple[str, list[str], dict]] = []
         self.fail_agents: set[str] = set()
+        self.arguments: list = []
 
     async def get_agents(self, agent_ids=None, *, active_only=False):
         agents = [AGENTS[a] for a in agent_ids if a in AGENTS] if agent_ids else list(AGENTS.values())
         return [a for a in agents if a["status"] == "active"] if active_only else agents
 
-    async def run_command(self, command, agent_ids, alert):
+    async def run_command(self, command, agent_ids, alert, arguments=None):
         self.commands.append((command, agent_ids, alert))
+        self.arguments.append(arguments)
         ok = [a for a in agent_ids if a not in self.fail_agents]
         return ok, {a: "agent unreachable" for a in agent_ids if a in self.fail_agents}
 

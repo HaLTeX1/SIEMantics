@@ -1,9 +1,10 @@
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.enums import AlertStatus, GroundTruth
@@ -330,6 +331,11 @@ async def delete_alerts(session: AsyncSession, refs: list[str], user: User) -> l
         return deleted
 
 
+# Az annotacio egyertelmu jelolesei, ha az Outcome mezo kitoltetlen (Unknown) maradt.
+_NOTE_TP = re.compile(r"\b(tp|tpni|tpwi|true[\s-]+positive)\b", re.IGNORECASE)
+_NOTE_FP = re.compile(r"\b(fp|false[\s-]+positive)\b", re.IGNORECASE)
+
+
 def case_disposition(case: dict) -> GroundTruth | None:
     # IRIS kimenetelbol disposition; legitimate = nem fenyegetes, ezert FP.
     try:
@@ -341,7 +347,14 @@ def case_disposition(case: dict) -> GroundTruth | None:
     if status_id in (OUTCOME_FALSE_POSITIVE, OUTCOME_LEGITIMATE):
         return GroundTruth.FALSE_POSITIVE
     tags = [t.strip().lower() for t in str(case.get("case_tags") or "").split(",")]
-    return GroundTruth.FALSE_POSITIVE if "false-positive" in tags else None
+    if "false-positive" in tags:
+        return GroundTruth.FALSE_POSITIVE
+    # Tartalek: a lezarasi annotacio (pl. "IP blocked. TPNI"); ellentmondasnal nincs dontes.
+    note = closure_annotation(case) or ""
+    says_tp, says_fp = bool(_NOTE_TP.search(note)), bool(_NOTE_FP.search(note))
+    if says_tp != says_fp:
+        return GroundTruth.TRUE_POSITIVE if says_tp else GroundTruth.FALSE_POSITIVE
+    return None
 
 
 @dataclass
@@ -367,11 +380,24 @@ async def sync_closed_cases(session: AsyncSession) -> SyncOutcome:
     return outcome
 
 
+# Lezart, de disposition nelkuli esetet eddig figyelunk: az Outcome utolag is kitoltheto.
+_UNDECIDED_RECHECK_DAYS = 30
+
+
 async def _sync_closed_cases(session: AsyncSession) -> SyncOutcome:
-    # IRIS hibanal a tobbi eset megy tovabb.
+    # Nyitott esetek, es a lezart, de meg itelet nelkuli esetek; IRIS hibanal a tobbi eset megy tovabb.
     case_ids = await session.scalars(
         select(AlertRecord.iris_case_id)
-        .where(AlertRecord.iris_case_id.is_not(None), AlertRecord.case_closed_at.is_(None))
+        .where(
+            AlertRecord.iris_case_id.is_not(None),
+            or_(
+                AlertRecord.case_closed_at.is_(None),
+                and_(
+                    AlertRecord.ground_truth.is_(None),
+                    AlertRecord.case_closed_at >= datetime.utcnow() - timedelta(days=_UNDECIDED_RECHECK_DAYS),
+                ),
+            ),
+        )
         .distinct()
     )
     outcome = SyncOutcome()
@@ -400,6 +426,12 @@ async def _apply_closed_case(session: AsyncSession, case_id: int, case: dict) ->
         now = datetime.utcnow()
         for record in records:
             if record.case_closed_at is not None:
+                # Mar lezartnak lattuk: csak a meg itelet nelkulieket potoljuk (az elemzoi cimke marad).
+                if record.ground_truth is None and disposition is not None:
+                    record.ground_truth = disposition
+                    record.labeled_at = now
+                    record.case_closure_note = note
+                    labeled.append(record)
                 continue
             record.case_closed_at = now
             record.case_closure_note = note
@@ -430,7 +462,7 @@ async def case_info(session: AsyncSession, case_id: int) -> dict:
     closed = bool(case.get("close_date"))
     note = closure_annotation(case)
     if closed:
-        if any(r.case_closed_at is None for r in records):
+        if any(r.case_closed_at is None or r.ground_truth is None for r in records):
             await _apply_closed_case(session, case_id, case)
         stale = [r for r in records if r.case_closure_note != note]
         if stale:

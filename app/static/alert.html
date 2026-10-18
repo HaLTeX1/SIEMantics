@@ -306,13 +306,17 @@
     return `<div class="response-history">${response.actions.map((r) => {
       const who = r.automatic ? "automatikus" : (r.requested_by ? (r.requested_by.full_name || r.requested_by.username) : "-");
       const active = new Date(r.expires_at + (r.expires_at.endsWith("Z") ? "" : "Z")) > new Date();
-      const label = { sent: "blokkolva", partial: "részben blokkolva", failed: "sikertelen",
-                      dry_run: "próba: blokkolta volna" }[r.status] || r.status;
+      const label = r.action === "isolate_host" ? (r.status === "sent" ? "izolálva" : "izolálás sikertelen")
+        : r.action === "release_host" ? (r.status === "sent" ? "izolálás feloldva" : "feloldás sikertelen")
+        : ({ sent: "blokkolva", partial: "részben blokkolva", failed: "sikertelen",
+             dry_run: "próba: blokkolta volna" }[r.status] || r.status);
+      const subject = r.action === "block_ip" ? r.ip : ((r.targets || [])[0] || {}).name || r.ip;
       // Proba futasnal ok = null: nem ment parancs, nem hiba.
       const targets = (r.targets || []).map((t) => `${escapeHtml(t.name || t.id)}${t.ok === false ? " ✗" : ""}`).join(", ");
       const cls = r.status === "sent" ? "ok" : r.status === "dry_run" ? "muted" : "bad";
-      return `<div><span class="${cls}">${escapeHtml(r.ip)} ${label}</span>
-        <span class="muted">· ${escapeHtml(who)}, ${fmtTime(r.created_at)} · ${active ? "lejár: " + fmtTime(r.expires_at) : "lejárt"}
+      const expiry = r.action === "release_host" ? "" : ` · ${active ? "lejár: " + fmtTime(r.expires_at) : "lejárt"}`;
+      return `<div><span class="${cls}">${escapeHtml(subject)} ${label}</span>
+        <span class="muted">· ${escapeHtml(who)}, ${fmtTime(r.created_at)}${expiry}
         · ${targets}${r.error_detail ? " · " + escapeHtml(r.error_detail) : ""}</span></div>`;
     }).join("")}</div>`;
   }
@@ -340,7 +344,82 @@
     }
     const msg = response.message ? `<div class="response-msg ${response.error ? "error" : "ok"}">${escapeHtml(response.message)}</div>` : "";
     return `<h2 class="panel-title">Válaszlépés</h2>
-      <div class="panel response-panel">${control}${msg}${responseHistoryHtml()}</div>`;
+      <div class="panel response-panel">${control}${isolationControl(a)}${msg}${responseHistoryHtml()}</div>`;
+  }
+
+  // --- Gep izolalas: csak L2 / admin, a riasztas sajat agentjen ---
+
+  function activeIsolation() {
+    // A legutobbi izolalas, ha nem jart le es nem oldottak fel utana.
+    for (const r of response.actions) {
+      if (r.action === "release_host" && r.status === "sent") return null;
+      if (r.action === "isolate_host" && r.status === "sent") {
+        return new Date(r.expires_at + (r.expires_at.endsWith("Z") ? "" : "Z")) > new Date() ? r : null;
+      }
+    }
+    return null;
+  }
+
+  function isolationControl(a) {
+    if (!(response.user && response.user.can_isolate) || !a.agent_name) return "";
+    const active = activeIsolation();
+    const busy = response.isolating ? "disabled" : "";
+    if (active) {
+      return `<div class="response-control" style="margin-top:12px">
+          <span class="bad">${escapeHtml(a.agent_name)} izolálva, lejár: ${fmtTime(active.expires_at)}</span>
+          <button type="button" id="releaseBtn" ${busy}>${response.isolating ? "Feloldás..." : "Izolálás feloldása"}</button>
+        </div>`;
+    }
+    const form = response.isoForm || (response.isoForm = { duration: "24", confirm: "" });
+    return `<div class="response-control" style="margin-top:12px">
+        <select id="isoDuration" aria-label="Izolálás időtartama">
+          ${[["1", "1 óra"], ["24", "24 óra"], ["168", "7 nap"]].map(([v, l]) =>
+            `<option value="${v}" ${form.duration === v ? "selected" : ""}>${l}</option>`).join("")}
+        </select>
+        <input id="isoConfirm" value="${escapeHtml(form.confirm)}" placeholder="Gép neve: ${escapeHtml(a.agent_name)}" aria-label="A gép nevének megerősítése" style="width:200px" />
+        <button type="button" id="isolateBtn" ${busy}>${response.isolating ? "Izolálás..." : "Gép izolálása"}</button>
+      </div>
+      <div class="hint" style="margin-top:4px">A gép csak a Wazuh managerrel kommunikálhat a lejáratig (vagy a feloldásig). Megerősítésként írd be a gép nevét.</div>`;
+  }
+
+  async function runIsolation(a, release) {
+    response.isolating = true;
+    response.message = "";
+    rerender();
+    try {
+      const path = release ? "release" : "isolate";
+      const opts = { method: "POST", headers: { "Content-Type": "application/json" } };
+      if (!release) opts.body = JSON.stringify({ duration_hours: Number(response.isoForm.duration), confirm_hostname: response.isoForm.confirm.trim() });
+      const res = await SIEM.api(`/api/v1/alerts/${encodeURIComponent(a.display_id)}/${path}`, opts);
+      if (!res.ok) throw new Error(await errorDetail(res));
+      const body = await res.json();
+      response.actions = [body, ...response.actions];
+      response.message = release ? `${a.agent_name} izolálása feloldva.` : `${a.agent_name} izolálva.` +
+        (body.iris_noted ? " IRIS note hozzáadva." : "");
+      response.error = body.status !== "sent";
+      if (!release) response.isoForm.confirm = "";
+    } catch (err) {
+      response.message = (release ? "Sikertelen feloldás: " : "Sikertelen izolálás: ") + err.message;
+      response.error = true;
+    }
+    response.isolating = false;
+    rerender();
+  }
+
+  function bindIsolation(a) {
+    const iso = document.getElementById("isolateBtn");
+    if (iso) {
+      const sync = () => {
+        response.isoForm = { duration: document.getElementById("isoDuration").value, confirm: document.getElementById("isoConfirm").value };
+      };
+      ["isoDuration", "isoConfirm"].forEach((id) => {
+        document.getElementById(id).addEventListener("input", sync);
+        document.getElementById(id).addEventListener("change", sync);
+      });
+      iso.addEventListener("click", () => { sync(); runIsolation(a, false); });
+    }
+    const rel = document.getElementById("releaseBtn");
+    if (rel) rel.addEventListener("click", () => runIsolation(a, true));
   }
 
   function bindResponse(a) {
@@ -549,6 +628,7 @@
       ${responsePanel(a)}
     `;
     bindResponse(a);
+    bindIsolation(a);
     bindSurrounding(a);
   }
 
