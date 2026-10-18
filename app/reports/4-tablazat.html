@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>4. táblázat – Hatékonyságmérés</title>
 <style>
+  /* $nev helyorzok: app/reports_data.py tolti ki minden megnyitaskor. */
   /* Szakdolgozati Word tablazat kinezete: Times New Roman, dupla szegely, dolt cim felul, forras alul. */
   :root { --page: #ffffff; --ink: #000000; --caption: #1f3864; }
   @media (prefers-color-scheme: dark) {
@@ -44,6 +45,7 @@
   th { font-weight: bold; }
   th:first-child, td:first-child { width: 55%; }
   sup { font-size: 0.7em; line-height: 0; }
+  p.updated { text-align: center; font-size: 9pt; opacity: 0.6; margin: 10px 0 0; }
   p.source {
     text-align: center;
     line-height: 1.8;
@@ -59,19 +61,20 @@
       <tr><th>Mutató</th><th>Mérési eredmény</th></tr>
     </thead>
     <tbody>
-      <tr><td>Feldolgozott riasztások száma</td><td>91 db</td></tr>
-      <tr><td>Ellenőrzött és címkézett riasztások száma</td><td>16 db</td></tr>
-      <tr><td>True Positive (TP)</td><td>2</td></tr>
-      <tr><td>False Positive (FP)</td><td>11</td></tr>
-      <tr><td>True Negative (TN)</td><td>3</td></tr>
-      <tr><td>False Negative (FN)</td><td>0</td></tr>
-      <tr><td>Accuracy / Precision / Recall / F1</td><td>31,3 % / 15,4 %, / 100 % / 26,7 %</td></tr>
-      <tr><td>Téves pozitív arány (FPR)</td><td>78,6 %</td></tr>
-      <tr><td>Átlagos / medián / P95 <sup>10</sup>feldolgozási idő</td><td>80,3 s/ 30,0 s / 275,1 s</td></tr>
-      <tr><td>Emberi felülvizsgálatra továbbított események</td><td>3</td></tr>
+      <tr><td>Feldolgozott riasztások száma</td><td>$processed</td></tr>
+      <tr><td>Ellenőrzött és címkézett riasztások száma</td><td>$labeled</td></tr>
+      <tr><td>True Positive (TP)</td><td>$tp</td></tr>
+      <tr><td>False Positive (FP)</td><td>$fp</td></tr>
+      <tr><td>True Negative (TN)</td><td>$tn</td></tr>
+      <tr><td>False Negative (FN)</td><td>$fn</td></tr>
+      <tr><td>Accuracy / Precision / Recall / F1</td><td>$scores</td></tr>
+      <tr><td>Téves pozitív arány (FPR)</td><td>$fpr</td></tr>
+      <tr><td>Átlagos / medián / P95 <sup>10</sup>feldolgozási idő</td><td>$times</td></tr>
+      <tr><td>Emberi felülvizsgálatra továbbított események</td><td>$review</td></tr>
     </tbody>
   </table>
   <p class="source">Forrás: Saját mérési eredmények és számítások a SIEMantics metrikavégpontja és az ellenőrzött döntésnapló alapján.</p>
+  <p class="updated">Élő adat a döntésnaplóból (valódi Wazuh-riasztások), frissítve: $updated</p>
 </figure>
 </body>
 </html>

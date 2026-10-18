@@ -701,7 +701,7 @@ A beérkezett riasztások először `Queued` státusszal jelennek meg a dashboar
 3. Utólag, a labor eredmények ismeretében felcímkézed, hogy az adott riasztás valóban true positive vagy false positive volt — akár a `/ui/` dashboardon (sorok kijelölése + bulk label gombok), akár közvetlenül `PATCH /alerts/{id}/label`-lel.
 4. `GET /api/v1/metrics` visszaadja a konfúziós mátrixot (TP/FP/TN/FN), accuracy/precision/recall/F1-et, hamis pozitív arányt, a review sor számait (`needs_review_count`, `needs_review_true_positive`, `manually_escalated_count`), valamint az átlag/medián/p95 feldolgozási időt — ezek kerülnek a 6.3 fejezet táblázataiba/ábráiba.
 
-A szakdolgozat 4. táblázata (az összesített hatékonyságmérés mutatói) a dolgozatbeli formátumban: [`app/reports/4-tablazat.html`](app/reports/4-tablazat.html). Az élő rendszeren bejelentkezés után a fejléc „Mérési eredmények” linkjén, illetve a `/reports/4-tablazat` címen érhető el (bejelentkezés nélkül a login oldalra irányít, onnan vissza). Új riport az `app/reports/<név>.html` fájllal adható hozzá (`/reports/<név>`, csak kisbetű, szám és kötőjel).
+A szakdolgozat 4. táblázata (az összesített hatékonyságmérés mutatói) a dolgozatbeli formátumban: [`app/reports/4-tablazat.html`](app/reports/4-tablazat.html). Az értékeket minden megnyitáskor a döntésnaplóból számolja (`app/reports_data.py`; csak a valódi, Wazuh-formátumú azonosítójú riasztások, a metrika-végpont logikájával). Az élő rendszeren bejelentkezés után a fejléc „Mérési eredmények” linkjén, illetve a `/reports/4-tablazat` címen érhető el (bejelentkezés nélkül a login oldalra irányít, onnan vissza). Új riport az `app/reports/<név>.html` fájllal adható hozzá (`/reports/<név>`, csak kisbetű, szám és kötőjel).
 
 ## Deployment (Forgejo CI/CD)
 
