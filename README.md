@@ -680,6 +680,8 @@ A beérkezett riasztások először `Queued` státusszal jelennek meg a dashboar
 3. Utólag, a labor eredmények ismeretében felcímkézed, hogy az adott riasztás valóban true positive vagy false positive volt — akár a `/ui/` dashboardon (sorok kijelölése + bulk label gombok), akár közvetlenül `PATCH /alerts/{id}/label`-lel.
 4. `GET /api/v1/metrics` visszaadja a konfúziós mátrixot (TP/FP/TN/FN), accuracy/precision/recall/F1-et, hamis pozitív arányt, a review sor számait (`needs_review_count`, `needs_review_true_positive`, `manually_escalated_count`), valamint az átlag/medián/p95 feldolgozási időt — ezek kerülnek a 6.3 fejezet táblázataiba/ábráiba.
 
+A szakdolgozat 4. táblázata (az összesített hatékonyságmérés mutatói) a dolgozatbeli formátumban: [`docs/meresi-eredmenyek/4-tablazat.html`](docs/meresi-eredmenyek/4-tablazat.html).
+
 ## Deployment (Forgejo CI/CD)
 
 A `.forgejo/workflows/deploy.yml` három jobot futtat `main`-re pusholáskor:

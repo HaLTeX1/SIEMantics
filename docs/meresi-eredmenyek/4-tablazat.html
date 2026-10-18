@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="hu">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>4. táblázat – Hatékonyságmérés</title>
+<style>
+  /* Szakdolgozati Word tablazat kinezete: Times New Roman, dupla szegely, dolt cim felul, forras alul. */
+  :root { --page: #ffffff; --ink: #000000; --caption: #1f3864; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --page: #262626; --ink: #ffffff; --caption: #c9d4ea; }
+  }
+  :root[data-theme="dark"] { --page: #262626; --ink: #ffffff; --caption: #c9d4ea; }
+
+  body {
+    margin: 0;
+    padding: 32px 16px;
+    background: var(--page);
+    color: var(--ink);
+    font-family: "Times New Roman", Times, serif;
+    font-size: 14pt;
+  }
+  figure { margin: 0 auto; max-width: 22.5cm; }
+  figcaption.caption {
+    text-align: center;
+    font-style: italic;
+    font-size: 10.5pt;
+    color: var(--caption);
+    margin-bottom: 14px;
+  }
+  table {
+    width: 100%;
+    border: 1px solid var(--ink);
+    border-collapse: separate;
+    border-spacing: 2px;
+  }
+  th, td {
+    border: 1px solid var(--ink);
+    text-align: left;
+    vertical-align: top;
+    padding: 2px 3px 26px;
+    line-height: 1.2;
+  }
+  th { font-weight: bold; }
+  th:first-child, td:first-child { width: 55%; }
+  sup { font-size: 0.7em; line-height: 0; }
+  p.source {
+    text-align: center;
+    line-height: 1.8;
+    margin: 4px 0 0;
+  }
+</style>
+</head>
+<body>
+<figure>
+  <figcaption class="caption">4. táblázat Az összesített hatékonyságmérés mutatói</figcaption>
+  <table>
+    <thead>
+      <tr><th>Mutató</th><th>Mérési eredmény</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Feldolgozott riasztások száma</td><td>91 db</td></tr>
+      <tr><td>Ellenőrzött és címkézett riasztások száma</td><td>16 db</td></tr>
+      <tr><td>True Positive (TP)</td><td>2</td></tr>
+      <tr><td>False Positive (FP)</td><td>11</td></tr>
+      <tr><td>True Negative (TN)</td><td>3</td></tr>
+      <tr><td>False Negative (FN)</td><td>0</td></tr>
+      <tr><td>Accuracy / Precision / Recall / F1</td><td>31,3 % / 15,4 %, / 100 % / 26,7 %</td></tr>
+      <tr><td>Téves pozitív arány (FPR)</td><td>78,6 %</td></tr>
+      <tr><td>Átlagos / medián / P95 <sup>10</sup>feldolgozási idő</td><td>80,3 s/ 30,0 s / 275,1 s</td></tr>
+      <tr><td>Emberi felülvizsgálatra továbbított események</td><td>3</td></tr>
+    </tbody>
+  </table>
+  <p class="source">Forrás: Saját mérési eredmények és számítások a SIEMantics metrikavégpontja és az ellenőrzött döntésnapló alapján.</p>
+</figure>
+</body>
+</html>
