@@ -34,9 +34,10 @@
     }[c]));
   }
 
-  // A container-be: "<nev> · Riasztasok · Elnyomasok · Admin · Kijelentkezes".
+  // A container-be: "<nev> · Riasztasok · Elnyomasok · Meresi eredmenyek · Admin · Kijelentkezes".
   function renderUserMenu(container, user) {
-    const links = ['<a href="index.html">Riasztások</a>', '<a href="suppressions.html">Elnyomások</a>'];
+    const links = ['<a href="index.html">Riasztások</a>', '<a href="suppressions.html">Elnyomások</a>',
+      '<a href="/reports/4-tablazat">Mérési eredmények</a>'];
     // Admin fulek: Felhasznalok (admin), Kornyezet (admin es L2).
     if (user.role === "admin") links.push('<a href="admin.html">Admin</a>');
     else if (user.can_edit_context) links.push('<a href="hosts.html">Admin</a>');
