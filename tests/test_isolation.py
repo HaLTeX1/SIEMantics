@@ -1,3 +1,5 @@
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -32,7 +34,9 @@ def test_isolate_linux_host_keeps_the_manager_reachable(logged_in, iris, wazuh):
     body = res.json()
     assert body["action"] == "isolate_host" and body["status"] == "sent" and body["duration_seconds"] == 86400
     assert wazuh.commands[-1][:2] == ("siemantics-isolate86400", ["001"])
-    assert wazuh.arguments[-1] == ["isolate", "10.64.0.82"]
+    args = wazuh.arguments[-1]
+    assert args[:2] == ["isolate", "10.64.0.82"] and args[2].startswith("until=")
+    assert abs(int(args[2][6:]) - (time.time() + 86400)) < 60
     assert "Host isolated: web01" in iris.notes[-1][2][0][0]
 
 
@@ -41,7 +45,7 @@ def test_windows_host_and_release(logged_in, iris, wazuh, monkeypatch):  # noqa:
     record = alert(logged_in, agent_id="015")
     assert isolate(logged_in, record, name="HL-AD-CORE01", hours=1).status_code == 200
     assert wazuh.commands[-1][0] == "win-siemantics-isolate3600"
-    assert wazuh.arguments[-1] == ["isolate", "10.64.0.82"]
+    assert wazuh.arguments[-1][:2] == ["isolate", "10.64.0.82"]
 
     res = logged_in.post(f"/api/v1/alerts/{record['display_id']}/release")
     assert res.status_code == 200 and res.json()["action"] == "release_host"

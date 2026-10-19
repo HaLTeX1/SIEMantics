@@ -2,6 +2,7 @@
 
 import ipaddress
 import logging
+import time
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
@@ -257,7 +258,9 @@ async def _run_isolation(
             if agent.get("status") != "active":
                 raise ResponseError(409, f"Wazuh agent {agent.get('name')} is not active")
         command = f"{_isolate_command(agent)}{0 if release else duration_seconds}"
-        arguments = ["release"] if release else ["isolate", *allowed]
+        # A lejarat ideje a Windows ertesito ablakhoz (a Linux script figyelmen kivul hagyja).
+        until = int(time.time()) + duration_seconds
+        arguments = ["release"] if release else ["isolate", *allowed, f"until={until}"]
         ok, failed = await wazuh_client.run_command(command, [agent["id"]], {"data": {}}, arguments)
     except ResponseError:
         raise
