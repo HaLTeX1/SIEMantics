@@ -210,3 +210,62 @@ def test_same_ip_is_blocked_again_on_another_host(logged_in, iris, wazuh, abuse,
     process_alert(logged_in, brute("h1", agent_id="001"))
     process_alert(logged_in, brute("h2", agent_id="015"))
     assert [c[1] for c in wazuh.commands] == [["001"], ["015"]]
+
+
+# --- regebbi nyitott esetek
+
+def _age_case(client, case_id, hours):
+    async def age():
+        from datetime import datetime, timedelta
+        from sqlalchemy import update
+        from app.db import async_session
+        from app.models import AlertRecord
+        async with async_session() as session:
+            await session.execute(update(AlertRecord).where(AlertRecord.iris_case_id == case_id)
+                                  .values(received_at=datetime.utcnow() - timedelta(hours=hours)))
+            await session.commit()
+    client.portal.call(age)
+
+
+def test_old_quiet_brute_force_case_is_listed_then_closed(logged_in, iris, wazuh, abuse, indexer, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(settings, "auto_block_mode", "off")
+    old = process_alert(logged_in, brute("old1"))
+    recent = process_alert(logged_in, brute("new1", ip="45.155.205.20", agent_id="015"))
+    _age_case(logged_in, old["iris_case_id"], 30)
+
+    preview = logged_in.get("/api/v1/system/auto-close").json()
+    by_case = {i["case_id"]: i for i in preview["items"]}
+    assert by_case[old["iris_case_id"]]["closable"] is True
+    assert "not blocked" in by_case[recent["iris_case_id"]]["reason"]
+    assert preview["closed"] == [] and old["iris_case_id"] not in iris.closed
+
+    run = logged_in.post("/api/v1/system/auto-close/run").json()
+    assert run["closed"] == [old["iris_case_id"]] and iris.outcomes[old["iris_case_id"]] == 4
+    assert "stopped 30 h ago" in iris.annotations[old["iris_case_id"]]
+    record = logged_in.get(f"/api/v1/alerts/{old['display_id']}").json()
+    assert record["label_source"] == "auto" and record["is_closed"] is True
+    assert recent["iris_case_id"] not in iris.closed
+
+
+def test_assigned_or_succeeded_cases_are_not_closed(logged_in, iris, wazuh, abuse, indexer, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(settings, "auto_block_mode", "off")
+    taken = process_alert(logged_in, brute("t1"))
+    _age_case(logged_in, taken["iris_case_id"], 30)
+    me = logged_in.get("/api/v1/auth/me").json()
+    logged_in.put(f"/api/v1/cases/{taken['iris_case_id']}/assignee", json={"user_id": me["id"]})
+    reason = {i["case_id"]: i["reason"] for i in logged_in.get("/api/v1/system/auto-close").json()["items"]}
+    assert reason[taken["iris_case_id"]] == "the case has an assignee"
+
+    logged_in.put(f"/api/v1/cases/{taken['iris_case_id']}/assignee", json={"user_id": None})
+    indexer["success"] = True
+    run = logged_in.post("/api/v1/system/auto-close/run").json()
+    assert run["closed"] == [] and taken["iris_case_id"] not in iris.closed
+
+
+def test_merged_away_case_gets_a_closure_annotation(logged_in, iris):
+    from test_case_actions import alert as case_alert
+
+    first = process_alert(logged_in, case_alert("m1", host="h1", srcip="198.51.100.1", rule_id="101"))
+    second = process_alert(logged_in, case_alert("m2", host="h2", srcip="198.51.100.2", rule_id="102"))
+    logged_in.post("/api/v1/cases/merge", json={"alert_refs": [first["display_id"], second["display_id"]]})
+    assert iris.annotations[second["iris_case_id"]].startswith(f"Merged into #{first['iris_case_id']} by admin")

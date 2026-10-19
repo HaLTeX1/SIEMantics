@@ -22,6 +22,7 @@ os.environ.update(
     IRIS_SYNC_INTERVAL_SECONDS="0",
     HOST_SYNC_INTERVAL_MINUTES="0",
     TRIAGE_SETTLE_SECONDS="0",
+    AUTO_CLOSE_SWEEP_MINUTES="0",
 )
 
 import pytest  # noqa: E402

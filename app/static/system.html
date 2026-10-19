@@ -192,6 +192,22 @@
 
     <div class="card section-gap" style="padding:0; overflow-x:auto;">
       <div class="toolbar">
+        <h2>Automatikus lezárás (régebbi brute force esetek)</h2>
+        <div class="row-actions">
+          <button type="button" class="btn small" id="acListBtn">Jelöltek listázása</button>
+          <button type="button" class="btn small primary" id="acRunBtn" hidden>Lezárás most</button>
+        </div>
+      </div>
+      <p class="hint" style="padding: 8px 16px 0;" id="acInfo">Nyitott, csak brute force riasztásokat tartalmazó, felelős nélküli esetek: lezárhatók „True positive without impact”-tel, ha az IP blokkolva van vagy a támadás régóta abbamaradt, és a Wazuh indexer szerint nem volt sikeres belépés.</p>
+      <table>
+        <thead><tr><th>Eset</th><th>IP</th><th>Host</th><th>Riasztás</th><th>Utolsó</th><th>Lezárható?</th></tr></thead>
+        <tbody id="acBody"><tr><td colspan="6" class="muted">Nyomd meg a „Jelöltek listázása” gombot.</td></tr></tbody>
+      </table>
+      <div class="msg" id="acMsg" role="status" style="padding: 0 16px 12px;"></div>
+    </div>
+
+    <div class="card section-gap" style="padding:0; overflow-x:auto;">
+      <div class="toolbar">
         <h2>Kapcsolatok</h2>
         <button type="button" class="btn small" id="testBtn">Kapcsolat tesztelése</button>
       </div>
@@ -321,6 +337,15 @@
     return ["ok", "Éles", `${a.actions_24h} blokk / 24 óra. ${last}`];
   }
 
+  function autoCloseState(a) {
+    if (a.mode === "off") return ["off", "Kikapcsolva", "AUTO_CLOSE_MODE=off"];
+    if (newer(a.last_error_at, a.last_success_at)) return ["bad", "Hiba", a.last_error];
+    const r = a.last_result || {};
+    const detail = a.last_success_at ? `Utolsó ellenőrzés ${ago(a.last_success_at)} ezelőtt: ${(r.closable || []).length} lezárható` : "Még nem futott";
+    if (a.mode === "dry_run") return ["warn", "Próba mód", detail];
+    return ["ok", "Éles", `${detail}, ${(r.closed || []).length} lezárva`];
+  }
+
   function render(st) {
     const l = st.llm, q = st.queue, i = st.ingest, is = st.iris_sync, hs = st.host_sync, ix = st.indexer;
     const hostOff = !hs.enabled || !hs.interval_minutes;
@@ -337,6 +362,7 @@
       pill("Wazuh indexer", ...indexerState(ix)),
       pill("Belépés-védelem", ...loginState(st.login_protection)),
       pill("Automatikus blokkolás", ...autoBlockState(st.auto_block)),
+      pill("Automatikus lezárás", ...autoCloseState(st.auto_close)),
     ].join("");
 
     const lastResult = (r) => r ? Object.entries(r).map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(v)}`).join(", ") : "-";
@@ -397,6 +423,54 @@
       el("stateMsg").textContent = "Nem sikerült betölteni az állapotot: " + err.message;
     }
   }
+
+  function renderCandidates(body) {
+    const items = body.items || [];
+    el("acBody").innerHTML = items.length ? items.map((c) => `<tr>
+        <td class="mono">#${escapeHtml(c.case_id)}</td>
+        <td class="mono">${escapeHtml((c.ips || []).join(", ") || "-")}</td>
+        <td>${escapeHtml((c.hosts || []).join(", ") || "-")}</td>
+        <td>${escapeHtml(c.alerts)}</td>
+        <td>${fmtTime(c.last_alert)}</td>
+        <td>${c.closable ? '<span class="pill st-ok" style="display:inline-flex;padding:2px 8px;border-radius:999px;gap:6px;align-items:center"><span class="dot" aria-hidden="true"></span>igen</span>'
+                         : `<span class="muted">nem: ${escapeHtml(c.reason || "-")}</span>`}</td>
+      </tr>`).join("") : '<tr><td colspan="6" class="muted">Nincs nyitott, csak brute force riasztásokat tartalmazó eset.</td></tr>';
+    const closable = items.filter((c) => c.closable).length;
+    el("acRunBtn").hidden = closable === 0;
+    el("acRunBtn").textContent = `Lezárás most (${closable})`;
+  }
+
+  async function loadCandidates() {
+    el("acListBtn").disabled = true;
+    el("acBody").innerHTML = '<tr><td colspan="6" class="muted">Ellenőrzés...</td></tr>';
+    try {
+      const res = await SIEM.api("/api/v1/system/auto-close");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      renderCandidates(await res.json());
+    } catch (err) {
+      el("acBody").innerHTML = `<tr><td colspan="6" class="err">Sikertelen: ${escapeHtml(err.message)}</td></tr>`;
+    }
+    el("acListBtn").disabled = false;
+  }
+
+  el("acListBtn").addEventListener("click", loadCandidates);
+  el("acRunBtn").addEventListener("click", async () => {
+    if (!confirm("A lezárható esetek lezárása az IRIS-ben és a SIEMantics-ben „True positive without impact”-tel, annotációval és auto-closed taggel. Folytatod?")) return;
+    el("acRunBtn").disabled = true;
+    try {
+      const res = await SIEM.api("/api/v1/system/auto-close/run", { method: "POST" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const body = await res.json();
+      el("acMsg").className = "msg " + (body.failed.length ? "error" : "ok");
+      el("acMsg").textContent = `Lezárva: ${body.closed.map((c) => "#" + c).join(", ") || "egy sem"}` +
+        (body.failed.length ? `; sikertelen: ${body.failed.map((f) => "#" + f.case_id).join(", ")}` : "");
+      renderCandidates(body);
+    } catch (err) {
+      el("acMsg").className = "msg error";
+      el("acMsg").textContent = "Sikertelen lezárás: " + err.message;
+    }
+    el("acRunBtn").disabled = false;
+  });
 
   el("testBtn").addEventListener("click", async () => {
     el("testBtn").disabled = true;

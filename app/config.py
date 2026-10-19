@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     # benne es a blokkolas elott ennyi oran belul nem volt sikeres belepes az IP-rol (Wazuh indexer kell hozza).
     auto_close_after_block: bool = True
     auto_close_success_lookback_hours: int = Field(default=24, ge=1, le=168)
+    # A regebbi nyitott brute force esetek idoszakos lezarasa: off, dry_run (csak jeloltek listaja) vagy enforce.
+    auto_close_mode: Literal["off", "dry_run", "enforce"] = "dry_run"
+    # Ennyi ora csend utan a nem blokkolt IP-ju tamadas is lezarhato (ha nem volt sikeres belepes).
+    auto_close_stale_hours: int = Field(default=24, ge=1)
+    auto_close_sweep_minutes: int = Field(default=30, ge=0)
     # Gep izolalasnal is elerheto cimek (vesszovel); a Wazuh manager IP-je (WAZUH_API_URL) automatikusan bekerul.
     response_isolation_allow: str = ""
     # Soha nem izolalhato hostok (agent nevek vesszovel), pl. a SIEMantics, az IRIS vagy a domain controller.

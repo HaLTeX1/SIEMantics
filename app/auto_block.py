@@ -1,5 +1,6 @@
 # Automatikus IP blokkolas: eszkalalt brute force riasztas publikus, rossz hiru forras IP-jere (dry_run / enforce).
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 
@@ -13,7 +14,8 @@ from app.enrichment import enrich_ip
 from app.enums import AlertStatus, GroundTruth
 from app.iris_client import OUTCOME_TP_NO_IMPACT, iris_client
 from app.models import AlertRecord, ResponseAction
-from app.repository import get_records_in_cases
+from app.db import async_session
+from app.repository import get_case_assignments, get_records_in_cases
 from app.response import ResponseError, block_ip, validate_ip
 from app.surrounding import indexer_client
 from app.wazuh_client import wazuh_client
@@ -76,11 +78,11 @@ async def _skip_reason(session: AsyncSession, record: AlertRecord, ip: str | Non
     return None
 
 
-async def _successful_login(ip: str, until: datetime) -> bool | None:
-    # Volt-e sikeres belepes az IP-rol a blokkolas elott (a 3-as szintu esemenyek csak az indexerben vannak).
+async def _successful_login(ip: str, until: datetime, since: datetime | None = None) -> bool | None:
+    # Volt-e sikeres belepes az IP-rol (a 3-as szintu esemenyek csak az indexerben vannak); None: nem ellenorizheto.
     if not indexer_client.enabled:
         return None
-    since = until - timedelta(hours=settings.auto_close_success_lookback_hours)
+    since = since or until - timedelta(hours=settings.auto_close_success_lookback_hours)
     body = {
         "size": 1,
         "_source": ["timestamp", "rule.id"],
@@ -117,12 +119,15 @@ async def _close_skip_reason(session: AsyncSession, record: AlertRecord, ip: str
 
 
 async def _auto_close(session: AsyncSession, record: AlertRecord, ip: str, action: ResponseAction) -> str:
-    # A megfekezett brute force eset lezarasa az IRIS-ben es a SIEMantics-ben (cimke: auto, nem elemzoi itelet).
-    case_id = record.iris_case_id
     hosts = ", ".join(t.get("name") or t.get("id") for t in action.targets or [] if t.get("ok"))
     note = (f"Automatically closed by SIEMantics: brute force from {ip} was blocked on {hosts} for "
             f"{action.duration_seconds // 3600} h, and no successful login from this IP was seen in the "
             f"{settings.auto_close_success_lookback_hours} h before the block. TPNI.")
+    return await close_case_tpni(session, record.iris_case_id, note)
+
+
+async def close_case_tpni(session: AsyncSession, case_id: int, note: str) -> str:
+    # Lezaras az IRIS-ben (note, tag, kimenet, annotacio) es a SIEMantics-ben (cimke: auto, nem elemzoi itelet).
     try:
         await iris_client.add_case_notes(case_id, "auto-close (SIEMantics)", [("Closed automatically", note)])
         await iris_client.add_case_tags(case_id, ["auto-closed"])
@@ -140,7 +145,7 @@ async def _auto_close(session: AsyncSession, record: AlertRecord, ip: str, actio
         member.case_closed_at = now
         member.case_closure_note = note
     await session.commit()
-    logger.warning("auto close: IRIS case %s closed as true positive without impact (%s)", case_id, ip)
+    logger.warning("auto close: IRIS case %s closed as true positive without impact", case_id)
     return f"case #{case_id} closed as true positive without impact"
 
 
@@ -180,3 +185,120 @@ async def maybe_auto_block(session: AsyncSession, record: AlertRecord) -> Respon
         decision += f"; case not closed: {exc}"
     status.record_success("auto_block", {"alert": record.display_id, "ip": ip, "decision": decision})
     return action
+
+
+# --- Regebbi nyitott brute force esetek idoszakos lezarasa
+
+_SWEEP_LIMIT = 50
+
+
+async def _active_block_ips(session: AsyncSession, ips: set[str]) -> set[str]:
+    now = datetime.utcnow()
+    result = await session.execute(select(ResponseAction.ip).where(
+        ResponseAction.action == "block_ip", ResponseAction.ip.in_(ips), ResponseAction.expires_at > now,
+        ResponseAction.status.in_(("sent", "partial"))))
+    return set(result.scalars())
+
+
+async def close_candidates(session: AsyncSession) -> list[dict]:
+    # Nyitott, csak brute force riasztasokat tartalmazo, felelos nelkuli esetek, a lezarhatosag indoklasaval.
+    wanted = {g.strip().lower() for g in settings.auto_block_rule_groups.split(",") if g.strip()}
+    result = await session.execute(select(AlertRecord).where(
+        AlertRecord.iris_case_id.is_not(None), AlertRecord.case_closed_at.is_(None)))
+    cases: dict[int, list[AlertRecord]] = {}
+    for record in result.scalars():
+        cases.setdefault(record.iris_case_id, []).append(record)
+    assigned = await get_case_assignments(session, list(cases))
+    now = datetime.utcnow()
+    out = []
+    for case_id, members in sorted(cases.items()):
+        if any(not (wanted & _groups(m)) for m in members):
+            continue
+        ips = {m.source_ip for m in members if m.source_ip}
+        last = max(m.received_at for m in members)
+        first = min(m.received_at for m in members)
+        item = {"case_id": case_id, "ips": sorted(ips), "hosts": sorted({m.agent_name for m in members if m.agent_name}),
+                "alerts": len(members), "first_alert": first, "last_alert": last, "closable": False, "reason": None}
+        out.append(item)
+        if case_id in assigned:
+            item["reason"] = "the case has an assignee"
+            continue
+        if not ips:
+            item["reason"] = "no source IP"
+            continue
+        blocked = await _active_block_ips(session, ips)
+        item["blocked"] = sorted(blocked)
+        quiet = now - last >= timedelta(hours=settings.auto_close_stale_hours)
+        if not quiet and blocked != ips:
+            item["reason"] = f"attack seen in the last {settings.auto_close_stale_hours} h and IP not blocked"
+            continue
+        since = first - timedelta(hours=settings.auto_close_success_lookback_hours)
+        checks = [await _successful_login(ip, now, since) for ip in sorted(ips)]
+        if any(c is None for c in checks):
+            item["reason"] = "cannot check for successful logins (Wazuh indexer not configured or unavailable)"
+            continue
+        if any(checks):
+            item["reason"] = "a successful login from this IP was seen, the attack may have succeeded"
+            continue
+        item["closable"] = True
+        item["quiet_hours"] = int((now - last).total_seconds() // 3600)
+    return out
+
+
+def _stale_note(item: dict) -> str:
+    blocked = f"; blocked: {', '.join(item['blocked'])}" if item.get("blocked") else ""
+    return (f"Automatically closed by SIEMantics: brute force from {', '.join(item['ips'])} against "
+            f"{', '.join(item['hosts']) or 'the host'} ({item['alerts']} alert(s)) stopped {item['quiet_hours']} h ago"
+            f"{blocked}, and no successful login from these IPs was seen since "
+            f"{item['first_alert']:%Y-%m-%d %H:%M} UTC (minus {settings.auto_close_success_lookback_hours} h). TPNI.")
+
+
+async def sweep_open_cases(session: AsyncSession, *, enforce: bool) -> dict:
+    # A lezarhato jeloltek; enforce eseten le is zarja oket (IRIS-ben meg nyitott esetek, legfeljebb _SWEEP_LIMIT).
+    candidates = await close_candidates(session)
+    closable = [c for c in candidates if c["closable"]][:_SWEEP_LIMIT]
+    closed, failed = [], []
+    if enforce:
+        for item in closable:
+            try:
+                if not await iris_client.is_open(item["case_id"]):
+                    continue
+            except Exception as exc:
+                failed.append({"case_id": item["case_id"], "error": str(exc)})
+                continue
+            result = await close_case_tpni(session, item["case_id"], _stale_note(item))
+            (closed if "closed as true positive" in result else failed).append(
+                {"case_id": item["case_id"], "result": result})
+    summary = {"mode": "enforce" if enforce else "dry_run", "candidates": len(candidates),
+               "closable": [c["case_id"] for c in closable], "closed": [c["case_id"] for c in closed],
+               "failed": failed}
+    status.record_success("auto_close", summary)
+    return {**summary, "items": candidates}
+
+
+class AutoCloseSweeper:
+    def __init__(self) -> None:
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        if settings.auto_close_mode != "off" and settings.auto_close_sweep_minutes > 0:
+            self._task = asyncio.create_task(self._run(settings.auto_close_sweep_minutes * 60))
+
+    async def stop(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+            self._task = None
+
+    async def _run(self, interval_seconds: int) -> None:
+        while True:
+            try:
+                async with async_session() as session:
+                    await sweep_open_cases(session, enforce=settings.auto_close_mode == "enforce")
+            except Exception as exc:
+                logger.exception("auto close sweep failed")
+                status.record_failure("auto_close", exc)
+            await asyncio.sleep(interval_seconds)
+
+
+auto_close_sweeper = AutoCloseSweeper()

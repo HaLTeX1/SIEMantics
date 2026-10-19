@@ -185,6 +185,9 @@ async def _close_merged(case_id: int, target_case: int, username: str) -> bool:
             return True
         await iris_client.add_case_notes(case_id, f"merged into #{target_case}",
                                          [("Merged", merged_away_note(target_case, username))])
+        # Lezarasi annotacio minden lezarasnal.
+        await _best_effort(iris_client.set_closure_annotation(case_id, f"Merged into #{target_case} by {username} (SIEMantics)."),
+                           f"setting closure annotation of case {case_id}")
         await iris_client.close_case(case_id)
         return True
     except Exception:

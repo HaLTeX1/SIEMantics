@@ -16,6 +16,7 @@ from app.models import AlertRecord, IpBan, LoginFailure, ResponseAction
 from app.pipeline import alert_queue
 from app.routers.alerts import ignored_counter
 from app.surrounding import indexer_client
+from app.auto_block import sweep_open_cases
 from app.wazuh_client import wazuh_client
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"], dependencies=[Depends(require_context_editor)])
@@ -32,6 +33,8 @@ _VISIBLE_SETTINGS = (
     "login_max_failures", "login_failure_window_minutes", "login_ban_minutes", "login_ban_max_minutes",
     "trusted_proxy_ips", "login_ban_exempt", "auto_block_mode", "auto_block_rule_groups",
     "auto_block_min_abuse_score", "auto_block_duration_hours", "auto_block_scope", "auto_block_max_per_hour",
+    "auto_close_after_block", "auto_close_success_lookback_hours", "auto_close_mode", "auto_close_stale_hours",
+    "auto_close_sweep_minutes",
     "session_ttl_hours",
 )
 # Titkok: csak az latszik, hogy be vannak-e allitva.
@@ -94,6 +97,8 @@ async def system_status(session: AsyncSession = Depends(get_session)):
                 ResponseAction.automatic.is_(True), ResponseAction.created_at >= day_ago)),
             **status.snapshot("auto_block"),
         },
+        "auto_close": {"mode": settings.auto_close_mode, "after_block": settings.auto_close_after_block,
+                       **status.snapshot("auto_close")},
         "settings": {name: getattr(settings, name) for name in _VISIBLE_SETTINGS},
         "secrets_set": {name: bool(getattr(settings, name)) for name in _SECRETS},
     }
@@ -133,3 +138,15 @@ async def test_connections():
     else:
         results.append({"name": "OpenRouter", "ok": None, "latency_ms": None, "detail": "not configured (mock engine)"})
     return results
+
+
+@router.get("/auto-close")
+async def auto_close_candidates(session: AsyncSession = Depends(get_session)):
+    # A regebbi nyitott brute force esetek lezarhatosaga (semmit nem zar le).
+    return await sweep_open_cases(session, enforce=False)
+
+
+@router.post("/auto-close/run")
+async def auto_close_now(session: AsyncSession = Depends(get_session)):
+    # Jovahagyott lezaras most, az uzemmodtol fuggetlenul: a lezarhato jeloltek TPNI-vel.
+    return await sweep_open_cases(session, enforce=True)
