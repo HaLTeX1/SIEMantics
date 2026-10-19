@@ -13,7 +13,7 @@ from app.auto_block import auto_close_sweeper
 from app.hosts import host_syncer
 from app.iris_sync import case_syncer
 from app.pipeline import alert_queue
-from app.routers import alerts, auth, cases, hosts, metrics, reports, security, suppressions, system, users, wazuh_rules
+from app.routers import agent_install, alerts, auth, cases, hosts, metrics, reports, security, suppressions, system, users, wazuh_rules
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("siemantics")
@@ -54,6 +54,8 @@ app.include_router(hosts.router)
 app.include_router(system.router)
 app.include_router(wazuh_rules.router)
 app.include_router(security.router)
+app.include_router(agent_install.public)
+app.include_router(agent_install.admin)
 app.include_router(reports.router)
 class _RevalidatedStaticFiles(StaticFiles):
     # A bongeszo minden betolteskor ellenorizze (ETag, 304), igy egy deploy utan nem marad regi felulet.

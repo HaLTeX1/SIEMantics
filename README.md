@@ -325,9 +325,16 @@ A riasztás külön ablakának „Válaszlépés” paneljén az L2 és az admin
 - **Védőkorlátok:** a gép nevét be kell gépelni megerősítésként; a Wazuh manager riasztásainál (agent 000) nincs mit izolálni; a `RESPONSE_PROTECTED_HOSTS` hostjai (pl. a SIEMantics, az IRIS, a domain controller) soha nem izolálhatók; inaktív agent nem izolálható. Csak L2 és admin (`can_isolate`), az IP-blokkolásra külön engedélyezett analyst nem. Minden lépés a válaszlépés-naplóba és IRIS note-ba kerül.
 - **API:** `POST /api/v1/alerts/{ref}/isolate` (`duration_hours`: 1/24/168, `confirm_hostname`), `POST /api/v1/alerts/{ref}/release`.
 
+**Agent telepítés a SIEMantics-ből:** az **Admin → Agent telepítés** fülön (csak admin) az agent nevéből, operációs rendszeréből (Linux / Windows), csoportjából, a manager címéből és az agent verziójából (az utóbbi kettő a Wazuh API-ból előre kitöltve) egysoros parancs készül, ami a Wazuh dashboard „Deploy new agent” parancsát váltja ki:
+- telepíti a hivatalos Wazuh agentet, ha még nincs a gépen (Linuxon a deb / rpm csomagot és az amd64 / arm64 architektúrát maga ismeri fel, Windowson az MSI-t), a megadott névvel, csoporttal és managerrel, és elindítja;
+- kirakja az izoláló scriptet a SIEMantics-ből letöltve, **SHA-256 ellenőrzéssel** (hamisított tartalmat nem telepít), Linuxon `root:wazuh 750` joggal, Windowson a `.ps1` BOM-jával együtt;
+- többször is futtatható: telepített agentnél csak a scriptet frissíti, így a meglévő gépekre és a script későbbi frissítéseire is ez való.
+
+A telepítőket és a fájlokat a SIEMantics bejelentkezés nélkül, `no-store` fejléccel szolgálja ki (`/agent-install/linux.sh`, `/agent-install/windows.ps1`, `/agent-install/files/<fájl>`), titkot nem tartalmaznak; a parancsba kerülő nevet, csoportot, managert és verziót a SIEMantics szigorúan ellenőrzi. A parancsban a SIEMantics címe a `SIEMANTICS_PUBLIC_URL`, ha nincs megadva, az a cím, amelyről az admin oldalt megnyitottad; ezt a gépeknek el kell érniük (belső címet javaslunk, nem a Cloudflare-en át). API: `GET /api/v1/agent-install/defaults`, `POST /api/v1/agent-install/command`.
+
 **Beállítás (egyszeri):**
 
-1. A scriptek kirakása **minden izolálható agentre** (a Wazuh nem terjeszti őket):
+1. A scriptek kirakása **minden izolálható agentre** (az Agent telepítés fül parancsával, vagy kézzel; a Wazuh nem terjeszti őket):
    - Linux: `wazuh/active-response/siemantics-isolate` → `/var/ossec/active-response/bin/siemantics-isolate`, majd `chown root:wazuh` és `chmod 750`.
    - Windows: `siemantics-isolate.cmd` és `siemantics-isolate.ps1` → `C:\Program Files (x86)\ossec-agent\active-response\bin\`.
 2. A [wazuh/ossec-active-response.xml](wazuh/ossec-active-response.xml) izolálási részét (két `<command>` és nyolc `<active-response>` blokk) az `ossec.conf`-ba, majd `systemctl restart wazuh-manager`. Ellenőrzés: `/var/ossec/etc/shared/ar.conf` alatt megjelenik a `siemantics-isolate86400` és a `win-siemantics-isolate86400`.
