@@ -34,6 +34,8 @@ class AlertRecord(Base):
     # Ground truth cimke a kiertekeleshez, az analyst allitja be.
     ground_truth: Mapped[GroundTruth | None] = mapped_column(Enum(GroundTruth), nullable=True)
     labeled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # "auto": a rendszer cimkezte (pl. automatikus lezaras); nem elemzoi itelet, nem tanul belole es nem metrika.
+    label_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     # VirusTotal / AbuseIPDB eredmenyek IP IoC-nkent, eszkalalt riasztasnal.
     ioc_enrichment: Mapped[list | None] = mapped_column(JSON, nullable=True)

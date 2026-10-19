@@ -232,6 +232,7 @@ def _label_false_positive(records: list[AlertRecord]) -> None:
     for record in records:
         record.ground_truth = GroundTruth.FALSE_POSITIVE
         record.labeled_at = now
+        record.label_source = None
 
 
 async def close_as_false_positive(

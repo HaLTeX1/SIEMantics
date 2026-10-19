@@ -85,6 +85,10 @@ class Settings(BaseSettings):
     # agent: a megtamadott host agentjen; all: minden aktiv agenten (a manager riasztasainal csak ez mukodik).
     auto_block_scope: Literal["agent", "all"] = "agent"
     auto_block_max_per_hour: int = Field(default=10, ge=1)
+    # Sikeres automatikus blokkolas utan az eset lezarasa "True positive without impact"-tel, ha csak brute force van
+    # benne es a blokkolas elott ennyi oran belul nem volt sikeres belepes az IP-rol (Wazuh indexer kell hozza).
+    auto_close_after_block: bool = True
+    auto_close_success_lookback_hours: int = Field(default=24, ge=1, le=168)
     # Gep izolalasnal is elerheto cimek (vesszovel); a Wazuh manager IP-je (WAZUH_API_URL) automatikusan bekerul.
     response_isolation_allow: str = ""
     # Soha nem izolalhato hostok (agent nevek vesszovel), pl. a SIEMantics, az IRIS vagy a domain controller.

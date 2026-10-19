@@ -110,3 +110,103 @@ def test_settings_accept_env_strings(monkeypatch):
     monkeypatch.setenv("AUTO_BLOCK_DURATION_HOURS", "5")
     with pytest.raises(ValueError):
         Settings()
+
+
+# --- megfekezett brute force automatikus lezarasa
+
+@pytest.fixture
+def indexer(monkeypatch):
+    from app.surrounding import indexer_client
+
+    state = {"success": False, "queries": []}
+
+    async def search(body):
+        state["queries"].append(body)
+        return [{"rule": {"id": "5715"}}] if state["success"] else []
+
+    monkeypatch.setattr(settings, "wazuh_indexer_url", "https://10.64.0.82")
+    monkeypatch.setattr(settings, "wazuh_indexer_user", "siemantics-ro")
+    monkeypatch.setattr(settings, "wazuh_indexer_password", "x")
+    monkeypatch.setattr(indexer_client, "search", search)
+    return state
+
+
+def decision():
+    return status.snapshot("auto_block")["last_result"]["decision"]
+
+
+def test_blocked_brute_force_case_is_closed_tpni(logged_in, iris, wazuh, abuse, indexer, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(settings, "auto_block_mode", "enforce")
+    record = process_alert(logged_in, brute("ac1"))
+    case_id = record["iris_case_id"]
+    assert case_id in iris.closed and iris.outcomes[case_id] == 4
+    assert "TPNI" in iris.annotations[case_id] and "auto-closed" in iris.tags[case_id]
+    assert "closed as true positive without impact" in decision()
+    # A sikeres belepes keresese: ugyanaz az IP, authentication_success.
+    login_checks = [q for q in indexer["queries"]
+                    if {"term": {"rule.groups": "authentication_success"}} in q["query"]["bool"]["filter"]]
+    assert len(login_checks) == 1 and {"term": {"data.srcip": ATTACKER}} in login_checks[0]["query"]["bool"]["filter"]
+
+    closed = logged_in.get(f"/api/v1/alerts/{record['display_id']}").json()
+    assert closed["ground_truth"] == "true_positive" and closed["label_source"] == "auto"
+    assert closed["is_closed"] is True and "TPNI" in closed["case_closure_note"]
+    # Nem elemzoi itelet: nem metrika.
+    assert logged_in.get("/api/v1/metrics").json()["labeled_size"] == 0
+
+
+def test_auto_label_is_not_analyst_history(logged_in, iris, wazuh, abuse, indexer, monkeypatch):  # noqa: F811
+    from app import pipeline
+
+    monkeypatch.setattr(settings, "auto_block_mode", "enforce")
+    process_alert(logged_in, brute("ah1"))
+    seen = []
+    real = pipeline.triage_alert
+
+    async def spy(alert, related=None, environment=None, history=None, *args, **kwargs):
+        seen.append((history or [], related or []))
+        return await real(alert, related, environment, history, *args, **kwargs)
+
+    monkeypatch.setattr(pipeline, "triage_alert", spy)
+    process_alert(logged_in, brute("ah2", ip="45.155.205.99"))
+    history, related = seen[-1]
+    assert history == [] and all(r.analyst_verdict is None for r in related)
+
+
+@pytest.mark.parametrize("setup,reason", [
+    ("success", "successful login"),
+    ("no_indexer", "cannot check for successful logins"),
+])
+def test_case_stays_open_when_impact_cannot_be_ruled_out(logged_in, iris, wazuh, abuse, indexer, monkeypatch,
+                                                         setup, reason):  # noqa: F811
+    monkeypatch.setattr(settings, "auto_block_mode", "enforce")
+    if setup == "success":
+        indexer["success"] = True
+    else:
+        monkeypatch.setattr(settings, "wazuh_indexer_url", "")
+    record = process_alert(logged_in, brute("open1"))
+    assert record["iris_case_id"] not in iris.closed and reason in decision()
+    assert logged_in.get(f"/api/v1/alerts/{record['display_id']}").json()["ground_truth"] is None
+
+
+def test_case_with_other_alerts_stays_open(logged_in, iris, wazuh, abuse, indexer, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(settings, "auto_block_mode", "enforce")
+    # Egy nem brute force riasztas ugyanarrol az IP-rol: ugyanabba az esetbe korrelalodik.
+    other = wazuh_alert(alert_id="x1", level=12, agent={"id": "001", "name": "web01"}, data={"srcip": ATTACKER},
+                        description="Webshell upload")
+    other["rule"].update(id="5763", groups=["web", "attack"])
+    process_alert(logged_in, other)
+    record = process_alert(logged_in, brute("mix1"))
+    assert record["iris_case_id"] not in iris.closed and "other than brute force" in decision()
+
+
+def test_dry_run_only_reports_the_closing(logged_in, iris, wazuh, abuse, indexer):  # noqa: F811
+    record = process_alert(logged_in, brute("dr1"))
+    assert record["iris_case_id"] not in iris.closed
+    assert f"would close case #{record['iris_case_id']}" in decision()
+
+
+def test_same_ip_is_blocked_again_on_another_host(logged_in, iris, wazuh, abuse, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(settings, "auto_block_mode", "enforce")
+    process_alert(logged_in, brute("h1", agent_id="001"))
+    process_alert(logged_in, brute("h2", agent_id="015"))
+    assert [c[1] for c in wazuh.commands] == [["001"], ["015"]]

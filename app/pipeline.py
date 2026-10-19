@@ -56,8 +56,8 @@ _HISTORY_LIMIT = 6
 
 
 def _verdict_known(record: AlertRecord, as_of: datetime | None) -> bool:
-    # Visszajatszasnal csak az akkor mar meglevo elemzoi itelet latszik.
-    if record.ground_truth is None:
+    # Visszajatszasnal csak az akkor mar meglevo elemzoi itelet latszik; az automatikus cimke nem elemzoi.
+    if record.ground_truth is None or record.label_source == "auto":
         return False
     return as_of is None or (record.labeled_at is not None and record.labeled_at <= as_of)
 
@@ -70,6 +70,8 @@ async def analyst_history(session: AsyncSession, record: AlertRecord, as_of: dat
         AlertRecord.rule_id == record.rule_id,
         AlertRecord.id != record.id,
         AlertRecord.ground_truth.is_not(None),
+        # Csak emberi itelet: a rendszer a sajat dontesebol ne tanuljon.
+        AlertRecord.label_source.is_(None),
     ]
     if as_of is not None:
         conditions.append(AlertRecord.labeled_at <= as_of)

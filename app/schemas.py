@@ -208,6 +208,7 @@ class AlertRecordOut(BaseModel):
     processing_time_ms: float
     ground_truth: Optional[GroundTruth] = None
     labeled_at: Optional[datetime] = None
+    label_source: Optional[str] = None
     ioc_enrichment: Optional[list[dict]] = None
     triage_model: Optional[str] = None
     review_reason: Optional[str] = None

@@ -23,6 +23,11 @@ def _automatic_status(record: AlertRecord) -> AlertStatus:
     return record.auto_status or record.status
 
 
+def _auto_label(record: AlertRecord) -> bool:
+    # A rendszer altal adott cimke (automatikus lezaras) nem ground truth a kiertekeleshez.
+    return getattr(record, "label_source", None) == "auto"
+
+
 def _decided(record: AlertRecord) -> bool:
     # Volt triazs dontes; a triazs nelkuli vagy sikertelen rekord nem predikcio.
     return _automatic_status(record) != AlertStatus.ERROR
@@ -35,7 +40,7 @@ _COPIED_DECISIONS = ("dedup", "flood", "suppression")
 def _confusion(records: list[AlertRecord]) -> tuple[int, int, int, int]:
     tp = fp = tn = fn = 0
     for record in records:
-        if record.ground_truth is None or not _decided(record):
+        if record.ground_truth is None or not _decided(record) or _auto_label(record):
             continue
         predicted = _automatic_status(record) == AlertStatus.ESCALATED
         actual = record.ground_truth == GroundTruth.TRUE_POSITIVE
@@ -111,7 +116,7 @@ def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
     review_true_positive = 0
 
     for record in decided:
-        if record.ground_truth is None:
+        if record.ground_truth is None or _auto_label(record):
             continue
         # NEEDS_REVIEW negativ predikcio; a TP-k kozuluk a review sor altal elkapott FN-ek.
         auto_status = _automatic_status(record)
@@ -144,6 +149,7 @@ def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
         (r.llm_confidence, bool(r.llm_is_true_positive), r.ground_truth == GroundTruth.TRUE_POSITIVE)
         for r in decided
         if r.triage_engine == "openrouter" and r.ground_truth is not None and r.llm_confidence is not None
+        and not _auto_label(r)
     ]
 
     return TriageMetrics(

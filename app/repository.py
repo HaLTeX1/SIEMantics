@@ -157,6 +157,8 @@ async def set_ground_truth(session: AsyncSession, ref: str, ground_truth: Ground
         return None
     record.ground_truth = ground_truth
     record.labeled_at = datetime.utcnow()
+    # Kezi cimke: elemzoi itelet.
+    record.label_source = None
     await session.commit()
     await session.refresh(record)
     return record

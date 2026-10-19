@@ -575,7 +575,8 @@
       fields.push(field("LLM döntés", a.llm_is_true_positive ? "True positive" : "False positive"));
     }
     if (a.ground_truth) {
-      fields.push(field("Ground truth", escapeHtml(a.ground_truth) + (a.labeled_at ? " (" + fmtTime(a.labeled_at) + ")" : "")));
+      const source = a.label_source === "auto" ? ", automatikus lezárás" : "";
+      fields.push(field("Ground truth", escapeHtml(a.ground_truth) + (a.labeled_at ? " (" + fmtTime(a.labeled_at) + source + ")" : "")));
     }
     if (a.escalated_by) {
       const auto = a.auto_status ? statusInfo(a.auto_status).label : "-";

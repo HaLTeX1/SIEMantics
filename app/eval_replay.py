@@ -50,7 +50,8 @@ async def _candidates(limit: int | None) -> list[AlertRecord]:
             .where(AlertRecord.ground_truth.is_not(None), AlertRecord.raw_payload.is_not(None))
             .order_by(AlertRecord.received_at)
         )
-        records = [r for r in result.scalars() if r.triage_engine not in _SKIP_ENGINES]
+        # Csak emberi itelettel cimkezett, onallo dontesek.
+        records = [r for r in result.scalars() if r.triage_engine not in _SKIP_ENGINES and r.label_source is None]
     return records[-limit:] if limit else records
 
 

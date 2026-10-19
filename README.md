@@ -346,6 +346,12 @@ A SIEMantics a triázs után magától is blokkolhat, ha a riasztás egy publiku
 5. az IP-re nincs már aktív blokk, és az utolsó órában legfeljebb `AUTO_BLOCK_MAX_PER_HOUR` (10) automatikus lépés volt;
 6. `AUTO_BLOCK_SCOPE=agent` (alapból) esetén a megtámadott host agentjén blokkol; a Wazuh manager által továbbított riasztásnál (agent 000) csak `AUTO_BLOCK_SCOPE=all` mellett lép (minden aktív agenten).
 
+**Automatikus lezárás a blokkolás után** (`AUTO_CLOSE_AFTER_BLOCK`, alapból be): ha a blokkolás sikerült, az eset **„True positive without impact”** kimenettel lezárul az IRIS-ben (note, `auto-closed` tag, lezárási annotáció „Automatically closed by SIEMantics: … TPNI.”) és a SIEMantics-ben (TP címke, lezárt állapot), de csak ha:
+- az esetben **csak brute force-riasztások** vannak (mind az `AUTO_BLOCK_RULE_GROUPS` csoportjaiból);
+- a blokkolás előtti `AUTO_CLOSE_SUCCESS_LOOKBACK_HOURS` (24) órában **nem volt sikeres belépés** az IP-ről. A sikeres SSH- és PAM-belépés 3-as szintű, a SIEMantics-be nem jut el, ezért ezt a [Wazuh indexerből](#környező-események-wazuh-indexer) ellenőrzi (`authentication_success` csoport); indexer nélkül nem zár le.
+
+Ezek a címkék `label_source = auto` jelölést kapnak (a felületen „automatikus lezárás”), és **nem számítanak elemzői ítéletnek**: nem kerülnek az LLM elemzői előzményei és a kapcsolódó riasztások ítéletei közé, sem a metrikákba és a visszajátszó mérésbe, hogy a rendszer ne a saját döntéseiből tanuljon. Ha egy elemző később kézzel címkéz, az felülírja (és elemzői ítéletté teszi). Próba módban a döntés indoklása mondja meg, lezárta volna-e az esetet, és ha nem, miért. Az „IP már blokkolva” feltétel hostonként értendő: egy másik gép elleni támadásnál az IP ott is blokkolódik.
+
 **Üzemmód (`AUTO_BLOCK_MODE`):** `off`; **`dry_run`** (alapértelmezett): semmit nem küld, csak a riasztás válaszlépés-naplójában rögzíti „próba: blokkolta volna” bejegyzéssel, mit tett volna; `enforce`: blokkol `AUTO_BLOCK_DURATION_HOURS` (1) órára, és IRIS note-ot ír („blocked automatically by SIEMantics”). Ajánlott néhány napig `dry_run`-ban figyelni, mit blokkolna, és csak utána `enforce`-ra váltani. A Rendszerállapot fül „Automatikus blokkolás” jelzője mutatja az üzemmódot, az elmúlt 24 óra lépéseit és az utolsó döntést az okával (pl. „skipped: AbuseIPDB score 50 < 90”).
 
 **Beállítás a Wazuh manageren (egyszeri):**

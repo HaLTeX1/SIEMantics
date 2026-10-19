@@ -1010,7 +1010,9 @@
     }
 
     if (a.ground_truth) {
-      fields.push(detailField("Ground truth", escapeHtml(a.ground_truth) + (a.labeled_at ? " (" + fmtTime(a.labeled_at) + ")" : "")));
+      // Az automatikus lezaras cimkeje nem elemzoi itelet, ezt jelezzuk.
+      const source = a.label_source === "auto" ? ", automatikus lezárás" : "";
+      fields.push(detailField("Ground truth", escapeHtml(a.ground_truth) + (a.labeled_at ? " (" + fmtTime(a.labeled_at) + source + ")" : "")));
     }
 
     if (a.escalated_by) {
