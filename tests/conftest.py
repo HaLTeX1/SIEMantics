@@ -142,7 +142,9 @@ def iris(monkeypatch) -> FakeIris:
 
 
 @pytest.fixture
-def client(iris):
+def client(iris, monkeypatch):
+    # A tesztek a mock motorral triazsolnak, itt a metrikaknak szamitaniuk kell.
+    monkeypatch.setattr("app.metrics._NOT_PREDICTIONS", ("analyst", "context"))
     with TestClient(app) as c:
         # Az indulas ujra sorba allitja az elozo teszt QUEUED rekordjait, megvarjuk oket.
         c.portal.call(alert_queue.join)

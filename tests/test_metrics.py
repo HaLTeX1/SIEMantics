@@ -75,6 +75,26 @@ def test_error_records_are_excluded_from_processing_time():
     assert m.avg_processing_time_ms == 10.0
 
 
+def test_processing_time_uses_independent_decisions_only():
+    # A dedup masolat ms alatt kesz, a valos triazsido az LLM-e.
+    m = compute_metrics([
+        _rec(AlertStatus.SUPPRESSED, ms=40000.0),
+        _rec(AlertStatus.ESCALATED, ms=60000.0),
+        *[_rec(AlertStatus.SUPPRESSED, ms=20.0, engine="dedup") for _ in range(5)],
+    ])
+    assert m.median_processing_time_ms == 50000.0
+    assert m.by_engine["dedup"].median_processing_time_ms == 20.0
+    assert m.by_engine["openrouter"].p95_processing_time_ms == 60000.0
+    assert m.independent.avg_processing_time_ms == 50000.0
+
+
+def test_mock_engine_decisions_are_excluded():
+    m = compute_metrics([_rec(AlertStatus.ESCALATED, FP, engine="mock", ms=5.0), _rec(AlertStatus.ESCALATED, TP)])
+    assert m.sample_size == 1 and m.false_positive == 0
+    assert "mock" not in m.by_engine
+    assert m.median_processing_time_ms == 10.0
+
+
 def test_alerts_closed_before_triage_are_not_predictions():
     # Flood: az elemzo a varakozo riasztasokat triazs elott lezarta.
     m = compute_metrics([

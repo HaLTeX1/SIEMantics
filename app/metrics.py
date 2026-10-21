@@ -6,8 +6,8 @@ from app.config import settings
 from app.schemas import Calibration, CalibrationBucket, EngineMetrics, TriageMetrics
 
 
-# Elemzo altal triazs elott lezart, illetve csak kontextuskent tarolt rekordok.
-_NOT_PREDICTIONS = ("analyst", "context")
+# Elemzo altal triazs elott lezart, kontextuskent tarolt, illetve a teszteleshez hasznalt mock motor rekordjai.
+_NOT_PREDICTIONS = ("analyst", "context", "mock")
 
 
 def _percentile(values: list[float], pct: float) -> float | None:
@@ -55,9 +55,14 @@ def _confusion(records: list[AlertRecord]) -> tuple[int, int, int, int]:
     return tp, fp, tn, fn
 
 
+def _times(records: list[AlertRecord]) -> list[float]:
+    return [r.processing_time_ms for r in records if _decided(r) and r.status != AlertStatus.ERROR]
+
+
 def _scores(records: list[AlertRecord]) -> EngineMetrics:
     tp, fp, tn, fn = _confusion(records)
     labeled = tp + fp + tn + fn
+    times = _times(records)
     return EngineMetrics(
         sample_size=len(records),
         labeled_size=labeled,
@@ -68,6 +73,9 @@ def _scores(records: list[AlertRecord]) -> EngineMetrics:
         accuracy=(tp + tn) / labeled if labeled else None,
         false_positive_rate=fp / (fp + tn) if (fp + tn) else None,
         recall=tp / (tp + fn) if (tp + fn) else None,
+        avg_processing_time_ms=mean(times) if times else None,
+        median_processing_time_ms=median(times) if times else None,
+        p95_processing_time_ms=_percentile(times, 0.95),
     )
 
 
@@ -135,7 +143,8 @@ def compute_metrics(records: list[AlertRecord]) -> TriageMetrics:
             fn += 1
 
     labeled_total = tp + fp + tn + fn
-    processing_times = [r.processing_time_ms for r in decided if r.status != AlertStatus.ERROR]
+    # A masolt dontesek (dedup ~ms) elfednek a valos triazsidot, ezert csak az onallo dontesekbol.
+    processing_times = _times([r for r in decided if r.triage_engine not in _COPIED_DECISIONS])
     error_count = sum(1 for r in records if r.status == AlertStatus.ERROR or not _decided(r))
     needs_review_count = sum(1 for r in decided if _automatic_status(r) == AlertStatus.NEEDS_REVIEW)
     manually_escalated_count = sum(1 for r in decided if r.escalated_by_id is not None)

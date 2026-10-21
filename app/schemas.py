@@ -450,6 +450,9 @@ class EngineMetrics(BaseModel):
     accuracy: Optional[float] = None
     false_positive_rate: Optional[float] = None
     recall: Optional[float] = None
+    avg_processing_time_ms: Optional[float] = None
+    median_processing_time_ms: Optional[float] = None
+    p95_processing_time_ms: Optional[float] = None
 
 
 class CalibrationBucket(BaseModel):
