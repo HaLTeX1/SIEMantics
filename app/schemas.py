@@ -333,6 +333,9 @@ class HostProfileOut(BaseModel):
     synced_at: Optional[datetime] = None
     updated_by: Optional[AssigneeOut] = None
     updated_at: Optional[datetime] = None
+    # Aktiv izolalas lejarata es inditoja (barhonnan inditottak).
+    isolated_until: Optional[datetime] = None
+    isolated_by: Optional[str] = None
 
 
 class HostUpdate(BaseModel):

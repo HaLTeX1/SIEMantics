@@ -94,3 +94,64 @@ def test_manager_ip_comes_from_the_wazuh_api_url(monkeypatch):
     monkeypatch.setattr(settings, "response_isolation_allow", "10.64.0.127")
     monkeypatch.setattr(settings, "wazuh_api_url", "https://10.64.0.82:55000")
     assert isolation_allowlist() == ["10.64.0.127", "10.64.0.82"]
+
+
+# --- Kornyezet ful: izolalas riasztas nelkul
+
+def add_host(client, agent_id="001", name="web01", in_wazuh=True):
+    from app.db import async_session
+    from app.models import HostProfile
+
+    async def insert():
+        async with async_session() as session:
+            host = HostProfile(agent_name=name, agent_id=agent_id if in_wazuh else None, in_wazuh=in_wazuh,
+                               wazuh={"status": "active"})
+            session.add(host)
+            await session.commit()
+            return host.id
+    return client.portal.call(insert)
+
+
+def test_isolate_and_release_from_the_environment_tab(logged_in, iris, wazuh):  # noqa: F811
+    host_id = add_host(logged_in)
+    res = logged_in.post(f"/api/v1/hosts/{host_id}/isolate", json={"duration_hours": 1, "confirm_hostname": "web01"})
+    assert res.status_code == 200, res.text
+    assert res.json()["isolated_until"] and res.json()["isolated_by"] == "admin"
+    assert wazuh.commands[-1][:2] == ("siemantics-isolate3600", ["001"])
+    assert iris.notes == []
+    listed = {h["id"]: h for h in logged_in.get("/api/v1/hosts").json()}
+    assert listed[host_id]["isolated_until"]
+
+    # A riasztas oldal is latja a mashonnan inditott izolalast.
+    record = alert(logged_in)
+    history = logged_in.get(f"/api/v1/alerts/{record['display_id']}/responses").json()
+    assert [h["action"] for h in history] == ["isolate_host"]
+
+    res = logged_in.post(f"/api/v1/hosts/{host_id}/release")
+    assert res.status_code == 200 and res.json()["isolated_until"] is None
+    assert wazuh.commands[-1][0] == "siemantics-isolate0"
+
+
+def test_environment_isolation_guards(logged_in, iris, wazuh):  # noqa: F811
+    host_id = add_host(logged_in)
+    res = logged_in.post(f"/api/v1/hosts/{host_id}/isolate", json={"duration_hours": 1, "confirm_hostname": "web02"})
+    assert res.status_code == 422 and "type the host name" in res.json()["detail"]
+    device = add_host(logged_in, name="edge-fw01", in_wazuh=False)
+    res = logged_in.post(f"/api/v1/hosts/{device}/isolate", json={"duration_hours": 1, "confirm_hostname": "edge-fw01"})
+    assert res.status_code == 422 and "only Wazuh agents" in res.json()["detail"]
+    assert logged_in.post("/api/v1/hosts/9999/release").status_code == 404
+    wazuh.fail_agents.add("001")
+    res = logged_in.post(f"/api/v1/hosts/{host_id}/isolate", json={"duration_hours": 1, "confirm_hostname": "web01"})
+    assert res.status_code == 502 and "agent unreachable" in res.json()["detail"]
+    assert logged_in.get("/api/v1/hosts").json()[0]["isolated_until"] is None
+
+
+def test_only_l2_and_admin_can_isolate_from_the_environment_tab(logged_in, iris, wazuh):  # noqa: F811
+    host_id = add_host(logged_in)
+    logged_in.post("/api/v1/users", json={"username": "dave", "password": "analyst-pass", "role": "analyst"})
+    dave = TestClient(app)
+    dave.post("/api/v1/auth/login", json={"username": "dave", "password": "analyst-pass"})
+    res = dave.post(f"/api/v1/hosts/{host_id}/isolate", json={"duration_hours": 1, "confirm_hostname": "web01"})
+    assert res.status_code == 403
+    assert dave.post(f"/api/v1/hosts/{host_id}/release").status_code == 403
+    assert wazuh.commands == []

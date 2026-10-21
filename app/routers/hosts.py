@@ -5,26 +5,47 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_user, require_context_editor
+from app.auth import get_current_user, require_context_editor, require_isolate
 from app.db import get_session
 from app.hosts import sync_hosts
 from app.models import HostProfile, KnownNetwork, User
 from app.repository import get_users_by_ids
-from app.schemas import AssigneeOut, HostCreate, HostProfileOut, HostUpdate, KnownNetworkIn, KnownNetworkOut
+from app.response import ResponseError, active_isolation, isolate_agent, isolation_actions, release_agent
+from app.schemas import (
+    AssigneeOut, HostCreate, HostProfileOut, HostUpdate, IsolateRequest, KnownNetworkIn, KnownNetworkOut,
+)
 from app.wazuh_client import wazuh_client
 
 router = APIRouter(prefix="/api/v1", tags=["environment"])
 
 
 async def _hosts_out(session: AsyncSession, hosts: list[HostProfile]) -> list[HostProfileOut]:
-    users = await get_users_by_ids(session, [h.updated_by_id for h in hosts if h.updated_by_id is not None])
+    isolations = {agent_id: active_isolation(actions) for agent_id, actions in
+                  (await isolation_actions(session, {h.agent_id for h in hosts if h.agent_id})).items()}
+    user_ids = [h.updated_by_id for h in hosts if h.updated_by_id is not None]
+    user_ids += [a.requested_by_id for a in isolations.values() if a and a.requested_by_id is not None]
+    users = await get_users_by_ids(session, user_ids)
     out = []
     for host in hosts:
         item = HostProfileOut.model_validate(host)
         if host.updated_by_id in users:
             item.updated_by = AssigneeOut.model_validate(users[host.updated_by_id])
+        isolation = isolations.get(host.agent_id)
+        if isolation:
+            item.isolated_until = isolation.expires_at
+            requester = users.get(isolation.requested_by_id)
+            item.isolated_by = requester.username if requester else None
         out.append(item)
     return out
+
+
+async def _agent_host(session: AsyncSession, host_id: int) -> HostProfile:
+    host = await session.get(HostProfile, host_id)
+    if host is None:
+        raise HTTPException(status_code=404, detail="host not found")
+    if not host.in_wazuh or not host.agent_id:
+        raise HTTPException(status_code=422, detail="only Wazuh agents can be isolated")
+    return host
 
 
 def _apply(host: HostProfile, body: HostUpdate, user: User) -> None:
@@ -94,6 +115,34 @@ async def delete_host(host_id: int, session: AsyncSession = Depends(get_session)
     await session.delete(host)
     await session.commit()
     return {"deleted": host.agent_name}
+
+
+@router.post("/hosts/{host_id}/isolate", response_model=HostProfileOut)
+async def isolate(
+    host_id: int, body: IsolateRequest, user: User = Depends(require_isolate),
+    session: AsyncSession = Depends(get_session),
+):
+    # Csak L2 / admin: ugyanaz az izolalas, mint a riasztasbol, csak riasztas (es IRIS note) nelkul.
+    host = await _agent_host(session, host_id)
+    try:
+        action = await isolate_agent(session, host.agent_id, body.duration_hours * 3600, user, body.confirm_hostname)
+    except ResponseError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    if action.status != "sent":
+        raise HTTPException(status_code=502, detail=f"isolation failed: {action.error_detail}")
+    return (await _hosts_out(session, [host]))[0]
+
+
+@router.post("/hosts/{host_id}/release", response_model=HostProfileOut)
+async def release(host_id: int, user: User = Depends(require_isolate), session: AsyncSession = Depends(get_session)):
+    host = await _agent_host(session, host_id)
+    try:
+        action = await release_agent(session, host.agent_id, user)
+    except ResponseError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    if action.status != "sent":
+        raise HTTPException(status_code=502, detail=f"release failed: {action.error_detail}")
+    return (await _hosts_out(session, [host]))[0]
 
 
 @router.get("/networks", response_model=list[KnownNetworkOut], dependencies=[Depends(get_current_user)])

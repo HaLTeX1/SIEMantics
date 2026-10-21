@@ -154,6 +154,9 @@
   .check { display: flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 13px; }
   .check input { width: auto; }
   .muted { color: var(--text-muted); }
+  .iso-cell { display: flex; flex-direction: column; gap: 6px; min-width: 190px; }
+  .iso-cell select, .iso-cell input { width: 100%; }
+  .badge-fill-bad { background: rgba(240,82,82,0.16); color: #f8a3a3; }
 </style>
 </head>
 <body>
@@ -168,7 +171,7 @@
     <nav class="admin-tabs" id="adminTabs" aria-label="Admin panel"></nav>
 
     <div class="card">
-      <p class="hint">Az LLM a triázsnál megkapja a riasztás hostjának adatait és szerepét, valamint azt, hogy a forrás IP egy ismert, megbízható rendszer-e. A hostok adatai (OS, IP, csoportok, figyelő szolgáltatások) óránként frissülnek a Wazuh-ból; az új hostok maguktól megjelennek. A szerepet, a kritikusságot, a megjegyzést és az IP-címeket itt adhatod meg (L2 vagy admin). Agent nélküli eszköznél (tűzfal, router, switch) az IP-cím azonosítja a riasztást küldő eszközt, mert a név alapján nem mindig sikerül.</p>
+      <p class="hint">Az LLM a triázsnál megkapja a riasztás hostjának adatait és szerepét, valamint azt, hogy a forrás IP egy ismert, megbízható rendszer-e. A hostok adatai (OS, IP, csoportok, figyelő szolgáltatások) óránként frissülnek a Wazuh-ból; az új hostok maguktól megjelennek. A szerepet, a kritikusságot, a megjegyzést és az IP-címeket itt adhatod meg (L2 vagy admin). Agent nélküli eszköznél (tűzfal, router, switch) az IP-cím azonosítja a riasztást küldő eszközt, mert a név alapján nem mindig sikerül. Az aktív Wazuh agentek innen riasztás nélkül is izolálhatók és feloldhatók (L2 vagy admin); ilyenkor IRIS note nem készül.</p>
     </div>
 
     <div class="card" style="padding:0; overflow-x:auto;">
@@ -186,6 +189,7 @@
             <th>Rendszer</th>
             <th>Szolgáltatások</th>
             <th>Szerep, kritikusság, megjegyzés</th>
+            <th class="iso-col" hidden>Izolálás</th>
           </tr>
         </thead>
         <tbody id="hostsBody"></tbody>
@@ -228,6 +232,8 @@
   let hosts = [];
   let nets = [];
   let canEdit = false;
+  let canIsolate = false;
+  let busyHost = null;
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
@@ -294,6 +300,26 @@
       </div>`;
   }
 
+  function isolationCell(h) {
+    if (!canIsolate) return "";
+    if (h.isolated_until) {
+      return `<td><div class="iso-cell">
+          <span class="badge badge-fill-bad">Izolálva</span>
+          <span class="title-sub">lejár: ${fmtTime(h.isolated_until)}${h.isolated_by ? " · " + escapeHtml(h.isolated_by) : ""}</span>
+          <button type="button" class="btn small release-btn" data-id="${h.id}" ${busyHost === h.id ? "disabled" : ""}>Izolálás feloldása</button>
+        </div></td>`;
+    }
+    if (!h.in_wazuh || !h.agent_id) return '<td><span class="muted">-</span></td>';
+    if ((h.wazuh || {}).status !== "active") return '<td><span class="muted">csak aktív agent</span></td>';
+    return `<td><div class="iso-cell">
+        <select id="isoDur-${h.id}" aria-label="Izolálás időtartama">
+          <option value="1">1 óra</option><option value="24" selected>24 óra</option><option value="168">7 nap</option>
+        </select>
+        <input id="isoName-${h.id}" placeholder="Gép neve: ${escapeHtml(h.agent_name)}" aria-label="A gép nevének megerősítése" />
+        <button type="button" class="btn small danger isolate-btn" data-id="${h.id}" ${busyHost === h.id ? "disabled" : ""}>Gép izolálása</button>
+      </div></td>`;
+  }
+
   function renderHosts() {
     el("hostsState").hidden = hosts.length > 0;
     el("hostsState").className = "state";
@@ -308,10 +334,13 @@
           <td>${escapeHtml(w.os || (h.in_wazuh ? "-" : "Agent nélküli eszköz"))}<div class="title-sub">${escapeHtml([w.ip && w.ip !== "any" ? w.ip : null, ...(h.ips || [])].filter(Boolean).join(", "))}${groups ? " · " + escapeHtml(groups) : ""}</div></td>
           <td><div class="services">${services || '<span class="muted">-</span>'}</div></td>
           <td>${editCell(h)}</td>
+          ${isolationCell(h)}
         </tr>`;
     }).join("");
     document.querySelectorAll(".save-btn").forEach((b) => b.addEventListener("click", () => saveHost(Number(b.dataset.id))));
     document.querySelectorAll(".del-host").forEach((b) => b.addEventListener("click", () => deleteHost(Number(b.dataset.id))));
+    document.querySelectorAll(".isolate-btn").forEach((b) => b.addEventListener("click", () => runIsolation(Number(b.dataset.id), false)));
+    document.querySelectorAll(".release-btn").forEach((b) => b.addEventListener("click", () => runIsolation(Number(b.dataset.id), true)));
     const synced = hosts.map((h) => h.synced_at).filter(Boolean).sort().pop();
     el("syncInfo").textContent = synced ? `Wazuh szinkron: ${fmtTime(synced)}` : "";
   }
@@ -391,6 +420,23 @@
     }
   }
 
+  async function runIsolation(id, release) {
+    const h = hosts.find((x) => x.id === id);
+    if (release && !confirm(`${h.agent_name} izolálásának feloldása?`)) return;
+    const payload = release ? null : { duration_hours: Number(el(`isoDur-${id}`).value), confirm_hostname: el(`isoName-${id}`).value.trim() };
+    busyHost = id;
+    renderHosts();
+    try {
+      const updated = await send(`/api/v1/hosts/${id}/${release ? "release" : "isolate"}`, "POST", payload);
+      hosts = hosts.map((x) => (x.id === id ? updated : x));
+      setMsg("hostsMsg", release ? `${h.agent_name} izolálása feloldva.` : `${h.agent_name} izolálva, csak a Wazuh manager érhető el a lejáratig.`, true);
+    } catch (err) {
+      setMsg("hostsMsg", (release ? "Sikertelen feloldás: " : "Sikertelen izolálás: ") + err.message, false);
+    }
+    busyHost = null;
+    renderHosts();
+  }
+
   async function updateNet(n, trusted) {
     try {
       const updated = await send(`/api/v1/networks/${n.id}`, "PUT", { cidr: n.cidr, label: n.label, trusted });
@@ -463,6 +509,8 @@
     SIEM.renderAdminTabs(el("adminTabs"), user, "environment");
     // Szerkeszteni L2 (es admin) tud, a tobbiek csak olvassak.
     canEdit = !!user.can_edit_context;
+    canIsolate = !!user.can_isolate;
+    document.querySelectorAll(".iso-col").forEach((th) => { th.hidden = !canIsolate; });
     el("syncBtn").hidden = !canEdit;
     el("hostForm").hidden = !canEdit;
     el("netForm").hidden = !canEdit;
