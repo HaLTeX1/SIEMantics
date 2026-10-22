@@ -290,6 +290,13 @@
     font-size: 12px;
   }
 
+  .pager-nav { display: flex; align-items: center; gap: 8px; }
+  .pager-nav button {
+    background: transparent; color: var(--text-secondary); border: 1px solid var(--border, #333);
+    border-radius: 6px; padding: 4px 10px; font: inherit; cursor: pointer;
+  }
+  .pager-nav button:disabled { opacity: 0.4; cursor: default; }
+
   tbody tr.data-row { cursor: pointer; }
 
   .row-actions {
@@ -441,9 +448,9 @@
       </select>
       <select id="timeRangeFilter">
         <option value="24">Utolsó 24 óra</option>
-        <option value="168" selected>Utolsó 7 nap</option>
+        <option value="168">Utolsó 7 nap</option>
         <option value="720">Utolsó 30 nap</option>
-        <option value="0">Összes</option>
+        <option value="0" selected>Összes</option>
       </select>
       <select id="assigneeFilter">
         <option value="">Minden felelős</option>
@@ -497,6 +504,11 @@
 
     <div class="pager">
       <span id="rowCount"></span>
+      <span class="pager-nav" id="pagerNav" hidden>
+        <button type="button" id="pagePrev" aria-label="Előző oldal">‹ Előző</button>
+        <span id="pageInfo"></span>
+        <button type="button" id="pageNext" aria-label="Következő oldal">Következő ›</button>
+      </span>
       <span>SIEMantics decision log</span>
     </div>
   </div>
@@ -544,9 +556,13 @@
 (function () {
   "use strict";
 
-  const API_ALERTS = "/api/v1/alerts?limit=500";
-  // Lezartak csak keresre: a szerver szur, igy a nyitott riasztasok nem szorulnak ki az 500-as limitbol.
-  const API_ALERTS_OPEN = API_ALERTS + "&include_closed=false";
+  // A szerverrol 500-as csomagokban, a teljes listat (legfeljebb MAX_ALERTS-et) toltjuk be.
+  const FETCH_BATCH = 500;
+  const MAX_ALERTS = 5000;
+  const API_ALERTS = (offset, withClosed) =>
+    `/api/v1/alerts?limit=${FETCH_BATCH}&offset=${offset}${withClosed ? "" : "&include_closed=false"}`;
+  const PAGE_SIZE = 50;
+  let page = 0;
   const SHOW_CLOSED_KEY = "siemantics.showClosed";
   let loadedWithClosed = null;
   // Regi # elotag levagasa, URL fragmentet kezdene.
@@ -1085,9 +1101,19 @@
     if (!auto) errorState.hidden = true;
     try {
       const withClosed = wantClosed();
-      const res = await SIEM.api(withClosed ? API_ALERTS : API_ALERTS_OPEN);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      allAlerts = await res.json();
+      const loaded = [];
+      const seen = new Set();
+      for (let offset = 0; offset < MAX_ALERTS; offset += FETCH_BATCH) {
+        const res = await SIEM.api(API_ALERTS(offset, withClosed));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const batch = await res.json();
+        // Betoltes kozben erkezett uj riasztas eltolja a csomagokat, a duplikatum kimarad.
+        for (const a of batch) {
+          if (!seen.has(a.display_id)) { seen.add(a.display_id); loaded.push(a); }
+        }
+        if (batch.length < FETCH_BATCH) break;
+      }
+      allAlerts = loaded;
       loadedWithClosed = withClosed;
       lastFetchAt = Date.now();
       errorState.hidden = true;
@@ -1181,6 +1207,7 @@
     });
 
     if (collapseGroups.checked) filtered = collapseToGroups(filtered);
+    page = Math.min(page, Math.max(0, Math.ceil(filtered.length / PAGE_SIZE) - 1));
 
     for (const id of Array.from(selected)) {
       if (!filtered.some((a) => a.display_id === id)) selected.delete(id);
@@ -1231,6 +1258,17 @@
     return inGroup(a) ? `<span class="badge badge-outline group-badge">Csoport · ${a.group_size} riasztás</span>` : "";
   }
 
+  function pageRows() {
+    return filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  }
+
+  function goToPage(next) {
+    page = next;
+    renderTable();
+    updateBulkbar();
+    el("tableBody").closest("table").scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
   function renderTable() {
     if (filtered.length === 0) {
       tableBody.innerHTML = "";
@@ -1239,14 +1277,24 @@
         : "Nincs a szűrésnek megfelelő nyitott riasztás. A lezártakat és elnyomottakat a „Lezártak és elnyomottak megjelenítése” kapcsolóval láthatod.";
       emptyState.hidden = false;
       rowCountEl.textContent = "";
+      el("pagerNav").hidden = true;
       return;
     }
     emptyState.hidden = true;
-    rowCountEl.textContent = `${filtered.length} riasztás`;
+    const pages = Math.ceil(filtered.length / PAGE_SIZE);
+    const first = page * PAGE_SIZE;
+    const rows = pageRows();
+    rowCountEl.textContent = pages > 1
+      ? `${first + 1}–${first + rows.length} / ${filtered.length} riasztás`
+      : `${filtered.length} riasztás`;
+    el("pagerNav").hidden = pages <= 1;
+    el("pageInfo").textContent = `${page + 1}. / ${pages} oldal`;
+    el("pagePrev").disabled = page === 0;
+    el("pageNext").disabled = page >= pages - 1;
 
     const COLSPAN = 11;
 
-    tableBody.innerHTML = filtered.map((a) => {
+    tableBody.innerHTML = rows.map((a) => {
       const sev = severityInfo(a.severity);
       const st = statusInfo(a.status);
       const disp = dispositionInfo(a.ground_truth);
@@ -1358,13 +1406,17 @@
   function updateBulkbar() {
     selectedCountEl.textContent = String(selected.size);
     bulkbar.classList.toggle("visible", selected.size > 0);
-    const allChecked = filtered.length > 0 && filtered.every((a) => selected.has(a.display_id));
-    selectAll.checked = allChecked;
+    // A fejlec jeloloje az aktualis oldalra vonatkozik.
+    const rows = pageRows();
+    selectAll.checked = rows.length > 0 && rows.every((a) => selected.has(a.display_id));
   }
 
+  el("pagePrev").addEventListener("click", () => goToPage(page - 1));
+  el("pageNext").addEventListener("click", () => goToPage(page + 1));
+
   selectAll.addEventListener("change", () => {
-    if (selectAll.checked) filtered.forEach((a) => selected.add(a.display_id));
-    else filtered.forEach((a) => selected.delete(a.display_id));
+    if (selectAll.checked) pageRows().forEach((a) => selected.add(a.display_id));
+    else pageRows().forEach((a) => selected.delete(a.display_id));
     renderTable();
     updateBulkbar();
   });
@@ -1394,11 +1446,16 @@
     ev.preventDefault();
     submitSuppress();
   });
-  collapseGroups.addEventListener("change", applyFilters);
+  // Szuroveltaskor az elso oldal jon; a frissites helyben hagyja a lapozast.
+  function filterChanged() {
+    page = 0;
+    applyFilters();
+  }
+  collapseGroups.addEventListener("change", filterChanged);
   try { showClosed.checked = localStorage.getItem(SHOW_CLOSED_KEY) === "1"; } catch (_) { /* nincs tarolo */ }
   showClosed.addEventListener("change", () => {
     try { localStorage.setItem(SHOW_CLOSED_KEY, showClosed.checked ? "1" : "0"); } catch (_) { /* nincs tarolo */ }
-    applyFilters();
+    filterChanged();
   });
   el("clearSelectionBtn").addEventListener("click", () => {
     selected.clear();
@@ -1409,13 +1466,13 @@
   let debounceHandle = null;
   function debouncedApply() {
     clearTimeout(debounceHandle);
-    debounceHandle = setTimeout(applyFilters, 150);
+    debounceHandle = setTimeout(filterChanged, 150);
   }
   searchInput.addEventListener("input", debouncedApply);
-  statusFilter.addEventListener("change", applyFilters);
-  dispositionFilter.addEventListener("change", applyFilters);
-  timeRangeFilter.addEventListener("change", applyFilters);
-  assigneeFilter.addEventListener("change", applyFilters);
+  statusFilter.addEventListener("change", filterChanged);
+  dispositionFilter.addEventListener("change", filterChanged);
+  timeRangeFilter.addEventListener("change", filterChanged);
+  assigneeFilter.addEventListener("change", filterChanged);
   // Refresh elott az IRIS-ben lezart esetek kimenetele bekerul a dispositionbe.
   el("refreshBtn").addEventListener("click", async () => {
     const btn = el("refreshBtn");
